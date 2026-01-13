@@ -1,34 +1,73 @@
-<div class="level mb-6">
-  <div class="level-left">
-    <h1 class="title"><i class="fas fa-book-open mr-2"></i> My Course List</h1>
+<div class="columns">
+  <div class="column is-8">
+    <div class="level mb-6">
+      <div class="level-left">
+        <h1 class="title"><i class="fas fa-book-open mr-2"></i> My Course List</h1>
+      </div>
+    </div>
+
+    <% if @courses.empty? %>
+      <div class="notification is-warning">No active courses found.</div>
+    <% else %>
+      <div class="box p-0">
+        <table class="table is-fullwidth is-hoverable">
+          <thead>
+            <tr>
+              <th>Course Name</th>
+              <th>Code</th>
+              <th class="has-text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% @courses.each do |c| %>
+              <tr class="course-row" onclick="window.location='/course/<%= c['OrgUnit']['Id'] %>'">
+                <td class="has-text-weight-medium is-size-5"><%= c['OrgUnit']['Name'] %></td>
+                <td class="has-text-grey"><%= c['OrgUnit']['Code'] %></td>
+                <td class="has-text-right">
+                  <a href="/course/<%= c['OrgUnit']['Id'] %>" class="button is-small is-primary is-light">
+                    View <i class="fas fa-arrow-right ml-2"></i>
+                  </a>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
+    <% end %>
+  </div>
+
+  <div class="column is-4">
+    <h2 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Recent Updates</h2>
+    <% if @all_news && !@all_news.empty? %>
+      <% @all_news.each do |news| %>
+        <div class="box mb-4">
+          <p class="is-size-7 has-text-primary has-text-weight-bold mb-1">
+            <%= news['CourseName'] %>
+          </p>
+          <h6 class="title is-6 mb-2"><%= news['Title'] %></h6>
+          <div class="content is-size-7 mb-2">
+            <% 
+               desc = news['Body']
+               desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+               # Strip tags for a clean preview
+               preview = desc_text.gsub(/<[^>]*>/, '').strip.slice(0..100)
+            %>
+            <%= preview %><%= "..." if desc_text.length > 100 %>
+          </div>
+          <div class="level is-mobile">
+            <div class="level-left">
+              <span class="is-size-7 has-text-grey">
+                <%= Time.parse(news['StartDate']).strftime("%b %d") %>
+              </span>
+            </div>
+            <div class="level-right">
+              <a href="/course/<%= news['CourseId'] %>/announcements" class="button is-small is-white has-text-link">View Full</a>
+            </div>
+          </div>
+        </div>
+      <% end %>
+    <% else %>
+      <p class="has-text-grey italic">No recent updates found.</p>
+    <% end %>
   </div>
 </div>
-
-<% if @courses.empty? %>
-  <div class="notification is-warning">No active courses found.</div>
-<% else %>
-  <div class="box p-0">
-    <table class="table is-fullwidth is-hoverable">
-      <thead>
-        <tr>
-          <th>Course Name</th>
-          <th>Code</th>
-          <th class="has-text-right">Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        <% @courses.each do |c| %>
-          <tr class="course-row" onclick="window.location='/course/<%= c['OrgUnit']['Id'] %>'">
-            <td class="has-text-weight-medium is-size-5"><%= c['OrgUnit']['Name'] %></td>
-            <td class="has-text-grey"><%= c['OrgUnit']['Code'] %></td>
-            <td class="has-text-right">
-              <a href="/course/<%= c['OrgUnit']['Id'] %>" class="button is-small is-primary is-light">
-                View Content <i class="fas fa-arrow-right ml-2"></i>
-              </a>
-            </td>
-          </tr>
-        <% end %>
-      </tbody>
-    </table>
-  </div>
-<% end %>

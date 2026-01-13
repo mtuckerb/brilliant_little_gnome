@@ -1,0 +1,100 @@
+<%= erb :'partials/course_detail_header' %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :'partials/sidebar' %>
+  </div>
+  <div class="column is-9">
+    <div class="box">
+      <nav class="breadcrumb is-small" aria-label="breadcrumbs">
+        <ul>
+          <li><a href="/course/<%= @course_id %>/discussions"><span class="icon is-small"><i class="fas fa-home"></i></span></a></li>
+          <li class="is-active"><a href="#" aria-current="page"><%= @topic['Name'] %></a></li>
+        </ul>
+      </nav>
+
+      <div class="topic-header mb-6">
+        <div class="level mb-2">
+          <div class="level-left">
+            <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> <%= @topic['Name'] %></h4>
+          </div>
+          <div class="level-right">
+            <a href="<%= $client.portal_url_for(:discussion_topic, {course_id: @course_id, id: @topic_id}) %>" class="button is-small is-link is-light" target="_blank">
+              <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
+              <span>View in Brightspace</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="tags">
+          <% if @topic['EndDate'] %>
+            <span class="tag is-danger is-light">
+              <i class="fas fa-calendar-times mr-1"></i> Due: <%= Time.parse(@topic['EndDate']).strftime("%b %d, %Y %I:%M %p") %>
+            </span>
+          <% end %>
+          <% if @topic['StartDate'] %>
+            <span class="tag is-info is-light">
+              <i class="fas fa-calendar-check mr-1"></i> Available: <%= Time.parse(@topic['StartDate']).strftime("%b %d, %Y") %>
+            </span>
+          <% end %>
+          <span class="tag is-white">
+            <i class="fas fa-reply-all mr-1"></i> <%= @topic['PostCount'] %> Posts
+          </span>
+        </div>
+
+        <div class="content box is-light is-size-6 py-4 px-5">
+           <p class="has-text-weight-bold mb-2">Instructions / Description:</p>
+           <% 
+              desc = @topic['Description']
+              desc_html = desc.is_a?(Hash) ? (desc['Html'] || desc['Text']) : desc.to_s
+           %>
+           <%= desc_html && !desc_html.empty? ? desc_html : "<p class='has-text-grey italic'>No description provided.</p>" %>
+        </div>
+
+        <%# Instructor Feedback Section - checking if topic itself carries feedback or if we need to fetch user grade/comments %>
+        <% if @topic['Feedback'] %>
+          <div class="notification is-success is-light">
+            <p class="has-text-weight-bold"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
+            <%= @topic['Feedback']['Html'] || @topic['Feedback']['Text'] %>
+          </div>
+        <% end %>
+      </div>
+
+      <h5 class="title is-5 mb-4">Threads</h5>
+      
+      <% if @threads && @threads.any? %>
+        <% @threads.sort_by { |t| t['IsPinned'] ? 0 : 1 }.each do |thread| %>
+          <div class="card mb-4">
+            <header class="card-header">
+              <p class="card-header-title">
+                <a href="/course/<%= @course_id %>/discussions/<%= @forum_id %>/topics/<%= @topic_id %>/threads/<%= thread['ThreadId'] %>">
+                  <%= thread['IsPinned'] ? '<i class="fas fa-thumbtack mr-2 has-text-primary"></i>' : '' %>
+                  <%= thread['Title'] %>
+                </a>
+              </p>
+              <div class="card-header-icon">
+                 <span class="tag is-white"><%= thread['ReplyCount'] %> replies</span>
+              </div>
+            </header>
+            <div class="card-content py-3">
+              <div class="is-flex is-align-items-center">
+                 <div class="image is-24x24 mr-2">
+                   <img class="is-rounded" src="https://ui-avatars.com/api/?name=<%= URI.encode_www_form_component(thread['StartedBy'] ? thread['StartedBy']['DisplayName'] : 'U') %>&background=739AC3&color=fff" alt="Avatar">
+                 </div>
+                 <div class="is-size-7">
+                   <span class="has-text-weight-bold"><%= thread['StartedBy'] ? thread['StartedBy']['DisplayName'] : "Anonymous" %></span>
+                   <span class="has-text-grey ml-2">Last active: <%= Time.parse(thread['LastModified']).strftime("%b %d, %I:%M %p") %></span>
+                 </div>
+              </div>
+            </div>
+          </div>
+        <% end %>
+      <% else %>
+        <p class="has-text-grey">No threads found in this topic.</p>
+      <% end %>
+
+      <div class="notification is-info is-light mt-6">
+        <i class="fas fa-info-circle mr-2"></i> Select a thread to view the full discussion tree and instructor replies.
+      </div>
+    </div>
+  </div>
+</div>

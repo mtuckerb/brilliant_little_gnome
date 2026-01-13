@@ -4,6 +4,9 @@
     <li><a href="/course/<%= @course_id %>" class="<%= 'is-active' if @active_tab == 'overview' %>">
       <span class="icon is-small mr-2"><i class="fas fa-info-circle"></i></span> Syllabus / Overview</a>
     </li>
+    <li><a href="/course/<%= @course_id %>/announcements" class="<%= 'is-active' if @active_tab == 'announcements' %>">
+      <span class="icon is-small mr-2"><i class="fas fa-bullhorn"></i></span> Announcements</a>
+    </li>
     <li><a href="/course/<%= @course_id %>/assignments" class="<%= 'is-active' if @active_tab == 'assignments' %>">
       <span class="icon is-small mr-2"><i class="fas fa-tasks"></i></span> Assignments</a>
     </li>

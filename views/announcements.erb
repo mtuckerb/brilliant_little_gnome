@@ -1,0 +1,30 @@
+<%= erb :'partials/course_detail_header' %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :'partials/sidebar' %>
+  </div>
+  <div class="column is-9">
+    <div class="box">
+      <h4 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Announcements</h4>
+      <% if @news && !@news.empty? %>
+        <% @news.each do |item| %>
+          <div class="content mb-6 pb-4" style="border-bottom: 1px solid #eee;">
+            <h5 class="title is-5 mb-1"><%= item['Title'] %></h5>
+            <p class="is-size-7 has-text-grey mb-3">
+              Posted: <%= Time.parse(item['StartDate']).strftime("%B %d, %Y %I:%M %p") %>
+            </p>
+            <div class="announcement-content">
+              <% 
+                 desc = item['Body']
+                 desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+              %>
+              <%= desc_text %>
+            </div>
+          </div>
+        <% end %>
+      <% else %>
+        <p class="has-text-grey">No announcements found for this course.</p>
+      <% end %>
+    </div>
+  </div>
+</div>

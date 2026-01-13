@@ -5,21 +5,55 @@
   </div>
   <div class="column is-9">
     <div class="box">
-      <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> Discussion Forums</h4>
-      <% if @forums && !@forums.empty? %>
-        <% @forums.each do |forum| %>
-          <div class="content mb-6">
-            <h5 class="title is-5"><%= forum['Name'] %></h5>
-            <% 
-               desc = forum['Description']
-               desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
-            %>
-            <div class="is-size-6"><%= desc_text %></div>
-            <hr />
-          </div>
-        <% end %>
+      <nav class="breadcrumb is-small" aria-label="breadcrumbs">
+        <ul>
+          <li class="is-active"><a href="#"><span class="icon is-small"><i class="fas fa-home"></i></span></a></li>
+        </ul>
+      </nav>
+
+      <div class="level">
+        <div class="level-left">
+          <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> Discussion Topics</h4>
+        </div>
+      </div>
+      
+      <% if @topics && @topics.any? %>
+        <table class="table is-fullwidth is-hoverable">
+          <thead>
+            <tr>
+              <th>Topic</th>
+              <th>Forum</th>
+              <th class="has-text-centered">Threads</th>
+              <th class="has-text-centered">Posts</th>
+              <th>Last Post</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% @topics.sort_by { |t| t['LastPostDate'] || "" }.reverse.each do |topic| %>
+              <tr>
+                <td>
+                  <a href="/course/<%= @course_id %>/discussions/<%= topic['ForumId'] %>/topics/<%= topic['TopicId'] %>" class="has-text-weight-bold">
+                    <%= topic['Name'] %>
+                  </a>
+                  <div class="is-size-7 has-text-grey">Created: <%= Time.parse(topic['StartDate']).strftime("%b %d, %Y") if topic['StartDate'] %></div>
+                </td>
+                <td><span class="tag is-light"><%= topic['ForumName'] %></span></td>
+                <td class="has-text-centered"><%= topic['ThreadCount'] %></td>
+                <td class="has-text-centered"><%= topic['PostCount'] %></td>
+                <td class="is-size-7">
+                  <% if topic['LastPostDate'] %>
+                    <%= Time.parse(topic['LastPostDate']).strftime("%b %d, %Y") %><br>
+                    <span class="has-text-grey"><%= Time.parse(topic['LastPostDate']).strftime("%I:%M %p") %></span>
+                  <% else %>
+                    <span class="has-text-grey-light">Never</span>
+                  <% end %>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
       <% else %>
-        <p class="has-text-grey">No discussion forums found.</p>
+        <p class="has-text-grey">No discussion topics found for this course.</p>
       <% end %>
     </div>
   </div>

@@ -2,6 +2,7 @@ require 'sinatra'
 require 'time'
 require 'zip'
 require 'tempfile'
+require 'icalendar'
 require_relative 'lib/brightspace/client'
 require_relative 'helpers/course_helpers'
 require_relative 'models/download_job'
@@ -58,6 +59,7 @@ get '/dashboard' do
   
   @user = $client.get_who_am_i
   @courses = $client.get_enrollments
+  @all_news = $client.get_all_news(@courses)
   
   erb :dashboard
 end
@@ -88,6 +90,44 @@ get '/course/:id/assignments' do
   erb :assignments
 end
 
+# Export Assignments to ICS
+get '/course/:id/assignments/export.ics' do
+  assignments = $client.get_assignments(@course_id) || []
+  
+  cal = Icalendar::Calendar.new
+  assignments.each do |a|
+    next unless a['DueDate']
+    
+    event_start = Time.parse(a['DueDate'])
+    cal.event do |e|
+      e.dtstart     = Icalendar::Values::DateTime.new(event_start.utc, tzid: 'UTC')
+      e.dtend       = Icalendar::Values::DateTime.new((event_start + 60*60).utc, tzid: 'UTC')
+      e.summary     = "[#{@course_name}] #{a['Name']}"
+      e.description = "Assignment Due. Check Britespace for instructions."
+      e.url         = "http://localhost:4567/course/#{@course_id}/assignments/#{a['Id']}"
+    end
+  end
+  
+  content_type 'text/calendar'
+  attachment "#{@course_name.gsub(/[^0-9a-z]/i, '_')}_Assignments.ics"
+  cal.to_ical
+end
+
+# Enhanced Assignment Details
+get '/course/:id/assignments/:assignment_id' do
+  @active_tab = 'assignments'
+  @assignment_id = params[:assignment_id]
+  @assignment = $client.get_assignment(@course_id, @assignment_id)
+  erb :assignment_detail
+end
+
+# Announcements
+get '/course/:id/announcements' do
+  @active_tab = 'announcements'
+  @news = $client.get_news(@course_id)
+  erb :announcements
+end
+
 # Grades
 get '/course/:id/grades' do
   @active_tab = 'grades'
@@ -98,8 +138,45 @@ end
 # Discussions
 get '/course/:id/discussions' do
   @active_tab = 'discussions'
-  @forums = $client.get_discussions(@course_id)
+  @topics = $client.get_all_topics(@course_id)
   erb :discussions
+end
+
+# Discussion Topics
+get '/course/:id/discussions/:forum_id/topics' do
+  @active_tab = 'discussions'
+  @forum_id = params[:forum_id]
+  @forum = $client.get_discussion_forum(@course_id, @forum_id)
+  @topics = $client.get_discussion_topics(@course_id, @forum_id)
+  erb :discussion_topics
+end
+
+# Discussion Threads (List of threads in a topic)
+get '/course/:id/discussions/:forum_id/topics/:topic_id' do
+  @active_tab = 'discussions'
+  @forum_id = params[:forum_id]
+  @topic_id = params[:topic_id]
+  @forum = $client.get_discussion_forum(@course_id, @forum_id)
+  @topic = $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
+  @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id)
+  @threads = @threads_data.is_a?(Hash) ? (@threads_data['Items'] || []) : (@threads_data || [])
+  erb :discussion_threads
+end
+
+# Discussion Posts (Tree view of posts in a thread)
+get '/course/:id/discussions/:forum_id/topics/:topic_id/threads/:thread_id' do
+  @active_tab = 'discussions'
+  @forum_id = params[:forum_id]
+  @topic_id = params[:topic_id]
+  @thread_id = params[:thread_id]
+  
+  @forum = $client.get_discussion_forum(@course_id, @forum_id)
+  @topic = $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
+  @thread = $client.get_discussion_thread(@course_id, @forum_id, @topic_id, @thread_id)
+  @posts_data = $client.get_thread_posts(@course_id, @forum_id, @topic_id, @thread_id)
+  @posts = @posts_data.is_a?(Hash) ? (@posts_data['Items'] || []) : (@posts_data || [])
+  
+  erb :discussion_posts
 end
 
 # NEW: Search

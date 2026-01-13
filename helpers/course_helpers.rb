@@ -98,4 +98,29 @@ module CourseHelpers
     end
     results
   end
+
+  # Builds a nested tree from a flat list of discussion posts
+  def build_post_tree(posts)
+    return [] unless posts && posts.any?
+    
+    # Map by ID for quick lookup
+    post_map = {}
+    posts.each do |p|
+      p['Replies'] = []
+      post_map[p['PostId'].to_s] = p
+    end
+    
+    tree = []
+    posts.each do |p|
+      parent_id = p['ParentPostId']
+      if parent_id && post_map[parent_id.to_s]
+        post_map[parent_id.to_s]['Replies'] << p
+      else
+        tree << p
+      end
+    end
+    
+    # Sort top level by date (oldest first is typical for threads)
+    tree.sort_by { |p| p['DatePosted'] || "" }
+  end
 end

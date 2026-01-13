@@ -1,0 +1,53 @@
+<%= erb :'partials/course_detail_header' %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :'partials/sidebar' %>
+  </div>
+  <div class="column is-9">
+    <div class="box">
+      <nav class="breadcrumb is-small" aria-label="breadcrumbs">
+        <ul>
+          <li><a href="/course/<%= @course_id %>/discussions"><span class="icon is-small"><i class="fas fa-home"></i></span></a></li>
+          <li class="is-active"><a href="#" aria-current="page"><%= @forum ? @forum['Name'] : 'Topics' %></a></li>
+        </ul>
+      </nav>
+
+      <div class="level">
+        <div class="level-left">
+          <h4 class="title is-4"><i class="fas fa-list mr-2"></i> <%= @forum ? @forum['Name'] : 'Topics' %></h4>
+        </div>
+        <div class="level-right">
+          <a href="<%= $client.portal_url_for(:course_home, {course_id: @course_id}) %>" class="button is-small is-link is-light" target="_blank">
+            <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
+            <span>View Forum in Brightspace</span>
+          </a>
+        </div>
+      </div>
+      
+      <% if @topics && !@topics.empty? %>
+        <div class="list is-hoverable">
+          <% @topics.each do |topic| %>
+            <a href="/course/<%= @course_id %>/discussions/<%= @forum_id %>/topics/<%= topic['TopicId'] %>" class="list-item py-4">
+              <div class="is-flex is-justify-content-space-between is-align-items-center">
+                <div class="content">
+                  <h5 class="title is-5 mb-1"><%= topic['Name'] %></h5>
+                  <% 
+                     desc = topic['Description']
+                     desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+                  %>
+                  <div class="is-size-6 has-text-grey"><%= desc_text.strip.slice(0..150) %><%= "..." if desc_text.length > 150 %></div>
+                </div>
+                <div class="has-text-right">
+                  <span class="tag is-light"><%= topic['ThreadCount'] %> Threads</span>
+                  <span class="icon has-text-grey-light ml-2"><i class="fas fa-chevron-right"></i></span>
+                </div>
+              </div>
+            </a>
+          <% end %>
+        </div>
+      <% else %>
+        <p class="has-text-grey">No topics found for this forum.</p>
+      <% end %>
+    </div>
+  </div>
+</div>
