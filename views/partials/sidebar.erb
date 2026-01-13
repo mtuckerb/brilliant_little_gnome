@@ -18,9 +18,17 @@
     </li>
   </ul>
   
-  <p class="menu-label">
-    Table of Contents
-  </p>
+  <div class="is-flex is-justify-content-space-between is-align-items-center mt-4 mb-2">
+    <p class="menu-label mb-0">Table of Contents</p>
+    <div class="buttons">
+      <button class="button is-ghost is-small p-0 h-auto" onclick="toggleAllTOC(true)" title="Expand All">
+        <span class="icon is-small"><i class="fas fa-expand-arrows-alt"></i></span>
+      </button>
+      <button class="button is-ghost is-small p-0 h-auto ml-1" onclick="toggleAllTOC(false)" title="Collapse All">
+        <span class="icon is-small"><i class="fas fa-compress-arrows-alt"></i></span>
+      </button>
+    </div>
+  </div>
 
   <div class="px-2 mb-4">
     <form action="/course/<%= @course_id %>/search" method="GET">
@@ -47,3 +55,15 @@
     <% end %>
   </ul>
 </aside>
+
+<script>
+  function toggleAllTOC(open) {
+    document.querySelectorAll('.toc-details').forEach(details => {
+      details.open = open;
+    });
+  }
+</script>
+
+<style>
+  .h-auto { height: auto !important; }
+</style>

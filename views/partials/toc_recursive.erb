@@ -1,26 +1,57 @@
-<li style="list-style-type: none;">
-  <% 
-     is_active = (@active_tab == "module_#{mod['ModuleId']}")
-  %>
-  <div class="is-flex is-align-items-center mb-1">
-    <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" 
-       class="<%= 'is-active slide-active' if is_active %>" 
-       style="flex-grow: 1; padding: 2px 5px !important; font-size: 0.85rem; <%= is_active ? 'font-weight: bold;' : '' %>">
-      <% if is_active %>
-        <script>
-          // Scroll active element into view on load if it's not visible
-          window.addEventListener('load', () => { document.querySelector('.slide-active')?.scrollIntoView({ behavior: 'auto', block: 'nearest' }); });
-        </script>
-      <% end %>
-      <%= mod['Title'] %>
-    </a>
-  </div>
+<% 
+  is_active = (@active_tab == "module_#{mod['ModuleId']}")
+  # Parent is "in lineage" if we are currently viewing it or one of its descendants
+  is_in_lineage = (@lineage && @lineage.include?(mod['ModuleId'].to_s))
+  has_children = mod['Modules'] && !mod['Modules'].empty?
+%>
 
-  <% if mod['Modules'] && !mod['Modules'].empty? %>
-    <ul class="toc-nested" style="display: block; list-style-type: none; margin-top: 0; padding-left: 1rem;">
-      <% mod['Modules'].each do |sub| %>
-        <%= erb :'partials/toc_recursive', locals: { mod: sub, depth: depth + 1 } %>
-      <% end %>
-    </ul>
+<li style="list-style-type: none;" class="toc-item-container">
+  <% if has_children %>
+    <details class="toc-details" <%= 'open' if is_in_lineage %>>
+      <summary class="is-clickable mb-1" style="list-style: none; outline: none;">
+        <div class="is-flex is-align-items-center">
+          <span class="icon is-small has-text-grey-light mr-1 chevron-icon">
+            <i class="fas fa-chevron-right fa-xs"></i>
+          </span>
+          <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" 
+             class="<%= 'is-active slide-active' if is_active %>" 
+             style="flex-grow: 1; padding: 2px 2px !important; font-size: 0.85rem; <%= is_active ? 'font-weight: bold;' : '' %>">
+            <%= mod['Title'] %>
+          </a>
+        </div>
+      </summary>
+      
+      <ul class="toc-nested" style="list-style-type: none; margin-top: 0; padding-left: 0.75rem; border-left: 1px solid #efefef; margin-left: 0.4rem;">
+        <% mod['Modules'].each do |sub| %>
+          <%= erb :'partials/toc_recursive', locals: { mod: sub, depth: depth + 1 } %>
+        <% end %>
+      </ul>
+    </details>
+  <% else %>
+    <div class="is-flex is-align-items-center mb-1">
+      <span class="icon is-small mr-1" style="visibility: hidden;"><i class="fas fa-chevron-right fa-xs"></i></span>
+      <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" 
+         class="<%= 'is-active slide-active' if is_active %>" 
+         style="flex-grow: 1; padding: 2px 2px !important; font-size: 0.85rem; <%= is_active ? 'font-weight: bold;' : '' %>">
+        <%= mod['Title'] %>
+      </a>
+    </div>
+  <% end %>
+
+  <% if is_active %>
+    <script>
+      // Scroll active element into view on load if it's not visible
+      window.addEventListener('load', () => { 
+        document.querySelector('.slide-active')?.scrollIntoView({ behavior: 'auto', block: 'nearest' }); 
+      });
+    </script>
   <% end %>
 </li>
+
+<style>
+  .toc-details summary::-webkit-details-marker { display: none; }
+  .toc-details[open] > summary .chevron-icon { transform: rotate(90deg); }
+  .toc-details summary .chevron-icon { transition: transform 0.1s ease-in-out; }
+  .toc-details summary a:hover { text-decoration: underline; }
+  .toc-item-container .is-active { background-color: #f5f5f5; border-radius: 4px; }
+</style>
