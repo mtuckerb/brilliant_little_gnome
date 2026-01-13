@@ -127,13 +127,14 @@ before '/course/:id*' do
   
   @user = $client.get_who_am_i
   @course_id = params[:id]
+
+  # Try to load course from normalized table
+  @course = Course.find_by(org_unit_id: @course_id)
+  @course_name = @course ? @course.name : "Course #{@course_id}"
+  
+  # Fetch TOC (can still use cache/API for complexity)
   @toc = $client.get_toc(@course_id)
   
-  # Fetch course name from enrollments (caching this would be better)
-  enrollments = $client.get_enrollments
-  course_obj = enrollments.find { |e| e['OrgUnit']['Id'].to_s == @course_id }
-  @course_name = course_obj ? course_obj['OrgUnit']['Name'] : "Course #{@course_id}"
-
   # Identify the lineage of the current module to keep the sidebar expanded
   current_module_id = params[:module_id] || (request.path.split('/module/')[1] if request.path.include?('/module/'))
   @lineage = find_lineage(@toc['Modules'], current_module_id) if @toc && current_module_id
@@ -167,7 +168,14 @@ get '/dashboard' do
   $client.sync_all_courses_proactively
   
   @user = $client.get_who_am_i
-  @courses = $client.get_enrollments
+  # Load courses from normalized table for speed
+  @courses = Course.all.unscope(:order).order(is_pinned: :desc, last_accessed_at: :desc)
+  
+  # Fallback if DB is empty
+  if @courses.empty?
+    @courses_raw = $client.get_enrollments
+  end
+
   @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
   
   erb :dashboard

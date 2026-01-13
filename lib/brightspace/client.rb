@@ -60,9 +60,13 @@ class BrightspaceClient
           course_id = c['OrgUnit']['Id']
           
           # Sync Core
-          get_toc(course_id)
+          toc = get_toc(course_id)
+          sync_course_content(course_id, toc) if toc
+          
           sleep 0.5
-          get_assignments(course_id)
+          assignments = get_assignments(course_id)
+          sync_assignments(course_id, assignments) if assignments
+          
           sleep 0.5
           
           # Sync Discussions
@@ -93,6 +97,17 @@ class BrightspaceClient
   def sync_notifications(courses, user)
     puts "[Brightspace API] Syncing notifications to DB..."
     
+    # Sync courses to normalized table
+    courses.each do |c|
+      course = Course.find_or_initialize_by(org_unit_id: c['OrgUnit']['Id'].to_s)
+      course.name = c['OrgUnit']['Name']
+      course.code = c['OrgUnit']['Code']
+      course.is_pinned = !c['PinDate'].nil?
+      course.last_accessed_at = Time.parse(c.dig('Access', 'LastAccessed')) rescue nil
+      course.semester = extract_semester_from_name(course.name)
+      course.save!
+    end
+
     # Get unified feed first (broad coverage)
     feed_items = get_unified_feed(courses)
     feed_items.each do |item|
@@ -430,6 +445,69 @@ class BrightspaceClient
         is_personal: false,
         url: item.dig('Metadata', 'WebViewUrl') ? "https://#{@host}#{item.dig('Metadata', 'WebViewUrl')}" : nil
       }
+    end
+  end
+
+  def sync_course_content(course_id, toc)
+    return unless toc.is_a?(Array)
+    
+    toc.each_with_index do |mod, index|
+      m = ContentModule.find_or_initialize_by(brightspace_id: mod['Identifier'], course_id: course_id.to_s)
+      m.title = mod['Title']
+      m.description = mod.dig('Description', 'Text')
+      m.sort_order = index
+      m.save!
+      
+      # Sync topics/items
+      (mod['Topics'] || []).each do |topic|
+        item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'], module_id: mod['Identifier'])
+        item.title = topic['Title']
+        item.item_type = topic['Type'] || 'Topic'
+        item.url = topic['Url']
+        item.is_hidden = topic['IsHidden'] || false
+        item.save!
+      end
+      
+      # Recursively sync sub-modules
+      sync_sub_modules(course_id, mod['Identifier'], mod['Modules']) if mod['Modules']
+    end
+  end
+
+  def sync_sub_modules(course_id, parent_id, sub_modules)
+    return unless sub_modules.is_a?(Array)
+    
+    sub_modules.each_with_index do |mod, index|
+      m = ContentModule.find_or_initialize_by(brightspace_id: mod['Identifier'], course_id: course_id.to_s)
+      m.title = mod['Title']
+      m.description = mod.dig('Description', 'Text')
+      m.sort_order = index
+      m.parent_id = parent_id
+      m.save!
+      
+      (mod['Topics'] || []).each do |topic|
+        item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'], module_id: mod['Identifier'])
+        item.title = topic['Title']
+        item.item_type = topic['Type'] || 'Topic'
+        item.url = topic['Url']
+        item.is_hidden = topic['IsHidden'] || false
+        item.save!
+      end
+      
+      sync_sub_modules(course_id, mod['Identifier'], mod['Modules']) if mod['Modules']
+    end
+  end
+
+  def sync_assignments(course_id, assignments)
+    items = assignments.is_a?(Hash) ? (assignments['Items'] || []) : assignments
+    return unless items.is_a?(Array)
+    
+    items.each do |a|
+      assignment = Assignment.find_or_initialize_by(brightspace_id: a['Id'].to_s, course_id: course_id.to_s)
+      assignment.name = a['Name']
+      assignment.due_date = Time.parse(a['DueDate']) rescue nil
+      assignment.description = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
+      assignment.is_graded = a['IsGraded'] || false
+      assignment.save!
     end
   end
 
