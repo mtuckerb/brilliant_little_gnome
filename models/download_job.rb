@@ -1,13 +1,13 @@
 require 'securerandom'
 
 class DownloadJob
-  attr_reader :id, :status, :total_files, :completed_files, :zip_path, :error
+  attr_reader :id, :status, :total_files, :completed_files, :zip_path, :error, :download_filename
 
   @jobs = {}
   @mutex = Mutex.new
 
-  def self.create(course_id, files, client)
-    job = new(course_id, files, client)
+  def self.create(course_id, files, client, download_filename: nil)
+    job = new(course_id, files, client, download_filename)
     @mutex.synchronize { @jobs[job.id] = job }
     job.start
     job
@@ -17,7 +17,7 @@ class DownloadJob
     @mutex.synchronize { @jobs[id] }
   end
 
-  def initialize(course_id, files, client)
+  def initialize(course_id, files, client, download_filename = nil)
     @id = SecureRandom.uuid
     @course_id = course_id
     @files = files
@@ -27,6 +27,7 @@ class DownloadJob
     @completed_files = 0
     @zip_path = nil
     @error = nil
+    @download_filename = download_filename || "Britespace_#{@course_id}_#{Time.now.strftime('%Y%m%d')}.zip"
   end
 
   def start
@@ -35,6 +36,8 @@ class DownloadJob
         @status = :downloading
         temp_dir = Dir.mktmpdir("bs_download_#{@id}")
         
+        # We keep the UUID in the disk filename to avoid collisions in temp storage,
+        # but we'll use @download_filename when serving it to the user.
         @zip_path = File.join(Dir.tmpdir, "Britespace_#{@course_id}_#{@id}.zip")
 
         Zip::File.open(@zip_path, Zip::File::CREATE) do |zipfile|

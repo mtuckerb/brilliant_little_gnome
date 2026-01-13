@@ -330,7 +330,8 @@ get '/course/:id/download_all' do
     return "No downloadable files found in this course."
   end
 
-  job = DownloadJob.create(@course_id, files, $client)
+  filename = "Britespace-#{@course_id}-#{Time.now.strftime('%Y%m%d')}.zip"
+  job = DownloadJob.create(@course_id, files, $client, download_filename: filename)
   redirect "/job/#{job.id}"
 end
 
@@ -347,7 +348,9 @@ get '/course/:id/module/:module_id/download_all' do
     return "No downloadable files found in this module."
   end
 
-  job = DownloadJob.create(module_id, files, $client)
+  # Use the course ID for the filename as per requirement
+  filename = "Britespace-#{@course_id}-#{Time.now.strftime('%Y%m%d')}.zip"
+  job = DownloadJob.create(module_id, files, $client, download_filename: filename)
   redirect "/job/#{job.id}"
 end
 
@@ -382,7 +385,7 @@ end
 get '/job/:id/download' do
   job = DownloadJob.find(params[:id])
   if job && job.status == :completed && File.exist?(job.zip_path)
-    send_file job.zip_path, :type => 'application/zip', :disposition => 'attachment', :filename => File.basename(job.zip_path)
+    send_file job.zip_path, :type => 'application/zip', :disposition => 'attachment', :filename => job.download_filename
   else
     "File not ready or job failed."
   end
