@@ -209,6 +209,32 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id/threads/:thread_id' do
   erb :discussion_posts
 end
 
+
+# Generic Download Route for explicit paths
+get '/course/:id/download' do
+  path = params[:path]
+  name = params[:name] || "download"
+  
+  puts "[Britespace Download] Requested path: #{path}"
+  
+  # Ensure path starts with /
+  path = "/#{path}" unless path.start_with?('/')
+  
+  http_resp = $client.download_file(path)
+  
+  if http_resp && http_resp.code == '200'
+    content_type http_resp['Content-Type'] || 'application/octet-stream'
+    # Use URI encoding for the filename in the header to handle spaces and special chars safely
+    safe_name = name.gsub(/[^0-9A-Za-z.\- ]/, '_')
+    headers["Content-Disposition"] = "attachment; filename=\"#{safe_name}\""
+    http_resp.body
+  else
+    status_code = http_resp ? http_resp.code : 'No Response'
+    puts "[Britespace Download] FAILED with status #{status_code} for path #{path}"
+    "Download failed: Status #{status_code}. <br>Detailed Path: #{path}"
+  end
+end
+
 # NEW: Search
 get '/course/:id/search' do
   @query = params[:q]
@@ -246,7 +272,7 @@ end
 
 # ASYNC: Download All Files in a Course
 get '/course/:id/download_all' do
-  files = collect_course_files(@toc)
+  files = collect_everything(@course_id, $client, @toc)
   if files.empty?
     return "No downloadable files found in this course."
   end
@@ -259,7 +285,10 @@ end
 get '/course/:id/module/:module_id/download_all' do
   module_id = params[:module_id]
   mod_obj = find_module(@toc['Modules'], module_id)
-  files = collect_all_files(mod_obj)
+  
+  # For a single module, we'll just use its name as the folder
+  folder_name = mod_obj ? mod_obj['Title'].gsub(/[^0-9a-z]/i, '_') : "Module"
+  files = collect_all_files(mod_obj, folder_name)
   
   if files.empty?
     return "No downloadable files found in this module."

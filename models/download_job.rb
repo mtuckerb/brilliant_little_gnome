@@ -44,17 +44,29 @@ class DownloadJob
               safe_name = f[:title].gsub(/[^0-9A-Za-z.\- ]/, '_')
               safe_name += ".pdf" unless safe_name.include?('.')
               
+              # Construct path within zip using the folder metadata
+              zip_entry_path = if f[:folder]
+                                 "#{f[:folder]}/#{safe_name}"
+                               else
+                                 safe_name
+                               end
+
               # Handle duplicate names in zip
-              original_name = safe_name
+              original_full_path = zip_entry_path
               counter = 1
-              while zipfile.find_entry(safe_name)
-                ext = File.extname(original_name)
-                base = File.basename(original_name, ext)
-                safe_name = "#{base}_#{counter}#{ext}"
+              while zipfile.find_entry(zip_entry_path)
+                ext = File.extname(safe_name)
+                base = File.basename(safe_name, ext)
+                new_filename = "#{base}_#{counter}#{ext}"
+                zip_entry_path = if f[:folder]
+                                   "#{f[:folder]}/#{new_filename}"
+                                 else
+                                   new_filename
+                                 end
                 counter += 1
               end
 
-              zipfile.get_output_stream(safe_name) { |os| os.write resp.body }
+              zipfile.get_output_stream(zip_entry_path) { |os| os.write resp.body }
             end
             @completed_files += 1
             sleep(0.5) # Respectful rate limit

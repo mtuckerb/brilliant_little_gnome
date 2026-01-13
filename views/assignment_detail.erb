@@ -12,9 +12,14 @@
         </ul>
       </nav>
 
-      <div class="level">
+      <div class="level mb-4">
         <div class="level-left">
-          <h4 class="title is-4"><%= @assignment['Name'] %></h4>
+          <div>
+            <h4 class="title is-4 mb-2"><%= @assignment['Name'] %></h4>
+            <div class="is-size-6 has-text-grey">
+              <i class="fas fa-calendar-alt mr-1"></i> Due: <%= @assignment['DueDate'] ? Time.parse(@assignment['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %>
+            </div>
+          </div>
         </div>
         <div class="level-right">
           <div class="buttons">
@@ -22,9 +27,6 @@
               <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
               <span>Open in Brightspace</span>
             </a>
-            <span class="tag is-primary is-medium">
-              Due: <%= @assignment['DueDate'] ? Time.parse(@assignment['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %>
-            </span>
           </div>
         </div>
       </div>
@@ -49,11 +51,15 @@
           <h6 class="subtitle is-6 has-text-grey uppercase">Attachments</h6>
           <div class="list is-hoverable">
             <% @assignment['Attachments'].each do |att| %>
+              <% 
+                 download_url = "/d2l/api/le/1.40/#{@course_id}/dropbox/folders/#{@assignment_id}/attachments/#{att['FileId']}"
+              %>
               <div class="list-item">
                 <div class="is-flex is-justify-content-space-between is-align-items-center">
-                  <span><i class="fas fa-paperclip mr-2 has-text-grey"></i><%= att['FileName'] %></span>
-                  <!-- Note: Assignment attachment downloads often have separate dedicated endpoints in D2L, 
-                       but linking them would depend on the specific API version. For now we show the name. -->
+                  <span><i class="fas fa-file-alt mr-2 has-text-grey"></i><%= att['FileName'] %></span>
+                  <a href="/course/<%= @course_id %>/download?path=<%= URI.encode_www_form_component(download_url) %>&name=<%= URI.encode_www_form_component(att['FileName']) %>" class="button is-small is-light">
+                    <span class="icon is-small"><i class="fas fa-download"></i></span>
+                  </a>
                 </div>
               </div>
             <% end %>

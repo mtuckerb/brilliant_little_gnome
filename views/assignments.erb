@@ -20,16 +20,21 @@
         <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Due Date</th>
+              <th>Assignment</th>
               <th class="has-text-right">Action</th>
             </tr>
           </thead>
           <tbody>
             <% @assignments.each do |a| %>
               <tr>
-                <td><strong><a href="/course/<%= @course_id %>/assignments/<%= a['Id'] %>"><%= a['Name'] %></a></strong></td>
-                <td><%= a['DueDate'] ? Time.parse(a['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %></td>
+                <td>
+                  <div class="mb-1">
+                    <strong><a href="/course/<%= @course_id %>/assignments/<%= a['Id'] %>"><%= a['Name'] %></a></strong>
+                  </div>
+                  <div class="is-size-7 has-text-grey">
+                    <i class="fas fa-calendar-alt mr-1"></i> Due: <%= a['DueDate'] ? Time.parse(a['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %>
+                  </div>
+                </td>
                 <td class="has-text-right">
                   <a href="/course/<%= @course_id %>/assignments/<%= a['Id'] %>" class="button is-small is-primary is-light">View Details</a>
                 </td>

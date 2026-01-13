@@ -34,7 +34,7 @@ module CourseHelpers
   end
 
   # Recursively collects all files from a module tree
-  def collect_all_files(module_obj, files = [])
+  def collect_all_files(module_obj, folder_name, files = [])
     return files unless module_obj
 
     # Add topics that are files
@@ -44,29 +44,70 @@ module CourseHelpers
           files << { 
             id: (t['Id'] || t['TopicId']), 
             title: t['Title'], 
-            path: "/d2l/api/le/1.40/#{@course_id}/content/topics/#{t['Id'] || t['TopicId']}/file"
+            path: "/d2l/api/le/1.40/#{@course_id}/content/topics/#{t['Id'] || t['TopicId']}/file",
+            folder: folder_name
           }
         end
       end
     end
 
-    # Recurse into sub-modules
+    # Recurse into sub-modules but keep the top-level folder name for grouping
     if module_obj['Modules']
       module_obj['Modules'].each do |sub|
-        collect_all_files(sub, files)
+        collect_all_files(sub, folder_name, files)
       end
     end
 
     files
   end
 
-  # Recursively collects all files from the entire TOC
-  def collect_course_files(toc)
-    return [] unless toc && toc['Modules']
+  # Collects all files with the requested structure
+  def collect_everything(course_id, client, toc)
     files = []
-    toc['Modules'].each do |m|
-      collect_all_files(m, files)
+    
+    # 1. Syllabus/Overview
+    files << {
+      title: "Syllabus_Overview.pdf",
+      path: "/d2l/api/le/1.40/#{course_id}/overview/attachment",
+      folder: "Syllabus_Overview"
+    }
+
+    # 2. Announcements (only if they have attachments)
+    news = client.get_news(course_id) || []
+    news.each do |item|
+      if item['Attachments'] && !item['Attachments'].empty?
+        item['Attachments'].each do |att|
+          files << {
+            title: att['FileName'],
+            path: "/d2l/api/le/1.40/#{course_id}/news/#{item['Id']}/attachments/#{att['FileId']}",
+            folder: "Announcements"
+          }
+        end
+      end
     end
+
+    # 3. Assignments (with attachments)
+    assignments = client.get_assignments(course_id) || []
+    assignments.each do |a|
+      if a['Attachments'] && !a['Attachments'].empty?
+        a['Attachments'].each do |att|
+          files << {
+            title: att['FileName'],
+            path: "/d2l/api/le/1.40/#{course_id}/dropbox/folders/#{a['Id']}/attachments/#{att['FileId']}",
+            folder: "Assignments/#{a['Name'].gsub(/[^0-9a-z]/i, '_')}"
+          }
+        end
+      end
+    end
+
+    # 4. Table of Contents (Modules)
+    if toc && toc['Modules']
+      toc['Modules'].each do |m|
+        folder_name = "Table_of_Contents/#{m['Title'].gsub(/[^0-9a-z]/i, '_')}"
+        collect_all_files(m, folder_name, files)
+      end
+    end
+
     files
   end
 
