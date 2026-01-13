@@ -1,79 +1,62 @@
-# Brilliant Little Gnome
-a Brightspace Student Helper
+# Brilliant
 
-This is a Proof of Concept (PoC) Ruby script to interact with the D2L Brightspace API.
-It implements the OAuth 2.0 flow to authenticate a student and retrieve their course enrollments.
+A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard.
 
-## Prerequisites
+## Features
 
-1.  **Ruby**: Installed on your system.
-2.  **Brightspace Account**: Access to a generic Brightspace instance.
-3.  **App Credentials**: You must register an OAuth 2.0 application in Brightspace.
+- **Unified Notification Feed**: Newest items first, across all your courses.
+- **Smart Filtering**: Filter by semester (e.g., "Spring 2026"), course, or urgency.
+- **Read/Unread Status**: Mark items as read to focus on what's new. Syncs back to Brightspace (dismisses news items).
+- **Dashboard Widget**: Quick view of unread updates.
+- **Resource Download**: Download syllabus, module files, or entire course modules as ZIP archives.
+- **Calendar Export**: Export assignment due dates to ICS/iCal format.
 
-## Setup: Getting Credentials
+## Setup
 
-To use this tool, you need a **Client ID** and **Client Secret**.
+### 1. Prerequisites
+- Ruby 2.6+
+- SQLite3
+- Bundler
 
-### Option A: You are an Administrator
-1.  Log in to your Brightspace instance.
-2.  Go to **Admin Tools** (gear icon) -> **Manage Extensibility**.
-3.  Click **OAuth 2.0** tab.
-4.  Click **Register an App**.
-5.  Fill in the details:
-    *   **Application Name**: Student Dashboard PoC
-    *   **Redirect URI**: `https://localhost/callback`
-    *   **Scope**: `core:*:* enrollments:*:* content:*:* grades:*:*`
-    *   **AccessToken Lifetime**: Default (3600)
-6.  Save.
-7.  Copy the **Client ID** and **Client Secret**.
+### 2. Configuration
+The easiest way to authenticate is by using your browser's session cookies.
 
-### Option B: You are a Student or Instructor
-You generally **cannot** generate these keys yourself.
-1.  Contact your university's LMS/Brightspace Administrator.
-2.  Request an "OAuth 2.0 App Registration" for a student tool.
-3.  Provide them with the **Redirect URI** (`https://localhost/callback`) and **Scopes** listed above.
+#### How to get `cookies.txt`:
+1. Log in to your Brightspace instance in Chrome or Firefox.
+2. Open the **Developer Tools** (F12) -> **Network** tab.
+3. Refresh the page or click a link to a course.
+4. Locate any request to your school's host (e.g., `courses.maine.edu`).
+5. Look at the **Headers** -> **Request Headers**.
+6. Find the `Cookie:` header. It will be a long string starting with something like `d2lt=...; d2l_referrer=...`.
+7. Copy the **entire value** of the `Cookie:` header (everything after the word `Cookie: `).
+8. Create a file named `cookies.txt` in the root of this project and paste the string inside.
 
-## Usage
+Alternatively, if you have a developer token (Access Token), you can paste the raw token directly into `cookies.txt`.
 
-1.  Open your terminal.
-2.  Export your configuration as environment variables:
+### 3. Running the App
+1. Install dependencies:
+   ```bash
+   bundle install
+   ```
+2. Initialize the database:
+   ```bash
+   bundle exec rake db:migrate
+   ```
+3. Set your host environment variable:
+   ```bash
+   export BS_HOST="your-school.brightspace.com"
+   ```
+4. Start the server:
+   ```bash
+   ruby app.rb
+   ```
+5. Visit `http://localhost:4567` in your browser.
 
-    ```bash
-    export BS_HOST="your-school.brightspace.com"       # without https://
-    export BS_CLIENT_ID="your_client_id_here"
-    export BS_CLIENT_SECRET="your_client_secret_here"
-    # export BS_REDIRECT_URI="https://localhost/callback" # Only if you changed it registration
-    ```
+## Database Management
+If your notifications feel out of sync or you want a fresh start, use the **"Reset & Sync All"** button on the Notifications page. This will:
+- Clear the local API cache.
+- Wipe the local notifications table.
+- Trigger a fresh background sync from the Brightspace API.
 
-3.  Run the script:
-
-    ```bash
-    ruby brightspace_poc.rb
-    ```
-
-4.  **Follow the on-screen instructions**:
-    *   The script will print a URL.
-    *   Open that URL in your browser.
-    *   Log in to Brightspace.
-    *   Click "Accept" if prompted.
-    *   You will be redirected to a page that fails to load (because we aren't running a server on localhost). **This is expected.**
-    *   Look at the URL bar. It will look like: `https://localhost/callback?code=jaiu12312kkjasd...`
-    *   Copy the value of the `code` parameter (part after `code=`).
-    *   Paste it into the terminal prompt.
-
-5.  The script will verify the token and list your courses.
-
-## Features Implemented
-
-*   **OAuth 2.0 Authentication**: Securely gets an Access Token.
-*   **WhoAmI**: Verifies identity.
-*   **Get Enrollments**: Lists all visible course offerings for the user.
-
-## Next Steps to Build the Full Tool
-
-To expand this into a full "Student Tool":
-1.  **Add Endpoints**: 
-    *   Add `get_course_content(org_unit_id)` using `/d2l/api/le/1.40/{id}/content/toc`.
-    *   Add `get_assignments(org_unit_id)` using `/d2l/api/le/1.40/{id}/dropbox/folders/`.
-    *   Add `get_grades(org_unit_id)` using `/d2l/api/le/1.40/{id}/grades/final/values/myGradeValues/`.
-2.  **UI**: Wrap this logic in a local web server (using Sinatra or Rails) or a TUI (Text User Interface).
+## Design
+Built with **Sinatra**, **ActiveRecord**, and **Bulma**. Designed for students who want to skip the heavy Brightspace UI and get straight to their data.
