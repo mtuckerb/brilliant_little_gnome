@@ -5,13 +5,6 @@
   </div>
   <div class="column is-9">
     <div class="box">
-      <nav class="breadcrumb is-small" aria-label="breadcrumbs">
-        <ul>
-          <li><a href="/course/<%= @course_id %>/discussions"><span class="icon is-small"><i class="fas fa-home"></i></span></a></li>
-          <li class="is-active"><a href="#" aria-current="page"><%= @forum ? @forum['Name'] : 'Topics' %></a></li>
-        </ul>
-      </nav>
-
       <div class="level">
         <div class="level-left">
           <h4 class="title is-4"><i class="fas fa-list mr-2"></i> <%= @forum ? @forum['Name'] : 'Topics' %></h4>

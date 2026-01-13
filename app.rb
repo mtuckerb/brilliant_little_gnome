@@ -17,6 +17,13 @@ $client = BrightspaceClient.new
 # Helpers
 helpers CourseHelpers
 
+helpers do
+  def truncate_text(text, max_length = 10)
+    return text if text.nil? || text.length <= max_length
+    text[0...max_length-1] + "…"
+  end
+end
+
 # ==========================================
 # Routes
 # ==========================================
@@ -74,6 +81,7 @@ end
 # Course Overview / Syllabus
 get '/course/:id' do
   @active_tab = 'overview'
+  @breadcrumb_trail = [{ title: 'Overview', url: "/course/#{@course_id}" }]
   @overview = $client.get_overview(@course_id)
   @syllabus_module = find_syllabus_module(@toc['Modules']) if @toc
   
@@ -87,12 +95,17 @@ get '/course/:id/module/:module_id' do
   @module = find_module(@toc['Modules'], @module_id)
   @breadcrumbs = build_breadcrumbs(@toc['Modules'], @module_id) if @toc
   
+  @breadcrumb_trail = (@breadcrumbs || []).map do |crumb|
+    { title: crumb[:title], url: "/course/#{@course_id}/module/#{crumb[:id]}" }
+  end
+  
   erb :module_detail
 end
 
 # Assignments
 get '/course/:id/assignments' do
   @active_tab = 'assignments'
+  @breadcrumb_trail = [{ title: 'Assignments', url: "/course/#{@course_id}/assignments" }]
   @assignments = $client.get_assignments(@course_id)
   erb :assignments
 end
@@ -125,12 +138,17 @@ get '/course/:id/assignments/:assignment_id' do
   @active_tab = 'assignments'
   @assignment_id = params[:assignment_id]
   @assignment = $client.get_assignment(@course_id, @assignment_id)
+  @breadcrumb_trail = [
+    { title: 'Assignments', url: "/course/#{@course_id}/assignments" },
+    { title: @assignment['Name'], url: "/course/#{@course_id}/assignments/#{@assignment_id}" }
+  ]
   erb :assignment_detail
 end
 
 # Announcements
 get '/course/:id/announcements' do
   @active_tab = 'announcements'
+  @breadcrumb_trail = [{ title: 'Announcements', url: "/course/#{@course_id}/announcements" }]
   @news = $client.get_news(@course_id)
   erb :announcements
 end
@@ -138,6 +156,7 @@ end
 # Grades
 get '/course/:id/grades' do
   @active_tab = 'grades'
+  @breadcrumb_trail = [{ title: 'Grades', url: "/course/#{@course_id}/grades" }]
   @grades = $client.get_grades(@course_id)
   erb :grades
 end
@@ -146,6 +165,7 @@ end
 get '/course/:id/discussions' do
   @active_tab = 'discussions'
   @topics = $client.get_all_topics(@course_id)
+  @breadcrumb_trail = [{ title: 'Discussions', url: "/course/#{@course_id}/discussions" }]
   erb :discussions
 end
 
@@ -155,6 +175,10 @@ get '/course/:id/discussions/:forum_id/topics' do
   @forum_id = params[:forum_id]
   @forum = $client.get_discussion_forum(@course_id, @forum_id)
   @topics = $client.get_discussion_topics(@course_id, @forum_id)
+  @breadcrumb_trail = [
+    { title: 'Discussions', url: "/course/#{@course_id}/discussions" },
+    { title: @forum['Name'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics" }
+  ]
   erb :discussion_topics
 end
 
@@ -167,6 +191,11 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   @forum = $client.get_discussion_forum(@course_id, @forum_id)
   @topic = $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
   @evaluation = $client.get_discussion_evaluation(@course_id, @forum_id, @topic_id)
+  
+  @breadcrumb_trail = [
+    { title: 'Discussions', url: "/course/#{@course_id}/discussions" },
+    { title: @topic['Name'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics/#{@topic_id}" }
+  ]
   
   @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id, force_refresh: params[:force_refresh] == 'true')
 
@@ -203,9 +232,14 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id/threads/:thread_id' do
   @forum = $client.get_discussion_forum(@course_id, @forum_id)
   @topic = $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
   @thread = $client.get_discussion_thread(@course_id, @forum_id, @topic_id, @thread_id)
+  @breadcrumb_trail = [
+    { title: 'Discussions', url: "/course/#{@course_id}/discussions" },
+    { title: @topic['Name'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics/#{@topic_id}" },
+    { title: @thread['Title'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics/#{@topic_id}/threads/#{@thread_id}" }
+  ]
   @posts_data = $client.get_thread_posts(@course_id, @forum_id, @topic_id, @thread_id)
   @posts = @posts_data.is_a?(Hash) ? (@posts_data['Items'] || []) : (@posts_data || [])
-  
+
   erb :discussion_posts
 end
 

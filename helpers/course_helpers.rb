@@ -1,4 +1,10 @@
 module CourseHelpers
+  def truncate_text(text, max_length = 20)
+    return text if text.nil? || text.length <= max_length
+    text[0...max_length-1] + "…"
+  end
+
+
   def find_module(modules, id)
     return nil unless modules
     modules.each do |m|

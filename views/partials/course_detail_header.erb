@@ -1,11 +1,23 @@
 <nav class="breadcrumb" aria-label="breadcrumbs">
   <ul>
+    <li><a href="/dashboard"><i class="fas fa-home"></i></a></li>
     <li><a href="/dashboard">Courses</a></li>
-    <li><a href="/course/<%= @course_id %>"><%= @course_name %></a></li>
-    <% if @breadcrumbs %>
+    <li><a href="/course/<%= @course_id %>" title="<%= @course_name %>"><%= truncate_text(@course_name) %></a></li>
+    
+    <% if @breadcrumb_trail %>
+      <% @breadcrumb_trail.each_with_index do |crumb, index| %>
+        <li class="<%= 'is-active' if index == @breadcrumb_trail.size - 1 %>">
+          <a href="<%= crumb[:url] %>" <%= 'aria-current="page"' if index == @breadcrumb_trail.size - 1 %> title="<%= crumb[:title] %>">
+            <%= truncate_text(crumb[:title]) %>
+          </a>
+        </li>
+      <% end %>
+    <% elsif @breadcrumbs %>
       <% @breadcrumbs.each_with_index do |crumb, index| %>
         <li class="<%= 'is-active' if index == @breadcrumbs.size - 1 %>">
-          <a href="/course/<%= @course_id %>/module/<%= crumb[:id] %>" <%= 'aria-current="page"' if index == @breadcrumbs.size - 1 %>><%= crumb[:title] %></a>
+          <a href="/course/<%= @course_id %>/module/<%= crumb[:id] %>" <%= 'aria-current="page"' if index == @breadcrumbs.size - 1 %> title="<%= crumb[:title] %>">
+            <%= truncate_text(crumb[:title]) %>
+          </a>
         </li>
       <% end %>
     <% end %>
