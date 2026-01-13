@@ -22,7 +22,6 @@
           <thead>
             <tr>
               <th>Topic</th>
-              <th>Forum</th>
               <th class="has-text-centered">Threads</th>
               <th class="has-text-centered">Posts</th>
               <th>Last Post</th>
@@ -35,11 +34,18 @@
                   <a href="/course/<%= @course_id %>/discussions/<%= topic['ForumId'] %>/topics/<%= topic['TopicId'] %>" class="has-text-weight-bold">
                     <%= topic['Name'] %>
                   </a>
-                  <div class="is-size-7 has-text-grey">Created: <%= Time.parse(topic['StartDate']).strftime("%b %d, %Y") if topic['StartDate'] %></div>
+                  <div class="is-size-7 has-text-grey">
+                    <% if topic['StartDate'] %>
+                        Created: <%= Time.parse(topic['StartDate']).strftime("%b %d, %Y") %>
+                    <% end %>
+                  </div>
                 </td>
-                <td><span class="tag is-light"><%= topic['ForumName'] %></span></td>
-                <td class="has-text-centered"><%= topic['ThreadCount'] %></td>
-                <td class="has-text-centered"><%= topic['PostCount'] %></td>
+                <td class="has-text-centered">
+                    <%= topic['ThreadCount'] || 0 %>
+                </td>
+                <td class="has-text-centered">
+                    <%= topic['PostCount'] || 0 %>
+                </td>
                 <td class="is-size-7">
                   <% if topic['LastPostDate'] %>
                     <%= Time.parse(topic['LastPostDate']).strftime("%b %d, %Y") %><br>

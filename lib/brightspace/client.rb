@@ -9,7 +9,7 @@ class BrightspaceClient
   attr_accessor :token, :cookie_string, :host
 
   def initialize
-    @host = ENV['BS_HOST']
+    @host = ENV['BS_HOST'] || "courses.maine.edu"
     @client_id = ENV['BS_CLIENT_ID']
     @client_secret = ENV['BS_CLIENT_SECRET']
     @redirect_uri = ENV['BS_REDIRECT_URI'] || "http://localhost:4567/callback"
@@ -37,9 +37,9 @@ class BrightspaceClient
           
           # Sync Core
           get_toc(course_id)
-          sleep 2.0
+          sleep 0.5
           get_assignments(course_id)
-          sleep 2.0
+          sleep 0.5
           
           # Sync Discussions
           forums = get_discussions(course_id) || []
@@ -49,7 +49,7 @@ class BrightspaceClient
 
             topics.each do |t|
               get_discussion_topic(course_id, f['ForumId'], t['TopicId'])
-              sleep 1.0
+              sleep 0.5
               
               threads_data = get_discussion_threads(course_id, f['ForumId'], t['TopicId']) || []
               threads = threads_data.is_a?(Hash) ? (threads_data['Items'] || []) : threads_data
@@ -57,9 +57,10 @@ class BrightspaceClient
               threads.each do |th|
                 if th.is_a?(Hash) && th['ThreadId']
                    # ONLY sync posts for things we don't have yet to reduce noise
-                   unless read_cache("/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/#{f['ForumId']}/topics/#{t['TopicId']}/threads/#{th['ThreadId']}/posts/")
+                   posts_path = "/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/#{f['ForumId']}/topics/#{t['TopicId']}/threads/#{th['ThreadId']}/posts/"
+                   unless read_cache(posts_path)
                      get_thread_posts(course_id, f['ForumId'], t['TopicId'], th['ThreadId'])
-                     sleep 3.0 # Very slow to avoid attention
+                     sleep 1.0 # Very slow to avoid attention
                    end
                 end
               end
@@ -68,7 +69,7 @@ class BrightspaceClient
         end
         puts "Proactive sync complete."
       rescue => e
-        # Silent fail for sync
+        puts "Sync error: #{e.message}"
       ensure
         @sync_lock.synchronize { @syncing = false }
       end
@@ -82,7 +83,8 @@ class BrightspaceClient
     if content.start_with?('ey')
       @token = content
     else
-      @cookie_string = content
+      # Strip "Cookie: " prefix if present from browser copy-paste
+      @cookie_string = content.sub(/^Cookie:\s*/i, '')
     end
   end
 
@@ -145,11 +147,11 @@ class BrightspaceClient
   end
 
   def get_assignments(org_unit_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/assignments/")
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/")
   end
 
   def get_assignment(org_unit_id, assignment_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/assignments/#{assignment_id}")
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/#{assignment_id}")
   end
 
   def get_grades(org_unit_id)
@@ -201,10 +203,78 @@ class BrightspaceClient
   end
 
   def get_discussion_threads(org_unit_id, forum_id, topic_id, force_refresh: false)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/", force_refresh: force_refresh)
+    # Attempt 1: Standard forum-based path with trailing slash
+    path1 = "/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/"
+    data = fetch_and_cache_with_fallback(path1, force_refresh: force_refresh)
+    return data if data && !data.empty? && !(data.is_a?(Hash) && data['Items']&.empty?)
+
+    # Attempt 2: Direct topic path (fallback)
+    path2 = "/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/topics/#{topic_id}/threads/"
+    data = fetch_and_cache_with_fallback(path2, force_refresh: force_refresh)
+    return data if data && !data.empty? && !(data.is_a?(Hash) && data['Items']&.empty?)
+
+    # NEW ATTEMPT: If threads are 404/Empty, we fetch ALL POSTS and group them by ThreadId
+    # This is a powerful fallback for environments that lock down the thread list but allow post access.
+    posts_path = "/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/posts/"
+    all_posts = fetch_and_cache_with_fallback(posts_path, force_refresh: force_refresh)
+    
+    if all_posts && all_posts.is_a?(Array) && !all_posts.empty?
+      puts "[Brightspace API] Reconstructing thread list from #{all_posts.size} posts..."
+      
+      # Group by ThreadId
+      threads_map = {}
+      all_posts.each do |p|
+        tid = p['ThreadId']
+        next unless tid
+        
+        threads_map[tid] ||= {
+          'ThreadId' => tid,
+          'TopicId' => p['TopicId'],
+          'ForumId' => p['ForumId'],
+          'Subject' => p['Subject'], 
+          'PostingUserDisplayName' => p['PostingUserDisplayName'],
+          'LastModified' => p['DatePosted'],
+          'ReplyCount' => 0,
+          'IsPinned' => false
+        }
+        
+        # If it's the root post (ParentPostId nil or empty), use its subject/date
+        if p['ParentPostId'].nil? || p['ParentPostId'] == 0
+          threads_map[tid]['Subject'] = p['Subject']
+          threads_map[tid]['DatePosted'] = p['DatePosted']
+          threads_map[tid]['PostingUserDisplayName'] = p['PostingUserDisplayName']
+        else
+          threads_map[tid]['ReplyCount'] += 1
+          # Update LastModified if this post is newer
+          if p['DatePosted'] > (threads_map[tid]['LastModified'] || "")
+             threads_map[tid]['LastModified'] = p['DatePosted']
+          end
+        end
+      end
+      
+      return { 'Items' => threads_map.values.sort_by { |th| th['LastModified'] || "" }.reverse }
+    end
+
+    nil
+  end
+
+  # Helper to handle the actual fetching without recursive do_get calls
+  def fetch_and_cache_with_fallback(path, force_refresh: false)
+    cached = read_cache(path)
+    return cached if cached && !force_refresh
+    
+    # We use fetch_and_cache directly to skip the Thread.new backgrounding in do_get
+    # for these specific fallbacks so we can check results immediately.
+    fetch_and_cache(path)
   end
 
   def get_discussion_evaluation(org_unit_id, forum_id, topic_id)
+    # Explicitly check if forum_id is nil to avoid malformed URLs
+    if forum_id.nil? || forum_id.to_s.empty?
+      puts "[Brightspace API] WARNING: forum_id is nil in get_discussion_evaluation. Using fallback..."
+      # Some versions might allow topics without forum context in the URL
+      return do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/topics/#{topic_id}/evaluations/myEvaluation")
+    end
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/evaluations/myEvaluation")
   end
 
@@ -212,12 +282,27 @@ class BrightspaceClient
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/#{thread_id}")
   end
 
-  # NEW: Fetch Thread Posts
   def get_thread_posts(org_unit_id, forum_id, topic_id, thread_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/#{thread_id}/posts/")
+    # Check if we already have the full post list for this topic in cache
+    # This avoids redundant 404s if threads endpoint is disabled
+    posts_path = "/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/posts/"
+    all_posts = read_cache(posts_path)
+    
+    if all_posts && all_posts.is_a?(Array)
+      filtered = all_posts.select { |p| p['ThreadId'].to_s == thread_id.to_s }
+      return { 'Items' => filtered } unless filtered.empty?
+    end
+
+    path = "/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/#{thread_id}/posts/"
+    data = do_get(path)
+    
+    # Fallback: Topic-only endpoint
+    if data.nil? || (data.is_a?(Hash) && data['Items']&.empty?)
+      data = do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/topics/#{topic_id}/threads/#{thread_id}/posts/")
+    end
+    data
   end
 
-  # NEW: Fetch all News for all courses efficiently
   def get_all_news(courses)
     news_items = []
     courses.each do |c|
@@ -281,8 +366,6 @@ class BrightspaceClient
   private
 
   def get_cache_path(path)
-    # Filter out API version or variable parts if needed for better reuse, 
-    # but simple hash of full path is safest.
     hash = Digest::MD5.hexdigest(path)
     File.join(@cache_dir, "#{hash}.json")
   end
@@ -303,8 +386,6 @@ class BrightspaceClient
   end
 
   def write_cache(path, data)
-    # Protection against cache poisoning: 
-    # Must be an array or hash, and must not look like an error response
     return unless data.is_a?(Hash) || data.is_a?(Array)
     if data.is_a?(Hash) && (data.key?('Errors') || data.key?('ErrorMessage'))
       return 
@@ -319,12 +400,6 @@ class BrightspaceClient
   def do_get(path, force_refresh: false)
     cached_data = read_cache(path)
     metadata = cache_metadata(path)
-
-    # Cache Logic:
-    # 1. If force_refresh is true, go to API.
-    # 2. If no cache, go to API.
-    # 3. If cache exists and is very fresh (< 10 mins), return cached.
-    # 4. If cache exists but is stale (> 10 mins), return cached and trigger background revalidate.
     
     is_fresh = metadata && (Time.now - metadata[:mtime] < 600) # 10 mins
 
@@ -332,20 +407,17 @@ class BrightspaceClient
       return cached_data
     end
 
-    # If we have stale data, return it immediately and revalidate in background
     if !force_refresh && cached_data && authenticated?
       Thread.new { fetch_and_cache(path) }
       return cached_data
     end
 
-    # Otherwise, synchronous fetch
     fetch_and_cache(path)
   end
 
-  private
-
   def fetch_and_cache(path)
     return nil unless authenticated?
+    puts "[Brightspace API] Fetching: #{path}"
 
     uri = URI("https://#{@host}#{path}")
     request = Net::HTTP::Get.new(uri)
@@ -368,15 +440,18 @@ class BrightspaceClient
         data = JSON.parse(response.body)
         write_cache(path, data)
         data
+      elsif response.code == '401'
+        puts "[!] AUTH EXPIRED: Need to re-login or refresh tokens."
+        nil
       elsif response.code == '404'
-        # Silently cache empty results for things like evaluations to stop the noise
-        # but don't log it as a big error.
+        puts "[!] 404 NOT FOUND: #{path}"
         nil
       else
-        puts "!!! API Error #{path}: #{response.code}" if response.code.to_i >= 500
+        puts "[!] API ERROR #{response.code}: #{path}"
         read_cache(path)
       end
     rescue => e
+      puts "[!] API EXCEPTION: #{e.message}"
       read_cache(path)
     end
   end

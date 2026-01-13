@@ -18,7 +18,13 @@
     </li>
   </ul>
   
-  <p class="menu-label">Table of Contents</p>
+  <p class="menu-label is-flex is-justify-content-space-between is-align-items-center">
+    <span>Table of Contents</span>
+    <a href="javascript:void(0)" onclick="toggleAllTOC()" class="is-size-7 has-text-grey">
+      <i class="fas fa-expand-alt mr-1"></i> <span id="collapse-link-text">collapse all</span>
+    </a>
+  </p>
+
   <div class="px-2 mb-4">
     <form action="/course/<%= @course_id %>/search" method="GET">
       <div class="field has-addons">
@@ -33,7 +39,20 @@
       </div>
     </form>
   </div>
-  <ul class="menu-list">
+
+  <script>
+    function toggleAllTOC() {
+      const isExpanded = document.getElementById('collapse-link-text').innerText === 'expand all';
+      document.querySelectorAll('.toc-nested').forEach(el => { el.style.display = isExpanded ? 'block' : 'none'; });
+      document.querySelectorAll('.fa-caret-down, .fa-caret-right').forEach(el => { 
+        el.classList.toggle('fa-caret-down', isExpanded);
+        el.classList.toggle('fa-caret-right', !isExpanded);
+      });
+      document.getElementById('collapse-link-text').innerText = isExpanded ? 'collapse all' : 'expand all';
+    }
+  </script>
+
+  <ul class="menu-list" style="list-style-type: none; margin-left: 0;">
     <% if @toc && @toc['Modules'] %>
       <% @toc['Modules'].each do |mod| %>
         <%= erb :'partials/toc_recursive', locals: { mod: mod, depth: 0 } %>

@@ -70,6 +70,19 @@ module CourseHelpers
     files
   end
 
+  # Returns the list of parent module IDs for a given module ID
+  def find_lineage(modules, target_id, path = [])
+    return nil unless modules
+    modules.each do |m|
+      current_path = path + [m['ModuleId'].to_s]
+      return current_path if m['ModuleId'].to_s == target_id.to_s
+      
+      found = find_lineage(m['Modules'], target_id, current_path)
+      return found if found
+    end
+    nil
+  end
+
   # NEW: Search TOC for topics or modules matching a query
   def search_toc(modules, query, results = { modules: [], topics: [] })
     return results unless modules && query && !query.empty?

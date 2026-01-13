@@ -38,6 +38,13 @@
                   <div class="is-size-6 has-text-grey"><%= desc_text.strip.slice(0..150) %><%= "..." if desc_text.length > 150 %></div>
                 </div>
                 <div class="has-text-right">
+                  <% if topic['EndDate'] %>
+                    <div class="is-size-7 has-text-danger mb-1">
+                      <i class="fas fa-calendar-times mr-1"></i> Due: <%= Time.parse(topic['EndDate']).strftime("%b %d") %>
+                    </div>
+                  <% elsif topic['LastPostDate'] %>
+                     <div class="is-size-7 has-text-grey mb-1">Activity: <%= Time.parse(topic['LastPostDate']).strftime("%b %d") %></div>
+                  <% end %>
                   <span class="tag is-light"><%= topic['ThreadCount'] %> Threads</span>
                   <span class="icon has-text-grey-light ml-2"><i class="fas fa-chevron-right"></i></span>
                 </div>

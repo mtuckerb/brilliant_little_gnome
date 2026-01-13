@@ -31,6 +31,10 @@ before '/course/:id*' do
   enrollments = $client.get_enrollments
   course_obj = enrollments.find { |e| e['OrgUnit']['Id'].to_s == @course_id }
   @course_name = course_obj ? course_obj['OrgUnit']['Name'] : "Course #{@course_id}"
+
+  # Identify the lineage of the current module to keep the sidebar expanded
+  current_module_id = params[:module_id] || (request.path.split('/module/')[1] if request.path.include?('/module/'))
+  @lineage = find_lineage(@toc['Modules'], current_module_id) if @toc && current_module_id
 end
 
 get '/' do
@@ -164,7 +168,7 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   @topic = $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
   @evaluation = $client.get_discussion_evaluation(@course_id, @forum_id, @topic_id)
   
-  @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id, force_refresh: true)
+  @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id, force_refresh: params[:force_refresh] == 'true')
 
   # DEBUG: Log the raw response to help troubleshoot
   File.write("debug_threads_#{Time.now.to_i}.json", @threads_data.to_json) if @threads_data

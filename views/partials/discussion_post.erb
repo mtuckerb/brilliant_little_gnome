@@ -1,4 +1,12 @@
 <% 
+  author_name = if post['Author']
+                  post['Author']['DisplayName']
+                elsif post['PostingUserDisplayName']
+                  post['PostingUserDisplayName']
+                else
+                  "Anonymous"
+                end
+  
   is_instructor = post['Author'] && (post['Author']['IsInstructor'] == true || post['Author']['RoleName'] =~ /Instructor/i)
 %>
 <div class="post-item <%= 'post-replies' if depth > 0 %>">
@@ -6,10 +14,10 @@
     <div class="post-header is-flex is-align-items-center is-justify-content-space-between">
       <div class="is-flex is-align-items-center">
         <div class="image is-24x24 mr-2">
-          <img class="is-rounded" src="https://ui-avatars.com/api/?name=<%= URI.encode_www_form_component(post['Author'] ? post['Author']['DisplayName'] : 'U') %>&background=<%= is_instructor ? '739AC3' : 'ddd' %>&color=fff" alt="Avatar">
+          <img class="is-rounded" src="https://ui-avatars.com/api/?name=<%= URI.encode_www_form_component(author_name) %>&background=<%= is_instructor ? '739AC3' : 'ddd' %>&color=fff" alt="Avatar">
         </div>
         <div class="is-size-7">
-          <span class="has-text-weight-bold"><%= post['Author'] ? post['Author']['DisplayName'] : "Anonymous" %></span>
+          <span class="has-text-weight-bold"><%= author_name %></span>
           <% if is_instructor %><span class="instructor-tag ml-1">INSTRUCTOR</span><% end %>
         </div>
       </div>
@@ -20,8 +28,35 @@
     </div>
   </div>
   <% if post['Replies'] && post['Replies'].any? %>
-    <% post['Replies'].each do |reply| %>
-      <%= erb :'partials/discussion_post', locals: { post: reply, depth: depth + 1 } %>
-    <% end %>
+    <div class="ml-4 mb-2">
+      <a class="is-size-7 has-text-link" onclick="toggleReplies('<%= post['PostId'] %>')" id="toggle-link-<%= post['PostId'] %>" style="cursor: pointer;">
+        <i class="fas fa-reply fa-flip-horizontal mr-1"></i> Show <%= post['Replies'].size %> replies
+      </a>
+    </div>
+    <div id="replies-<%= post['PostId'] %>" class="is-hidden">
+      <% post['Replies'].each do |reply| %>
+        <%= erb :'partials/discussion_post', locals: { post: reply, depth: depth + 1 } %>
+      <% end %>
+    </div>
   <% end %>
 </div>
+
+<% if depth == 1 %>
+<script>
+  if (typeof toggleReplies !== 'function') {
+    window.toggleReplies = function(id) {
+      const el = document.getElementById('replies-' + id);
+      const link = document.getElementById('toggle-link-' + id);
+      if (el.classList.contains('is-hidden')) {
+        el.classList.remove('is-hidden');
+        link.innerHTML = '<i class="fas fa-chevron-up mr-1"></i> Hide replies';
+      } else {
+        el.classList.add('is-hidden');
+        // We don't have the original count easily here unless we store it, 
+        // but for a simple PoC this is okay, or we can just say "Show replies"
+        link.innerHTML = '<i class="fas fa-reply fa-flip-horizontal mr-1"></i> Show replies';
+      }
+    };
+  }
+</script>
+<% end %>
