@@ -1,6 +1,12 @@
 <nav class="breadcrumb" aria-label="breadcrumbs">
   <ul>
-    <li><a href="/dashboard"><i class="fas fa-home"></i></a></li>
+    <li>
+      <a href="/dashboard">
+        <span class="icon is-small" style="margin-top: 5px;">
+          <i class="fas fa-home"></i>
+        </span>
+      </a>
+    </li>
     <li><a href="/dashboard">Courses</a></li>
     <li><a href="/course/<%= @course_id %>" title="<%= @course_name %>"><%= truncate_text(@course_name) %></a></li>
     
