@@ -72,9 +72,56 @@ class BrightspaceClient
   def sync_notifications(courses, user)
     puts "[Brightspace API] Syncing notifications to DB..."
     
-    # Get unified feed (News)
+    # Get unified feed first (broad coverage)
     feed_items = get_unified_feed(courses)
     feed_items.each do |item|
+      upsert_notification(item)
+    end
+
+    # Get per-course News/Announcements explicitly
+    courses.take(10).each do |c|
+      course_id = c['OrgUnit']['Id']
+      
+      # News/Announcements
+      news_data = get_news(course_id)
+      items = news_data.is_a?(Array) ? news_data : (news_data['Items'] || [])
+      
+      items.each do |item|
+        upsert_notification({
+          id: "news_#{course_id}_#{item['Id']}",
+          type: 'News',
+          title: item['Title'],
+          body: item.dig('Summary', 'Text') || item.dig('Body', 'Text'),
+          date: item['StartDate'] || item['LastModifiedDate'] || item['CreatedDate'],
+          course_id: course_id,
+          course_name: c['OrgUnit']['Name'],
+          urgency: 1,
+          is_personal: false,
+          url: "/course/#{course_id}/announcements"
+        })
+      end
+
+      # Course Overview (requested specifically by user)
+      overview = get_overview(course_id)
+      if overview && (overview['Description']&.fetch('Text', nil) || overview['Title'])
+        upsert_notification({
+          id: "overview_#{course_id}",
+          type: 'Content',
+          title: "Course Overview: #{overview['Title'] || 'Updated'}",
+          body: overview.dig('Description', 'Text') || "The course overview has been updated.",
+          date: overview['LastModifiedDate'],
+          course_id: course_id,
+          course_name: c['OrgUnit']['Name'],
+          urgency: 1,
+          is_personal: false,
+          url: "/course/#{course_id}"
+        })
+      end
+    end
+
+    # Get content updates
+    content_items = get_content_notifications(courses)
+    content_items.each do |item|
       upsert_notification(item)
     end
 
@@ -93,19 +140,93 @@ class BrightspaceClient
     puts "[Brightspace API] Notification sync complete."
   end
 
+  def get_content_notifications(courses)
+    all_updates = []
+    # Only check top 10 most recent courses to avoid long sync
+    courses.take(10).each do |c|
+      course_id = c['OrgUnit']['Id']
+      # Using updates endpoint if available, but let's try a safer content-recent check if needed
+      # For now, stick to the known updates endpoint
+      data = do_get("/d2l/api/le/#{@api_version}/#{course_id}/content/updates")
+      next unless data
+
+      items = data.is_a?(Array) ? data : (data['Items'] || [])
+      items.each do |item|
+        all_updates << {
+          id: "content_#{course_id}_#{item['Identifier'] || item['Id']}",
+          type: 'Content',
+          title: "Content Updated: #{item['Title']}",
+          body: "New or updated content in #{c['OrgUnit']['Name']}: #{item['Title']}",
+          # prioritize CreatedDate/LastModifiedDate
+          date: item['CreatedDate'] || item['LastModifiedDate'] || Time.now.iso8601,
+          course_id: course_id,
+          course_name: c['OrgUnit']['Name'],
+          urgency: 1,
+          is_personal: false,
+          url: "/course/#{course_id}"
+        }
+      end
+    end
+    all_updates
+  end
+
   def upsert_notification(data)
     # Map symbols to strings for ActiveRecord
     n = Notification.find_or_initialize_by(external_id: data[:id].to_s, course_id: data[:course_id].to_s)
     n.notification_type = data[:type]
     n.title = data[:title]
     n.body = data[:body]
-    n.date = Time.parse(data[:date]) rescue Time.now
+
+    # Improved date handling: handle strings, Time objects, and nil
+    raw_date = data[:date]
+    begin
+      if raw_date
+        parsed_date = raw_date.is_a?(Time) ? raw_date : Time.parse(raw_date.to_s)
+        
+        # Only update date if it's a new record OR if the date is significantly different
+        # (to avoid constant timestamp shifting for items without stable API dates)
+        if n.new_record? || !n.date || (parsed_date - n.date).abs > 60
+          n.date = parsed_date
+        end
+      else
+        n.date ||= Time.now
+      end
+    rescue => e
+      puts "[Brightspace API] Date parse error for #{data[:id]}: #{e.message} (Raw: #{raw_date})"
+      n.date ||= Time.now
+    end
+    
     n.course_name = data[:course_name]
-    n.semester = data[:semester]
+    
+    # Auto-extract semester if not provided
+    if (n.semester.nil? || n.semester.to_s.empty?) && n.course_name
+      n.semester = extract_semester_from_name(n.course_name)
+    end
+    if data[:semester]
+        n.semester = data[:semester]
+    end
+
     n.urgency = data[:urgency]
     n.is_personal = data[:is_personal]
     n.url = data[:url]
     n.save!
+  end
+
+  def extract_semester_from_name(full_name)
+    return nil unless full_name
+
+    # Try to find something like (2025 Spring) or (Spring 2025)
+    # Handle cases like: "Course Name (2025 Fall)", "Other Course (Spring 2026)"
+    patterns = [
+      /(\d{4}\s+(?:Spring|Fall|Summer|Winter|Session|Quarter))/i,
+      /((?:Spring|Fall|Summer|Winter|Session|Quarter)\s+\d{4})/i
+    ]
+
+    patterns.each do |p|
+      match = full_name.match(p)
+      return match[1].strip if match
+    end
+    nil
   end
 
   def load_cookies_from_file
@@ -304,7 +425,7 @@ class BrightspaceClient
           type: 'Grade',
           title: "Grade Updated: #{g['GradeObjectName']}",
           body: "Your grade for #{g['GradeObjectName']} is now #{g['DisplayedGrade']}.",
-          date: Time.now.iso8601,
+          date: nil, # Will fallback to Time.now on first creation only
           course_id: course_id,
           course_name: c['OrgUnit']['Name'],
           urgency: 3,

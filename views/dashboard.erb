@@ -60,31 +60,27 @@
 
   <div class="column is-4">
     <h2 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Recent Updates</h2>
-    <% if @all_news && !@all_news.empty? %>
-      <% @all_news.each do |news| %>
-        <div class="box mb-4">
+    <% if @recent_notifications && !@recent_notifications.empty? %>
+      <% @recent_notifications.each do |n| %>
+        <div class="box mb-4 notification-card-small" onclick="window.location='<%= n.url %>'" style="cursor:pointer; border-left: 4px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
           <p class="is-size-7 has-text-primary has-text-weight-bold mb-1">
-            <% course = @courses.find { |c| c['OrgUnit']['Id'].to_s == news['CourseId'].to_s } %>
-            <%= course ? extract_course_info(course['OrgUnit']['Name'])[:course_display] : news['CourseName'] %>
+            <%= n.course_name ? extract_course_info(n.course_name)[:course_display] : "General" %>
           </p>
-          <h6 class="title is-6 mb-2"><%= news['Title'] %></h6>
+          <h6 class="title is-6 mb-2"><%= n.title %></h6>
           <div class="content is-size-7 mb-2">
-            <% 
-               desc = news['Body']
-               desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
-               # Strip tags for a clean preview
-               preview = desc_text.gsub(/<[^>]*>/, '').strip.slice(0..100)
-            %>
-            <%= preview %><%= "..." if desc_text.length > 100 %>
+            <%= n.body ? truncate_text(n.body.gsub(/<[^>]*>/, '').strip, 80) : "No description" %>
           </div>
           <div class="level is-mobile">
             <div class="level-left">
               <span class="is-size-7 has-text-grey">
-                <%= Time.parse(news['StartDate']).strftime("%b %d") %>
+                <%= n.date.strftime("%b %d") rescue "Recently" %>
+              </span>
+              <span class="tag is-small is-rounded ml-2 is-light">
+                <%= n.notification_type %>
               </span>
             </div>
             <div class="level-right">
-              <a href="/course/<%= news['CourseId'] %>/announcements" class="button is-small is-white has-text-link">View Full</a>
+              <a href="<%= n.url %>" class="button is-small is-white has-text-link">View</a>
             </div>
           </div>
         </div>
@@ -92,5 +88,19 @@
     <% else %>
       <p class="has-text-grey italic">No recent updates found.</p>
     <% end %>
+    <div class="mt-4 has-text-centered">
+      <a href="/notifications" class="button is-small is-fullwidth is-light">
+        View All Notifications <i class="fas fa-arrow-right ml-2"></i>
+      </a>
+    </div>
   </div>
 </div>
+
+<style>
+.notification-card-small {
+  transition: transform 0.1s;
+}
+.notification-card-small:hover {
+  transform: translateX(3px);
+}
+</style>

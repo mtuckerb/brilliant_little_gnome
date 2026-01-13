@@ -23,7 +23,7 @@
               <select name="semester" onchange="this.form.submit()">
                 <option value="">All Semesters</option>
                 <% 
-                  semesters = Notification.pluck(:semester).compact.uniq.sort
+                  semesters = Notification.where.not(semester: [nil, ""]).pluck(:semester).uniq.sort
                   semesters.each do |s| 
                 %>
                   <option value="<%= s %>" <%= 'selected' if params[:semester] == s %>>
@@ -73,6 +73,13 @@
           </label>
         </div>
 
+        <div class="field mb-4">
+          <label class="checkbox is-size-7">
+            <input type="checkbox" name="show_read" value="true" <%= 'checked' if params[:show_read] == 'true' %> onchange="this.form.submit()">
+            Include already read
+          </label>
+        </div>
+
         <hr class="my-4">
         
         <div class="is-size-7 has-text-grey">
@@ -91,6 +98,16 @@
         <h1 class="title">Notifications</h1>
       </div>
       <div class="level-right">
+        <form action="/notifications/mark_all_read" method="post" class="mr-2">
+          <button type="submit" class="button is-link is-light is-small">
+            <i class="fas fa-check-double mr-2"></i> Mark All Read
+          </button>
+        </form>
+        <form action="/notifications/refresh_cache" method="post" class="mr-2">
+          <button type="submit" class="button is-danger is-light is-small" onclick="return confirm('This will clear the API cache and rebuild the notification database. Continue?')">
+            <i class="fas fa-trash-alt mr-2"></i> Reset & Sync All
+          </button>
+        </form>
         <button class="button is-white is-small" onclick="window.location.reload()">
           <i class="fas fa-sync-alt mr-2"></i> Refresh
         </button>
@@ -107,13 +124,14 @@
     <% else %>
       <div class="notification-list">
         <% @notifications.each do |n| %>
-          <div class="box mb-3 notification-card p-4" onclick="window.location='<%= n.url %>'" style="cursor: pointer; border-left: 5px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
-            <div class="columns is-mobile is-gapless mb-0">
+          <div class="box mb-3 notification-card p-4 <%= 'is-read' if n.is_read %>" style="cursor: pointer; border-left: 5px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
+            <div class="columns is-mobile is-vcentered is-gapless mb-0">
               <div class="column">
                 <div class="is-flex is-align-items-center mb-1">
                   <span class="tag is-small is-rounded mr-2 <%= n.notification_type == 'Grade' ? 'is-success' : (n.notification_type == 'Discussion' ? 'is-warning' : 'is-link') %> is-light">
                     <%= n.notification_type %>
                   </span>
+                  <span class="has-text-grey-light is-size-7 mr-2">#<%= n.id %></span>
                   <span class="is-size-7 has-text-weight-bold has-text-grey-darker">
                     <%= n.course_name || (n.course_id ? "Course #{n.course_id}" : "General") %>
                   </span>
@@ -121,25 +139,74 @@
                     <span class="is-size-7 has-text-grey ml-2">(<%= n.semester %>)</span>
                   <% end %>
                 </div>
-                <h3 class="title is-6 mb-1"><%= n.title %></h3>
-                <div class="content is-size-7 has-text-grey-dark mb-0">
+                <h3 class="title is-6 mb-1" onclick="window.location='<%= n.url %>'"><%= n.title %></h3>
+                <div class="content is-size-7 has-text-grey-dark mb-0" onclick="window.location='<%= n.url %>'">
                   <%= n.body ? truncate_text(n.body, 150) : "No description" %>
                 </div>
               </div>
               <div class="column is-narrow has-text-right">
                 <p class="is-size-7 has-text-grey mb-1">
-                  <%= n.date.strftime("%b %d, %H:%M") rescue "Recently" %>
+                  <%= n.date.strftime("%b %d, %Y %H:%M") rescue "Recently" %>
                 </p>
                 <% if n.is_personal %>
                   <span class="icon is-small has-text-danger" title="Directly for you">
                     <i class="fas fa-user-circle"></i>
                   </span>
                 <% end %>
+                <div>
+                  <% if !n.is_read %>
+                    <form action="/notifications/<%= n.id %>/mark_read" method="post" style="display:inline;">
+                      <button type="submit" class="button is-ghost p-0 is-small hov-success" title="Mark as Read">
+                        <span class="icon is-small">
+                          <i class="far fa-circle"></i>
+                        </span>
+                      </button>
+                    </form>
+                  <% else %>
+                    <form action="/notifications/<%= n.id %>/mark_unread" method="post" style="display:inline;">
+                      <button type="submit" class="button is-ghost p-0 is-small hov-unread" title="Mark as Unread">
+                        <span class="icon is-small has-text-link">
+                          <i class="fas fa-check-circle"></i>
+                        </span>
+                      </button>
+                    </form>
+                  <% end %>
+                </div>
               </div>
             </div>
           </div>
         <% end %>
       </div>
+
+      <% if @total_pages > 1 %>
+        <nav class="pagination is-centered mt-6" role="navigation" aria-label="pagination">
+          <% if @page > 1 %>
+            <a href="<%= page_url(@page - 1) %>" class="pagination-previous">Previous</a>
+          <% else %>
+            <a class="pagination-previous" disabled>Previous</a>
+          <% end %>
+
+          <% if @page < @total_pages %>
+            <a href="<%= page_url(@page + 1) %>" class="pagination-next">Next page</a>
+          <% else %>
+            <a class="pagination-next" disabled>Next page</a>
+          <% end %>
+
+          <ul class="pagination-list">
+            <% (1..@total_pages).each do |p| %>
+              <% if p == 1 || p == @total_pages || (p >= @page - 2 && p <= @page + 2) %>
+                <li>
+                  <a href="<%= page_url(p) %>" class="pagination-link <%= 'is-current' if p == @page %>" aria-label="Goto page <%= p %>">
+                    <%= p %>
+                  </a>
+                </li>
+              <% elsif p == @page - 3 || p == @page + 3 %>
+                <li><span class="pagination-ellipsis">&hellip;</span></li>
+              <% end %>
+            <% end %>
+          </ul>
+        </nav>
+      <% end %>
     <% end %>
   </div>
 </div>
@@ -151,5 +218,15 @@
 .notification-card:hover {
   transform: translateX(3px);
   box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+.notification-card.is-read {
+  opacity: 0.6;
+  background-color: #fafafa;
+}
+.hov-success:hover {
+  color: #48c774 !important;
+}
+.hov-unread:hover {
+  color: #3273dc !important;
 }
 </style>

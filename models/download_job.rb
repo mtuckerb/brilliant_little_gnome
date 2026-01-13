@@ -27,18 +27,18 @@ class DownloadJob
     @completed_files = 0
     @zip_path = nil
     @error = nil
-    @download_filename = download_filename || "Britespace_#{@course_id}_#{Time.now.strftime('%Y%m%d')}.zip"
+    @download_filename = download_filename || "Brilliant_#{@course_id}_#{Time.now.strftime('%Y%m%d')}.zip"
   end
 
   def start
     Thread.new do
       begin
         @status = :downloading
-        temp_dir = Dir.mktmpdir("bs_download_#{@id}")
+        temp_dir = Dir.mktmpdir("brilliant_download_#{@id}")
         
         # We keep the UUID in the disk filename to avoid collisions in temp storage,
         # but we'll use @download_filename when serving it to the user.
-        @zip_path = File.join(Dir.tmpdir, "Britespace_#{@course_id}_#{@id}.zip")
+        @zip_path = File.join(Dir.tmpdir, "Brilliant_#{@course_id}_#{@id}.zip")
 
         Zip::File.open(@zip_path, Zip::File::CREATE) do |zipfile|
           @files.each do |f|

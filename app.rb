@@ -26,6 +26,13 @@ helpers do
     return text if text.nil? || text.length <= max_length
     text[0...max_length-1] + "…"
   end
+
+  def page_url(page_num)
+    new_params = params.dup
+    new_params[:page] = page_num
+    query_string = Rack::Utils.build_query(new_params)
+    "#{request.path_info}?#{query_string}"
+  end
 end
 
 # ==========================================
@@ -78,7 +85,7 @@ get '/dashboard' do
   
   @user = $client.get_who_am_i
   @courses = $client.get_enrollments
-  @all_news = $client.get_all_news(@courses)
+  @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
   
   erb :dashboard
 end
@@ -123,15 +130,15 @@ get '/course/:id/assignments/export.ics' do
   assignments.each do |a|
     next unless a['DueDate']
     
-    event_start = Time.parse(a['DueDate'])
-    cal.event do |e|
-      e.dtstart     = Icalendar::Values::DateTime.new(event_start.utc, tzid: 'UTC')
-      e.dtend       = Icalendar::Values::DateTime.new((event_start + 60*60).utc, tzid: 'UTC')
-      e.summary     = "[#{@course_name}] #{a['Name']}"
-      e.description = "Assignment Due. Check Britespace for instructions."
-      e.url         = "http://localhost:4567/course/#{@course_id}/assignments/#{a['Id']}"
+      event_start = Time.parse(a['DueDate'])
+      cal.event do |e|
+        e.dtstart     = Icalendar::Values::DateTime.new(event_start.utc, tzid: 'UTC')
+        e.dtend       = Icalendar::Values::DateTime.new((event_start + 60*60).utc, tzid: 'UTC')
+        e.summary     = "[#{@course_name}] #{a['Name']}"
+        e.description = "Assignment Due. Check Brilliant for instructions."
+        e.url         = "http://localhost:4567/course/#{@course_id}/assignments/#{a['Id']}"
+      end
     end
-  end
   
   content_type 'text/calendar'
   attachment "#{@course_name.gsub(/[^0-9a-z]/i, '_')}_Assignments.ics"
@@ -181,7 +188,6 @@ get '/notifications' do
   @user = $client.get_who_am_i
   
   # Trigger a quick background sync for news/grades when viewing notifications
-  # In a real app, this might be a separate background worker
   Thread.new { $client.sync_notifications(@courses, @user) }
 
   query = Notification.all
@@ -206,17 +212,82 @@ get '/notifications' do
     query = query.where(is_personal: true)
   end
 
+  # Filter: Read/Unread
+  if params[:show_read] == 'true'
+    # show all (read + unread), no extra filter
+  else
+    query = query.where(is_read: false)
+  end
+  
+  # Base relation before sorting/pagination for counting
+  @notifications_total = query.count
+
   # Sort logic
   sort_by = params[:sort] || 'date'
   if sort_by == 'urgency'
-    query = query.order(urgency: :desc, date: :desc)
+    query = query.unscope(:order).order(urgency: :desc, date: :desc, id: :desc)
   else
-    query = query.order(date: :desc)
+    query = query.unscope(:order).order(date: :desc, id: :desc)
   end
 
-  @notifications = query.limit(100)
-  
+  # Pagination
+  @page = (params[:page] || 1).to_i
+  @per_page = 25
+  offset = (@page - 1) * @per_page
+
+  @total_pages = (@notifications_total.to_f / @per_page).ceil
+  @notifications = query.offset(offset).limit(@per_page)
+
+  # Background check: If any semesters are missing, try to fill them
+  Thread.new do
+    Notification.where(semester: [nil, ""]).where.not(course_name: nil).find_each do |n|
+      sem = $client.extract_semester_from_name(n.course_name)
+      n.update_column(:semester, sem) if sem
+    end
+  end
+
   erb :notifications
+end
+
+post '/notifications/:id/mark_read' do
+  notification = Notification.find(params[:id])
+  notification.update(is_read: true)
+  redirect back
+end
+
+post '/notifications/:id/mark_unread' do
+  notification = Notification.find(params[:id])
+  notification.update(is_read: false)
+  redirect back
+end
+
+post '/notifications/mark_all_read' do
+  # Apply same filters as current view if possible, or just mark all for current user
+  Notification.update_all(is_read: true)
+  redirect '/notifications'
+end
+
+post '/notifications/clear' do
+  Notification.delete_all
+  redirect '/notifications'
+end
+
+post '/notifications/refresh_cache' do
+  ApiCache.delete_all
+  Notification.delete_all
+  redirect '/notifications'
+end
+
+get '/debug/notifications' do
+  content_type :json
+  order = params[:order] == 'asc' ? :asc : :desc
+  {
+    total: Notification.count,
+    first_item: Notification.order(date: order).first,
+    last_item: Notification.order(date: order).last,
+    sample: Notification.order(date: order).limit(5).map { |n| { id: n.id, date: n.date, title: n.title, semester: n.semester, is_read: n.is_read } },
+    distinct_semesters: Notification.pluck(:semester).uniq
+  }.to_json
 end
 
 # Grades
@@ -299,6 +370,52 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id/threads/:thread_id' do
   erb :discussion_posts
 end
 
+# Topic Specific Download Route
+# Overview Specific Download Route
+get '/course/:id/overview/download' do
+  course_id = params[:id]
+  api_path = "/d2l/api/le/1.40/#{course_id}/overview/attachment"
+  http_resp = $client.download_file(api_path)
+  
+  if http_resp && http_resp.code == '200'
+    content_type http_resp['Content-Type'] || 'application/octet-stream'
+    disposition = http_resp['Content-Disposition']
+    if disposition && disposition =~ /filename\*?="?([^";]+)"?/
+      headers["Content-Disposition"] = disposition
+    else
+      headers["Content-Disposition"] = "attachment; filename=\"syllabus_#{course_id}.pdf\""
+    end
+    http_resp.body
+  else
+    status_code = http_resp ? http_resp.code : 'No Response'
+    "Download failed: Status #{status_code} (overview attachment)."
+  end
+end
+
+
+get '/course/:id/topic/:topic_id/download' do
+  course_id = params[:id]
+  topic_id = params[:topic_id]
+  
+  api_path = "/d2l/api/le/1.40/#{course_id}/content/topics/#{topic_id}/file"
+  http_resp = $client.download_file(api_path)
+  
+  if http_resp && http_resp.code == '200'
+    content_type http_resp['Content-Type'] || 'application/octet-stream'
+    disposition = http_resp['Content-Disposition']
+    if disposition && disposition =~ /filename\*?="?([^";]+)"?/
+      headers["Content-Disposition"] = disposition
+    else
+      headers["Content-Disposition"] = "attachment; filename=\"topic_#{topic_id}_file\""
+    end
+    http_resp.body
+  else
+    status_code = http_resp ? http_resp.code : 'No Response'
+    "Download failed: Status #{status_code} (trying to fetch topic #{topic_id} file)."
+  end
+end
+
+
 # Generic Download Route
 get '/course/:id/download' do
   path = params[:path]
@@ -327,13 +444,32 @@ get '/course/:id/search' do
 end
 
 # Download All
+# Download Module All
+get '/course/:id/module/:module_id/download_all' do
+  mod = find_module(@toc['Modules'], params[:module_id])
+  if mod.nil?
+    return "Module not found."
+  end
+
+  safe_title = mod['Title'].gsub(/[^0-9a-z]/i, '_')
+  files = collect_all_files(mod, safe_title)
+  
+  if files.empty?
+    return "No downloadable files found in this module."
+  end
+
+  filename = "Brilliant-#{@course_id}-#{safe_title}-#{Time.now.strftime('%Y%m%d')}.zip"
+  job = DownloadJob.create(@course_id, files, $client, download_filename: filename)
+  redirect "/job/#{job.id}"
+end
+
 get '/course/:id/download_all' do
   files = collect_everything(@course_id, $client, @toc)
   if files.empty?
     return "No downloadable files found in this course."
   end
 
-  filename = "Britespace-#{@course_id}-#{Time.now.strftime('%Y%m%d')}.zip"
+  filename = "Brilliant-#{@course_id}-#{Time.now.strftime('%Y%m%d')}.zip"
   job = DownloadJob.create(@course_id, files, $client, download_filename: filename)
   redirect "/job/#{job.id}"
 end
