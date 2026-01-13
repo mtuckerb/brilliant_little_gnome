@@ -26,17 +26,22 @@
           </thead>
           <tbody>
             <% @assignments.each do |a| %>
+              <%
+                id = a.is_a?(Hash) ? a['Id'] : a.brightspace_id
+                name = a.is_a?(Hash) ? a['Name'] : a.name
+                due_date = a.is_a?(Hash) ? a['DueDate'] : a.due_date
+              %>
               <tr>
                 <td>
                   <div class="mb-1">
-                    <strong><a href="/course/<%= @course_id %>/assignments/<%= a['Id'] %>"><%= a['Name'] %></a></strong>
+                    <strong><a href="/course/<%= @course_id %>/assignments/<%= id %>"><%= name %></a></strong>
                   </div>
                   <div class="is-size-7 has-text-grey">
-                    <i class="fas fa-calendar-alt mr-1"></i> Due: <%= a['DueDate'] ? format_date(a["DueDate"]) : "No due date" %>
+                    <i class="fas fa-calendar-alt mr-1"></i> Due: <%= due_date ? format_date(due_date) : "No due date" %>
                   </div>
                 </td>
                 <td class="has-text-right">
-                  <a href="/course/<%= @course_id %>/assignments/<%= a['Id'] %>" class="button is-small is-primary is-light">View Details</a>
+                  <a href="/course/<%= @course_id %>/assignments/<%= id %>" class="button is-small is-primary is-light">View Details</a>
                 </td>
               </tr>
             <% end %>

@@ -1,5 +1,20 @@
 <div class="columns">
   <div class="column is-8">
+    <div id="sync-indicator" class="box mb-4" style="display: <%= @sync_status[:status] == 'syncing' ? 'block' : 'none' %>;">
+      <div class="level is-mobile mb-2">
+        <div class="level-left">
+          <p class="is-size-7 has-text-weight-bold">
+            <i class="fas fa-sync fa-spin mr-2"></i> 
+            <span id="sync-task"><%= @sync_status[:current_task] %></span>
+          </p>
+        </div>
+        <div class="level-right">
+          <span id="sync-percent" class="is-size-7"><%= @sync_status[:progress] %>%</span>
+        </div>
+      </div>
+      <progress id="sync-progress" class="progress is-small is-primary" value="<%= @sync_status[:progress] %>" max="100"><%= @sync_status[:progress] %>%</progress>
+    </div>
+
     <div class="level mb-6">
       <div class="level-left">
         <h1 class="title"><i class="fas fa-book-open mr-2"></i> My Course List</h1>
@@ -19,9 +34,15 @@
           </thead>
           <tbody>
             <% @courses.each do |c| %>
-              <tr class="course-row" onclick="window.location='/course/<%= c['OrgUnit']['Id'] %>'">
+              <%
+                 id   = c.is_a?(Hash) ? c['OrgUnit']['Id'] : c.org_unit_id
+                 name = c.is_a?(Hash) ? c['OrgUnit']['Name'] : c.name
+                 code = c.is_a?(Hash) ? c['OrgUnit']['Code'] : c.code
+                 loc  = c.is_a?(Hash) ? c['OrgUnit']['Location'] : nil
+              %>
+              <tr class="course-row" onclick="window.location='/course/<%= id %>'">
                 <td class="py-4">
-                  <% info = extract_course_info(c['OrgUnit']['Name']) %>
+                  <% info = extract_course_info(name) %>
                   <div class="has-text-weight-bold is-size-5 mb-1">
                     <%= info[:course_display] %>
                   </div>
@@ -35,18 +56,18 @@
                       <span class="tag is-success is-light">Online</span>
                     <% end %>
                     
-                    <%# Check for building/classroom in OrgUnit Code or other fields if available %>
-                    <% if c['OrgUnit']['Location'] %>
-                      <span class="tag is-warning is-light"><%= c['OrgUnit']['Location'] %></span>
+                    <%# Online or Location Tag %>
+                    <% if loc %>
+                      <span class="tag is-warning is-light"><%= loc %></span>
                     <% end %>
                   </div>
 
                   <div class="is-size-7 has-text-grey-light has-text-weight-normal">
-                    <%= c['OrgUnit']['Code'] %>
+                    <%= code %>
                   </div>
                 </td>
                 <td class="has-text-right is-vcentered">
-                  <a href="/course/<%= c['OrgUnit']['Id'] %>" class="button is-small is-primary is-light">
+                  <a href="/course/<%= id %>" class="button is-small is-primary is-light">
                     View <i class="fas fa-arrow-right ml-2"></i>
                   </a>
                 </td>
@@ -104,3 +125,39 @@
   transform: translateX(3px);
 }
 </style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const indicator = document.getElementById('sync-indicator');
+  const taskText = document.getElementById('sync-task');
+  const percentText = document.getElementById('sync-percent');
+  const progressBar = document.getElementById('sync-progress');
+
+  function checkSyncStatus() {
+    fetch('/sync/status')
+      .then(response => response.json())
+      .then(data => {
+        if (data.status === 'syncing') {
+          indicator.style.display = 'block';
+          taskText.innerText = data.current_task;
+          percentText.innerText = data.progress + '%';
+          progressBar.value = data.progress;
+          setTimeout(checkSyncStatus, 2000); // Check every 2s
+        } else if (data.status === 'completed') {
+          taskText.innerText = "Sync complete!";
+          percentText.innerText = '100%';
+          progressBar.value = 100;
+          setTimeout(() => { indicator.style.display = 'none'; }, 3000);
+        } else {
+          indicator.style.display = 'none';
+        }
+      })
+      .catch(err => console.error("Sync check error:", err));
+  }
+
+  // Initial trigger if dashboard shows it is active
+  if (indicator.style.display !== 'none') {
+    checkSyncStatus();
+  }
+});
+</script>

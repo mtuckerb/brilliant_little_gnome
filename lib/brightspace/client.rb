@@ -7,7 +7,7 @@ require 'fileutils'
 require 'time'
 
 class BrightspaceClient
-  attr_accessor :token, :cookie_string, :host, :user_display_name
+  attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status
 
   def initialize
     @config_path = 'config/connection.json'
@@ -16,6 +16,7 @@ class BrightspaceClient
     @api_version = "1.40"
     @sync_lock = Mutex.new
     @syncing = false
+    @sync_status = { status: "idle", progress: 0, current_task: nil }
     
     # Legacy/Fallback: Try loading from cookies.txt
     load_cookies_from_file if !authenticated? && File.exist?('cookies.txt')
@@ -48,50 +49,61 @@ class BrightspaceClient
     
     Thread.new do
       @sync_lock.synchronize { @syncing = true }
+      @sync_status = { status: "syncing", progress: 0, current_task: "Starting proactive sync..." }
+      
       begin
-        puts "Starting proactive sync (slow mode)..."
-        courses = get_enrollments 
+        courses = get_enrollments || []
         user = get_who_am_i
         
-        # Sync Notifications first
+        total_steps = 1 + courses.size # Notifications + each course
+        current_step = 0
+
+        @sync_status[:current_task] = "Syncing Notifications..."
         sync_notifications(courses, user)
+        current_step += 1
+        @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
 
         courses.each do |c|
           course_id = c['OrgUnit']['Id']
+          course_name = c['OrgUnit']['Name']
+          @sync_status[:current_task] = "Syncing #{course_name}..."
           
           # Sync Core
           toc = get_toc(course_id)
           sync_course_content(course_id, toc) if toc
           
-          sleep 0.5
+          sleep 0.2
           assignments = get_assignments(course_id)
           sync_assignments(course_id, assignments) if assignments
           
-          sleep 0.5
+          sleep 0.2
           
           # Sync Discussions
           forums = get_discussions(course_id) || []
-          forums.each do |f|
-            topics_data = get_discussion_topics(course_id, f['ForumId'])
-            topics = topics_data.is_a?(Hash) ? (topics_data['Items'] || []) : (topics_data || [])
+          sync_discussions(course_id, forums) if forums.any?
+          
+          sleep 0.2
+          
+          # Sync Grades
+          grades_raw = get_grades(course_id)
+          sync_grades(course_id, grades_raw) if grades_raw.is_a?(Array)
 
-            topics.each do |t|
-              get_discussion_topic(course_id, f['ForumId'], t['TopicId'])
-              sleep 1.0 # Very slow
-              
-              threads_data = get_discussion_threads(course_id, f['ForumId'], t['TopicId']) || []
-              threads = threads_data.is_a?(Hash) ? (threads_data['Items'] || []) : threads_data
-            end
-          end
+          current_step += 1
+          @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
         end
-        puts "Proactive sync complete."
+        
+        @sync_status = { status: "completed", progress: 100, current_task: "Proactive sync complete." }
       rescue => e
-        puts "Sync error: #{e.message}"
-        puts e.backtrace
+        @sync_status = { status: "error", progress: 0, current_task: "Sync error: #{e.message}" }
+        shared_puts "Sync error: #{e.message}"
       ensure
         @sync_lock.synchronize { @syncing = false }
       end
     end
+  end
+
+  def shared_puts(msg)
+    puts msg
   end
 
   def sync_notifications(courses, user)
@@ -452,7 +464,7 @@ class BrightspaceClient
     return unless toc.is_a?(Array)
     
     toc.each_with_index do |mod, index|
-      m = ContentModule.find_or_initialize_by(brightspace_id: mod['Identifier'], course_id: course_id.to_s)
+      m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
       m.title = mod['Title']
       m.description = mod.dig('Description', 'Text')
       m.sort_order = index
@@ -460,16 +472,16 @@ class BrightspaceClient
       
       # Sync topics/items
       (mod['Topics'] || []).each do |topic|
-        item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'], module_id: mod['Identifier'])
+        item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'].to_s, module_id: mod['ModuleId'].to_s)
         item.title = topic['Title']
-        item.item_type = topic['Type'] || 'Topic'
+        item.item_type = topic['TypeIdentifier'] || topic['Type'] || 'Topic'
         item.url = topic['Url']
         item.is_hidden = topic['IsHidden'] || false
         item.save!
       end
       
       # Recursively sync sub-modules
-      sync_sub_modules(course_id, mod['Identifier'], mod['Modules']) if mod['Modules']
+      sync_sub_modules(course_id, mod['ModuleId'].to_s, mod['Modules']) if mod['Modules']
     end
   end
 
@@ -477,7 +489,7 @@ class BrightspaceClient
     return unless sub_modules.is_a?(Array)
     
     sub_modules.each_with_index do |mod, index|
-      m = ContentModule.find_or_initialize_by(brightspace_id: mod['Identifier'], course_id: course_id.to_s)
+      m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
       m.title = mod['Title']
       m.description = mod.dig('Description', 'Text')
       m.sort_order = index
@@ -485,15 +497,15 @@ class BrightspaceClient
       m.save!
       
       (mod['Topics'] || []).each do |topic|
-        item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'], module_id: mod['Identifier'])
+        item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'].to_s, module_id: mod['ModuleId'].to_s)
         item.title = topic['Title']
-        item.item_type = topic['Type'] || 'Topic'
+        item.item_type = topic['TypeIdentifier'] || topic['Type'] || 'Topic'
         item.url = topic['Url']
         item.is_hidden = topic['IsHidden'] || false
         item.save!
       end
       
-      sync_sub_modules(course_id, mod['Identifier'], mod['Modules']) if mod['Modules']
+      sync_sub_modules(course_id, mod['ModuleId'].to_s, mod['Modules']) if mod['Modules']
     end
   end
 
@@ -508,6 +520,65 @@ class BrightspaceClient
       assignment.description = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
       assignment.is_graded = a['IsGraded'] || false
       assignment.save!
+    end
+  end
+
+  def sync_discussions(course_id, forums)
+    return unless forums.is_a?(Array)
+    
+    forums.each do |f|
+      forum = DiscussionForum.find_or_initialize_by(brightspace_id: f['ForumId'].to_s, course_id: course_id.to_s)
+      forum.name = f['Name']
+      forum.description = f.dig('Description', 'Text')
+      forum.save!
+      
+      topics_data = get_discussion_topics(course_id, f['ForumId'])
+      topics = topics_data.is_a?(Hash) ? (topics_data['Items'] || []) : (topics_data || [])
+      sync_discussion_topics(course_id, f['ForumId'].to_s, topics) if topics
+    end
+  end
+
+  def sync_discussion_topics(course_id, forum_id, topics)
+    return unless topics.is_a?(Array)
+    
+    topics.each_with_index do |t, index|
+      topic = DiscussionTopic.find_or_initialize_by(brightspace_id: t['TopicId'].to_s, forum_id: forum_id.to_s)
+      topic.course_id = course_id.to_s
+      topic.name = t['Name']
+      topic.description = t.dig('Description', 'Text')
+      topic.sort_order = index
+      topic.save!
+      
+      # We don't sync threads here by default as it's too heavy for a broad sync,
+      # but we provide the method for specific topic refreshes.
+    end
+  end
+
+  def sync_discussion_thread(course_id, topic_id, thread)
+    t = DiscussionThread.find_or_initialize_by(brightspace_id: thread['ThreadId'].to_s, topic_id: topic_id.to_s)
+    t.course_id = course_id.to_s
+    t.subject = thread['Subject'] || thread['Title']
+    t.body = thread.dig('Description', 'Text') || thread.dig('Body', 'Text')
+    t.author_name = thread['PostingUserDisplayName'] || thread.dig('LastPost', 'UserDisplayName')
+    t.posted_at = Time.parse(thread['DatePosted'] || thread['LastModified']) rescue nil
+    t.is_pinned = thread['IsPinned'] || false
+    t.unread_count = thread['UnreadReplyCount'] || 0
+    t.save!
+  end
+
+  def sync_grades(course_id, grade_values)
+    return unless grade_values.is_a?(Array)
+    
+    grade_values.each do |g|
+      grade = Grade.find_or_initialize_by(brightspace_id: g['GradeObjectIdentifier'].to_s, course_id: course_id.to_s)
+      grade.name = g['GradeObjectName']
+      grade.displayed_grade = g['DisplayedGrade']
+      grade.numerator = g.dig('PointsNumerator')
+      grade.denominator = g.dig('PointsDenominator')
+      grade.grade_object_type = g['GradeObjectType']
+      grade.last_modified = Time.parse(g['LastModified']) rescue nil
+      grade.comments = g.dig('Comments', 'Text')
+      grade.save!
     end
   end
 
@@ -619,6 +690,27 @@ class BrightspaceClient
     rescue => e
       puts "Download connection error for #{path}: #{e.message}"
       nil
+    end
+  end
+
+  def portal_url_for(type, options = {})
+    course_id = options[:course_id]
+    id = options[:id]
+    
+    base_url = "https://#{@host}/d2l"
+    
+    case type
+    when :course_home
+      "#{base_url}/home/#{course_id}"
+    when :assignment
+      "#{base_url}/lms/dropbox/user/folder_submit_files.d2l?db=#{id}&ou=#{course_id}"
+    when :discussion_topic
+      "#{base_url}/lms/discussions/admin/forum_topics_list.d2l?ou=#{course_id}"
+    when :discussion_thread
+      # Most direct way to a thread in the portal
+      "#{base_url}/lms/discussions/admin/forum_topics_list.d2l?ou=#{course_id}&tid=#{id}"
+    else
+      "#{base_url}/home/#{course_id}"
     end
   end
 

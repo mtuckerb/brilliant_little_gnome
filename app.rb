@@ -12,10 +12,38 @@ require_relative 'models/notification'
 require_relative 'models/api_cache'
 require_relative 'models/download_job'
 require_relative 'models/user_preference'
+require_relative 'models/course'
+require_relative 'models/content_module'
+require_relative 'models/content_item'
+require_relative 'models/assignment'
+require_relative 'models/discussion_forum'
+require_relative 'models/discussion_topic'
+require_relative 'models/discussion_thread'
+require_relative 'models/grade'
 
 # Basic Configuration
 set :port, 4567
 set :views, File.join(File.dirname(__FILE__), 'views')
+
+# Runtime Database Initialization
+configure :development, :production do
+  begin
+    puts "Verifying database schema..."
+    # Ensure the directory exists
+    FileUtils.mkdir_p("db")
+    
+    # Run migrations if pending
+    # In AR 5.2 MigrationContext takes only the migrations path
+    context = ActiveRecord::MigrationContext.new("db/migrate")
+    if context.needs_migration?
+      puts "Pending migrations detected. Automating migration..."
+      context.migrate
+      puts "Database schema is now up to date."
+    end
+  rescue => e
+    puts "Database initialization warning: #{e.message}"
+  end
+end
 
 # Initialize Client
 $client = BrightspaceClient.new
@@ -178,7 +206,15 @@ get '/dashboard' do
 
   @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
   
+  @sync_status = $client.sync_status
+  
   erb :dashboard
+end
+
+# Sync Status Endpoint
+get '/sync/status' do
+  content_type :json
+  $client.sync_status.to_json
 end
 
 # Course Overview / Syllabus
@@ -208,8 +244,14 @@ end
 # Assignments
 get '/course/:id/assignments' do
   @active_tab = 'assignments'
-  @breadcrumb_trail = [{ title: 'Assignments', url: "/course/#{@course_id}/assignments" }]
-  @assignments = $client.get_assignments(@course_id)
+  @breadcrumb_trail = [{ title: 'Assignments', url: "/course/#{@course_id}" }]
+  @assignments = Assignment.where(course_id: @course_id).order(due_date: :asc)
+  
+  # Fallback if empty
+  if @assignments.empty?
+    @assignments_raw = $client.get_assignments(@course_id)
+  end
+
   erb :assignments
 end
 
@@ -423,14 +465,31 @@ end
 get '/course/:id/grades' do
   @active_tab = 'grades'
   @breadcrumb_trail = [{ title: 'Grades', url: "/course/#{@course_id}/grades" }]
-  @grades = $client.get_grades(@course_id)
+  
+  # Trigger refresh and sync
+  @grades_raw = $client.get_grades(@course_id) || []
+  Thread.new { $client.sync_grades(@course_id, @grades_raw) }
+  
+  # Use DB for display
+  @grades = Grade.where(course_id: @course_id).order(last_modified: :desc, name: :asc)
+  
+  # Fallback to raw if DB still empty
+  @grades = @grades_raw if @grades.empty?
+  
   erb :grades
 end
 
 # Discussions
 get '/course/:id/discussions' do
   @active_tab = 'discussions'
-  @topics = $client.get_all_topics(@course_id)
+  
+  # Proactively sync forums/topics
+  @forums_raw = $client.get_discussions(@course_id) || []
+  Thread.new { $client.sync_discussions(@course_id, @forums_raw) }
+  
+  @forums = DiscussionForum.where(course_id: @course_id).order(name: :asc)
+  @topics = DiscussionTopic.where(course_id: @course_id).order(sort_order: :asc)
+  
   @breadcrumb_trail = [{ title: 'Discussions', url: "/course/#{@course_id}/discussions" }]
   erb :discussions
 end
@@ -439,11 +498,22 @@ end
 get '/course/:id/discussions/:forum_id/topics' do
   @active_tab = 'discussions'
   @forum_id = params[:forum_id]
-  @forum = $client.get_discussion_forum(@course_id, @forum_id)
-  @topics = $client.get_discussion_topics(@course_id, @forum_id)
+  
+  @forum = DiscussionForum.find_by(brightspace_id: @forum_id, course_id: @course_id)
+  # Fallback
+  @forum ||= $client.get_discussion_forum(@course_id, @forum_id)
+
+  @topics = DiscussionTopic.where(forum_id: @forum_id, course_id: @course_id).order(sort_order: :asc)
+  # Fallback/Sync
+  if @topics.empty?
+    topics_raw = $client.get_discussion_topics(@course_id, @forum_id)
+    @topics_data = topics_raw.is_a?(Hash) ? (topics_raw['Items'] || []) : (topics_raw || [])
+    Thread.new { $client.sync_discussion_topics(@course_id, @forum_id, @topics_data) }
+  end
+
   @breadcrumb_trail = [
     { title: 'Discussions', url: "/course/#{@course_id}/discussions" },
-    { title: @forum['Name'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics" }
+    { title: @forum.is_a?(DiscussionForum) ? @forum.name : @forum['Name'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics" }
   ]
   erb :discussion_topics
 end
@@ -454,17 +524,25 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   @forum_id = params[:forum_id]
   @topic_id = params[:topic_id]
   
-  @forum = $client.get_discussion_forum(@course_id, @forum_id)
-  @topic = $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
+  @forum = DiscussionForum.find_by(brightspace_id: @forum_id, course_id: @course_id) || $client.get_discussion_forum(@course_id, @forum_id)
+  @topic = DiscussionTopic.find_by(brightspace_id: @topic_id, forum_id: @forum_id) || $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
   @evaluation = $client.get_discussion_evaluation(@course_id, @forum_id, @topic_id)
   
   @breadcrumb_trail = [
     { title: 'Discussions', url: "/course/#{@course_id}/discussions" },
-    { title: @topic['Name'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics/#{@topic_id}" }
+    { title: @topic.is_a?(DiscussionTopic) ? @topic.name : @topic['Name'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics/#{@topic_id}" }
   ]
   
-  @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id)
-  @threads = @threads_data.is_a?(Hash) ? (@threads_data['Items'] || []) : (@threads_data || [])
+  # Fetch and sync threads
+  @threads_data_raw = $client.get_discussion_threads(@course_id, @forum_id, @topic_id)
+  @threads_raw = @threads_data_raw.is_a?(Hash) ? (@threads_data_raw['Items'] || []) : (@threads_data_raw || [])
+  
+  # Use DB for display if available, otherwise raw
+  Thread.new do 
+    @threads_raw.each { |th| $client.sync_discussion_thread(@course_id, @topic_id, th) }
+  end
+
+  @threads = @threads_raw # Stick to raw for immediate view accuracy, background syncs for cache
   
   @threads_with_posts = @threads.sort_by { |t| t['IsPinned'] ? 0 : 1 }.map do |thread|
     posts_data = $client.get_thread_posts(@course_id, @forum_id, @topic_id, thread['ThreadId'])

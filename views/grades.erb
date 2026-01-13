@@ -17,10 +17,24 @@
           </thead>
           <tbody>
             <% @grades.each do |g| %>
+              <% 
+                # Support both ActiveRecord objects and raw API Hashes
+                name = g.respond_to?(:name) ? g.name : g['GradeObjectName']
+                displayed = g.respond_to?(:displayed_grade) ? g.displayed_grade : g['DisplayedGrade']
+                numerator = g.respond_to?(:numerator) ? g.numerator : g['PointsNumerator']
+                denominator = g.respond_to?(:denominator) ? g.denominator : g['PointsDenominator']
+              %>
               <tr>
-                <td><%= g['GradeObjectName'] %></td>
-                <td><%= g['DisplayedGrade'] %></td>
-                <td><span class="tag is-info"><%= g['PointsNumerator'] %> / <%= g['PointsDenominator'] %></span></td>
+                <td><%= name %></td>
+                <td style="font-family: monospace;"><%= displayed %></td>
+                <td>
+                  <% if numerator && denominator %>
+                    <span class="tag is-info"><%= numerator %> / <%= denominator %></span>
+                    <% if denominator > 0 %>
+                      <span class="tag is-light is-info"><%= ((numerator.to_f / denominator) * 100).round(1) %>%</span>
+                    <% end %>
+                  <% end %>
+                </td>
               </tr>
             <% end %>
           </tbody>
