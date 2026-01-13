@@ -138,6 +138,25 @@ get '/course/:id/assignments/:assignment_id' do
   @active_tab = 'assignments'
   @assignment_id = params[:assignment_id]
   @assignment = $client.get_assignment(@course_id, @assignment_id)
+  @feedback = $client.get_assignment_feedback(@course_id, @assignment_id)
+  @submission_data = $client.get_assignment_submissions(@course_id, @assignment_id)
+  
+  # The Submissions API often contains the most complete feedback if /myFeedback is sparse
+  if @submission_data.is_a?(Array) && !@submission_data.empty?
+      sub_group = @submission_data[0]
+      @submissions = sub_group['Submissions']
+      # If we don't have official feedback yet, try to use the one from the submission loop
+      if (@feedback.nil? || (@feedback['Feedback']&.empty? rescue true))
+          @feedback = sub_group['Feedback']
+      end
+  end
+
+  # Fallback: Check grades for comments if no direct feedback found
+  if (@feedback.nil? || (@feedback['Feedback']&.empty? rescue true))
+    grades = $client.get_grades(@course_id)
+    @grade_entry = grades.find { |g| g['GradeObjectIdentifier'] == @assignment['GradeItemId'].to_s } if grades && @assignment['GradeItemId']
+  end
+
   @breadcrumb_trail = [
     { title: 'Assignments', url: "/course/#{@course_id}/assignments" },
     { title: @assignment['Name'], url: "/course/#{@course_id}/assignments/#{@assignment_id}" }

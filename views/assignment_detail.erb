@@ -5,88 +5,207 @@
   </div>
   <div class="column is-9">
     <div class="box">
-      <div class="level mb-4">
-        <div class="level-left">
-          <div>
-            <h4 class="title is-4 mb-2"><%= @assignment['Name'] %></h4>
-            <div class="is-size-6 has-text-grey">
-              <i class="fas fa-calendar-alt mr-1"></i> Due: <%= @assignment['DueDate'] ? Time.parse(@assignment['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %>
-            </div>
+      <div class="mb-5">
+        <h4 class="title is-4 mb-2"><%= @assignment['Name'] %></h4>
+        <div class="is-flex is-justify-content-space-between is-align-items-center">
+          <div class="is-size-6 has-text-grey">
+            <i class="fas fa-calendar-alt mr-1"></i> Due: <%= @assignment['DueDate'] ? Time.parse(@assignment['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %>
           </div>
-        </div>
-        <div class="level-right">
-          <div class="buttons">
-            <a href="<%= $client.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id}) %>" class="button is-small is-link is-light" target="_blank">
-              <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
-              <span>Open in Brightspace</span>
-            </a>
-          </div>
+          <a href="<%= $client.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id}) %>" class="button is-small is-link is-light" target="_blank">
+            <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
+            <span>Open in Brightspace</span>
+          </a>
         </div>
       </div>
 
       <hr>
 
-      <div class="content">
-        <h5 class="title is-5 mb-3"><i class="fas fa-info-circle mr-2 has-text-primary"></i> Instructions</h5>
-        <% 
-           desc = @assignment['Instructions'] || @assignment['CustomInstructions']
-           desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
-        %>
-        <div class="box is-light py-4 px-5">
-          <% if desc_text.strip.empty? %>
-            <p class="has-text-grey italic">No specific instructions provided.</p>
-          <% else %>
-            <%= desc_text %>
-          <% end %>
+      <%# --- VIEW FEEDBACK (Official) --- %>
+      <% 
+         fb_text_content = ""
+         if @feedback
+           fb_desc = @feedback['Feedback']
+           fb_text_content = fb_desc.is_a?(Hash) ? (fb_desc['Html'] || fb_desc['Text'] || "") : fb_desc.to_s
+         end
+         has_feedback = !fb_text_content.strip.empty? || (@feedback && @feedback['Attachments'] && !@feedback['Attachments'].empty?)
+      %>
+      <% if has_feedback %>
+        <div class="mb-5">
+          <details class="section-details" open>
+            <summary class="is-clickable p-2 has-background-success-light" style="list-style: none; outline: none; border-radius: 4px;">
+              <div class="is-flex is-justify-content-space-between is-align-items-center">
+                <h5 class="title is-5 mb-0"><i class="fas fa-comment-dots mr-2 has-text-success"></i> Official Feedback</h5>
+                <span class="icon is-small has-text-grey">
+                  <i class="fas fa-chevron-down"></i>
+                </span>
+              </div>
+            </summary>
+            <div class="p-4 has-background-white border-light">
+              <div class="box has-background-white-ter shadow-sm">
+                <div class="content">
+                  <% if fb_text_content.strip.empty? %>
+                    <p class="has-text-grey italic">No feedback text provided in official feedback slot.</p>
+                  <% else %>
+                    <%= fb_text_content %>
+                  <% end %>
+                </div>
+
+                <% if @feedback['Attachments'] && !@feedback['Attachments'].empty? %>
+                  <div class="mt-4 pt-3" style="border-top: 1px dashed #ddd;">
+                    <p class="is-size-7 has-text-weight-bold mb-2">Feedback Attachments:</p>
+                    <div class="list is-hoverable">
+                      <% @feedback['Attachments'].each do |att| %>
+                        <div class="list-item">
+                          <div class="is-flex is-justify-content-space-between is-align-items-center">
+                            <span><i class="fas fa-file-pdf mr-2 has-text-danger"></i><%= att['FileName'] %></span>
+                            <a href="/course/<%= @course_id %>/download?path=<%= URI.encode_www_form_component("/d2l/api/le/1.40/#{@course_id}/dropbox/folders/#{@assignment_id}/feedback/attachments/#{att['FileId']}") %>&name=<%= URI.encode_www_form_component(att['FileName']) %>" class="button is-small is-light">
+                              <span class="icon is-small"><i class="fas fa-download"></i></span>
+                            </a>
+                          </div>
+                        </div>
+                      <% end %>
+                    </div>
+                  </div>
+                <% end %>
+              </div>
+            </div>
+          </details>
         </div>
+      <% end %>
+
+      <%# --- INSTRUCTIONS --- %>
+      <div class="mb-5">
+        <details class="section-details">
+          <summary class="is-clickable p-2 has-background-light" style="list-style: none; outline: none; border-radius: 4px;">
+            <div class="is-flex is-justify-content-space-between is-align-items-center">
+              <h5 class="title is-5 mb-0"><i class="fas fa-info-circle mr-2 has-text-primary"></i> Instructions</h5>
+              <span class="icon is-small has-text-grey">
+                <i class="fas fa-chevron-down"></i>
+              </span>
+            </div>
+          </summary>
+          <div class="content p-4 has-background-white border-light">
+            <% 
+               desc = @assignment['Instructions'] || @assignment['CustomInstructions']
+               desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+            %>
+            <div class="box is-light py-4 px-5">
+              <% if desc_text.strip.empty? %>
+                <p class="has-text-grey italic">No specific instructions provided.</p>
+              <% else %>
+                <%= desc_text %>
+              <% end %>
+            </div>
+
+            <% if @assignment['Attachments'] && !@assignment['Attachments'].empty? %>
+              <div class="mt-4">
+                <p class="is-size-7 has-text-weight-bold mb-2">Attachments:</p>
+                <div class="list is-hoverable">
+                  <% @assignment['Attachments'].each do |att| %>
+                    <% 
+                       download_url = "/d2l/api/le/1.40/#{@course_id}/dropbox/folders/#{@assignment_id}/attachments/#{att['FileId']}"
+                    %>
+                    <div class="list-item">
+                      <div class="is-flex is-justify-content-space-between is-align-items-center">
+                        <span><i class="fas fa-file-alt mr-2 has-text-grey"></i><%= att['FileName'] %></span>
+                        <a href="/course/<%= @course_id %>/download?path=<%= URI.encode_www_form_component(download_url) %>&name=<%= URI.encode_www_form_component(att['FileName']) %>" class="button is-small is-light">
+                          <span class="icon is-small"><i class="fas fa-download"></i></span>
+                        </a>
+                      </div>
+                    </div>
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
+
+            <% if @assignment['LinkAttachments'] && !@assignment['LinkAttachments'].empty? %>
+              <div class="mt-4">
+                <p class="is-size-7 has-text-weight-bold mb-2">External Links:</p>
+                <div class="list is-hoverable">
+                  <% @assignment['LinkAttachments'].each do |link| %>
+                    <div class="list-item">
+                      <div class="is-flex is-justify-content-space-between is-align-items-center">
+                        <span>
+                          <i class="fas fa-link mr-2 has-text-grey"></i>
+                          <strong><%= link['LinkName'] %></strong>
+                        </span>
+                        <a href="<%= link['Href'] %>" class="button is-small is-primary is-light" target="_blank">
+                          <span class="icon is-small"><i class="fas fa-arrow-right"></i></span>
+                          <span>Open Link</span>
+                        </a>
+                      </div>
+                    </div>
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        </details>
       </div>
 
-      <% if @assignment['Attachments'] && !@assignment['Attachments'].empty? %>
-        <div class="mt-6">
-          <h5 class="title is-5 mb-3"><i class="fas fa-paperclip mr-2 has-text-primary"></i> Attachments</h5>
-          <div class="list is-hoverable">
-            <% @assignment['Attachments'].each do |att| %>
-              <% 
-                 download_url = "/d2l/api/le/1.40/#{@course_id}/dropbox/folders/#{@assignment_id}/attachments/#{att['FileId']}"
-              %>
-              <div class="list-item">
-                <div class="is-flex is-justify-content-space-between is-align-items-center">
-                  <span><i class="fas fa-file-alt mr-2 has-text-grey"></i><%= att['FileName'] %></span>
-                  <a href="/course/<%= @course_id %>/download?path=<%= URI.encode_www_form_component(download_url) %>&name=<%= URI.encode_www_form_component(att['FileName']) %>" class="button is-small is-light">
-                    <span class="icon is-small"><i class="fas fa-download"></i></span>
-                  </a>
-                </div>
-              </div>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-
-      <% if @assignment['LinkAttachments'] && !@assignment['LinkAttachments'].empty? %>
-        <div class="mt-6">
-          <h5 class="title is-5 mb-3"><i class="fas fa-external-link-alt mr-2 has-text-primary"></i> External Links</h5>
-          <div class="list is-hoverable">
-            <% @assignment['LinkAttachments'].each do |link| %>
-              <div class="list-item">
-                <div class="is-flex is-justify-content-space-between is-align-items-center">
-                  <span>
-                    <i class="fas fa-link mr-2 has-text-grey"></i>
-                    <strong><%= link['LinkName'] %></strong>
-                  </span>
-                  <a href="<%= link['Href'] %>" class="button is-small is-primary is-light" target="_blank">
-                    <span class="icon is-small"><i class="fas fa-arrow-right"></i></span>
-                    <span>Open Link</span>
-                  </a>
-                </div>
-              </div>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-
-      <div class="notification is-info is-light mt-6">
+      <div class="notification is-info is-light mt-4">
         <i class="fas fa-info-circle mr-2"></i> Submissions must be handled through the official Brightspace portal.
       </div>
+
+      <%# --- YOUR SUBMISSIONS --- %>
+      <% if @submissions %>
+        <div class="mb-5">
+          <details class="section-details">
+            <summary class="is-clickable p-2 has-background-light" style="list-style: none; outline: none; border-radius: 4px;">
+              <div class="is-flex is-justify-content-space-between is-align-items-center">
+                <h5 class="title is-5 mb-0"><i class="fas fa-file-upload mr-2 has-text-info"></i> Your Submissions</h5>
+                <span class="icon is-small has-text-grey">
+                  <i class="fas fa-chevron-down"></i>
+                </span>
+              </div>
+            </summary>
+            <div class="p-4 has-background-white border-light">
+              <% if @submissions.is_a?(Array) && !@submissions.empty? %>
+                <% @submissions.each do |sub| %>
+                  <div class="mb-4 box is-light">
+                    <% if sub['SubmissionDate'] %>
+                      <p class="is-size-7 has-text-grey mb-2">Submitted: <%= Time.parse(sub['SubmissionDate']).strftime("%B %d, %Y %I:%M %p") %></p>
+                    <% end %>
+                    <% (sub['Files'] || []).each do |f| %>
+                      <div class="is-flex is-justify-content-space-between is-align-items-center py-2 px-3 has-background-white mb-1" style="border: 1px solid #efefef; border-radius: 4px;">
+                         <span><i class="fas fa-file mr-2 has-text-grey"></i><%= f['FileName'] %></span>
+                         <a href="/course/<%= @course_id %>/download?path=<%= URI.encode_www_form_component("/d2l/api/le/1.40/#{@course_id}/dropbox/folders/#{@assignment_id}/submissions/#{sub['Id']}/files/#{f['FileId']}") %>&name=<%= URI.encode_www_form_component(f['FileName']) %>" class="button is-small is-white">
+                           <span class="icon is-small"><i class="fas fa-download"></i></span>
+                         </a>
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
+              <% else %>
+                 <p class="has-text-grey italic">No submission records found.</p>
+              <% end %>
+            </div>
+          </details>
+        </div>
+      <% end %>
+
+      <%# --- FALLBACK: GRADEBOOK COMMENTS --- %>
+      <% if @grade_entry && @grade_entry['Comments'] && !(@grade_entry['Comments']['Text'] || "").strip.empty? %>
+        <div class="mt-6">
+           <h5 class="title is-5 mb-3"><i class="fas fa-award mr-2 has-text-warning"></i> Gradebook Comments</h5>
+           <div class="box" style="border-left: 5px solid #ffdd57; background: #fffcf0;">
+             <div class="content">
+                <%= @grade_entry['Comments']['Html'] || @grade_entry['Comments']['Text'] %>
+             </div>
+             <div class="is-size-7 has-text-grey mt-2">
+                Score: <strong><%= @grade_entry['DisplayedGrade'] %></strong> (<%= @grade_entry['PointsNumerator'] %> / <%= @grade_entry['PointsDenominator'] %>)
+             </div>
+           </div>
+        </div>
+      <% end %>
+
     </div>
   </div>
 </div>
+
+<style>
+  .section-details summary::-webkit-details-marker { display: none; }
+  .section-details[open] summary .fa-chevron-down { transform: rotate(180deg); }
+  .section-details summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
+  .border-light { border: 1px solid #eee; border-top: none; border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }
+</style>

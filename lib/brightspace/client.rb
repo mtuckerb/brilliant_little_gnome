@@ -154,6 +154,14 @@ class BrightspaceClient
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/#{assignment_id}")
   end
 
+  def get_assignment_feedback(org_unit_id, assignment_id)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/#{assignment_id}/feedback/myFeedback")
+  end
+
+  def get_assignment_submissions(org_unit_id, assignment_id)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/#{assignment_id}/submissions/")
+  end
+
   def get_grades(org_unit_id)
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/grades/values/myGradeValues/")
   end

@@ -172,6 +172,31 @@ module CourseHelpers
           }
         end
       end
+
+      # Feedback
+      fb = client.get_assignment_feedback(course_id, a_summary['Id'])
+      if fb
+        folder = "Assignments/#{a['Name'].gsub(/[^0-9a-z]/i, '_')}/Feedback"
+        if fb['Attachments'] && !fb['Attachments'].empty?
+          fb['Attachments'].each do |att|
+            files << {
+              title: att['FileName'],
+              path: "/d2l/api/le/1.40/#{course_id}/dropbox/folders/#{a['Id']}/feedback/attachments/#{att['FileId']}",
+              folder: folder
+            }
+          end
+        end
+        if fb['LinkAttachments'] && !fb['LinkAttachments'].empty?
+          fb['LinkAttachments'].each do |link|
+            safe_link_name = (link['Title'] || link['LinkName'] || "Link").gsub(/[^0-9a-z]/i, '_')
+            files << {
+              title: "#{safe_link_name}.url",
+              content: "[InternetShortcut]\r\nURL=#{link['Url'] || link['Href']}\r\n",
+              folder: folder
+            }
+          end
+        end
+      end
     end
 
     # 4. Table of Contents (Modules)
