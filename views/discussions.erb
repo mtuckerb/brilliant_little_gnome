@@ -1,0 +1,26 @@
+<%= erb :'partials/course_detail_header' %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :'partials/sidebar' %>
+  </div>
+  <div class="column is-9">
+    <div class="box">
+      <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> Discussion Forums</h4>
+      <% if @forums && !@forums.empty? %>
+        <% @forums.each do |forum| %>
+          <div class="content mb-6">
+            <h5 class="title is-5"><%= forum['Name'] %></h5>
+            <% 
+               desc = forum['Description']
+               desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+            %>
+            <div class="is-size-6"><%= desc_text %></div>
+            <hr />
+          </div>
+        <% end %>
+      <% else %>
+        <p class="has-text-grey">No discussion forums found.</p>
+      <% end %>
+    </div>
+  </div>
+</div>

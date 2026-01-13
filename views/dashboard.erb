@@ -1,0 +1,34 @@
+<div class="level mb-6">
+  <div class="level-left">
+    <h1 class="title"><i class="fas fa-book-open mr-2"></i> My Course List</h1>
+  </div>
+</div>
+
+<% if @courses.empty? %>
+  <div class="notification is-warning">No active courses found.</div>
+<% else %>
+  <div class="box p-0">
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr>
+          <th>Course Name</th>
+          <th>Code</th>
+          <th class="has-text-right">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @courses.each do |c| %>
+          <tr class="course-row" onclick="window.location='/course/<%= c['OrgUnit']['Id'] %>'">
+            <td class="has-text-weight-medium is-size-5"><%= c['OrgUnit']['Name'] %></td>
+            <td class="has-text-grey"><%= c['OrgUnit']['Code'] %></td>
+            <td class="has-text-right">
+              <a href="/course/<%= c['OrgUnit']['Id'] %>" class="button is-small is-primary is-light">
+                View Content <i class="fas fa-arrow-right ml-2"></i>
+              </a>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+<% end %>

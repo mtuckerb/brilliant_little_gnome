@@ -1,0 +1,61 @@
+<%= erb :'partials/course_detail_header' %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :'partials/sidebar' %>
+  </div>
+  <div class="column is-9">
+    <div class="box">
+      <% if @overview %>
+         <div class="level">
+             <div class="level-left">
+                <h4 class="title is-4">Syllabus / Overview</h4>
+             </div>
+             <div class="level-right">
+                <div class="buttons">
+                  <% if @overview['Attachment'] %>
+                    <a href="/course/<%= @course_id %>/overview/download" class="button is-link is-small" target="_blank">
+                       <span class="icon is-small mr-1"><i class="fas fa-file-download"></i></span>
+                       Syllabus File 
+                    </a>
+                  <% end %>
+                  <a href="/course/<%= @course_id %>/download_all" class="button is-primary is-small">
+                     <span class="icon is-small mr-1"><i class="fas fa-archive"></i></span>
+                     Download Everything (Zip)
+                  </a>
+                </div>
+             </div>
+         </div>
+         <div class="content">
+            <% 
+               desc = @overview['Description']
+               desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+            %>
+            <% unless desc_text.strip.empty? %>
+              <%= desc_text %> 
+            <% else %>
+              <p class="has-text-grey-light">No description provided and no "Overview" attachment.</p>
+              <% if @syllabus_module %>
+                <hr />
+                <h5 class="title is-5"><span class="icon has-text-primary mr-2"><i class="fas fa-folder-open"></i></span> Found "Syllabus" Module</h5>
+                <% if @syllabus_module['Topics'] && !@syllabus_module['Topics'].empty? %>
+                   <div class="list is-hoverable">
+                     <% @syllabus_module['Topics'].each do |topic| %>
+                       <div class="list-item">
+                          <div class="is-flex is-justify-content-space-between is-align-items-center">
+                             <div>
+                               <span class="icon is-small has-text-info mr-2"><i class="fas fa-file-pdf"></i></span>
+                               <span class="has-text-weight-medium"><%= topic['Title'] %></span>
+                             </div>
+                             <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] %>/download" class="button is-small is-link is-outlined" target="_blank">Download</a>
+                          </div>
+                       </div>
+                     <% end %>
+                   </div>
+                <% end %>
+              <% end %>
+            <% end %>
+         </div>
+      <% end %>
+    </div>
+  </div>
+</div>

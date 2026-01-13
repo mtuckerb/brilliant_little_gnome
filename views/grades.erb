@@ -1,0 +1,33 @@
+<%= erb :'partials/course_detail_header' %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :'partials/sidebar' %>
+  </div>
+  <div class="column is-9">
+    <div class="box">
+      <h4 class="title is-4"><i class="fas fa-poll mr-2"></i> Grades</h4>
+      <% if @grades && !@grades.empty? %>
+        <table class="table is-fullwidth">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Points</th>
+              <th>Grade</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% @grades.each do |g| %>
+              <tr>
+                <td><%= g['GradeObjectName'] %></td>
+                <td><%= g['DisplayedGrade'] %></td>
+                <td><span class="tag is-info"><%= g['PointsNumerator'] %> / <%= g['PointsDenominator'] %></span></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% else %>
+        <p class="has-text-grey">No grade values found yet.</p>
+      <% end %>
+    </div>
+  </div>
+</div>

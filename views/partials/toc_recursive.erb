@@ -1,0 +1,13 @@
+<li>
+  <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" 
+     class="<%= 'is-active' if @active_tab == "module_#{mod['ModuleId']}" %>">
+    <%= mod['Title'] %>
+  </a>
+  <% if mod['Modules'] && !mod['Modules'].empty? %>
+    <ul class="toc-nested">
+      <% mod['Modules'].each do |sub| %>
+        <%= erb :'partials/toc_recursive', locals: { mod: sub, depth: depth + 1 } %>
+      <% end %>
+    </ul>
+  <% end %>
+</li>

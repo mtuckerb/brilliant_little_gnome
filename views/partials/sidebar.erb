@@ -1,0 +1,42 @@
+<aside class="menu">
+  <p class="menu-label">General</p>
+  <ul class="menu-list">
+    <li><a href="/course/<%= @course_id %>" class="<%= 'is-active' if @active_tab == 'overview' %>">
+      <span class="icon is-small mr-2"><i class="fas fa-info-circle"></i></span> Syllabus / Overview</a>
+    </li>
+    <li><a href="/course/<%= @course_id %>/assignments" class="<%= 'is-active' if @active_tab == 'assignments' %>">
+      <span class="icon is-small mr-2"><i class="fas fa-tasks"></i></span> Assignments</a>
+    </li>
+    <li><a href="/course/<%= @course_id %>/grades" class="<%= 'is-active' if @active_tab == 'grades' %>">
+      <span class="icon is-small mr-2"><i class="fas fa-poll"></i></span> Grades</a>
+    </li>
+    <li><a href="/course/<%= @course_id %>/discussions" class="<%= 'is-active' if @active_tab == 'discussions' %>">
+      <span class="icon is-small mr-2"><i class="fas fa-comments"></i></span> Discussions</a>
+    </li>
+  </ul>
+  
+  <p class="menu-label">Table of Contents</p>
+  <div class="px-2 mb-4">
+    <form action="/course/<%= @course_id %>/search" method="GET">
+      <div class="field has-addons">
+        <div class="control is-expanded">
+          <input class="input is-small" type="text" name="q" placeholder="Search course..." value="<%= params[:q] %>">
+        </div>
+        <div class="control">
+          <button type="submit" class="button is-small is-primary">
+            <i class="fas fa-search"></i>
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+  <ul class="menu-list">
+    <% if @toc && @toc['Modules'] %>
+      <% @toc['Modules'].each do |mod| %>
+        <%= erb :'partials/toc_recursive', locals: { mod: mod, depth: 0 } %>
+      <% end %>
+    <% else %>
+      <li><span class="has-text-grey-light">No modules found.</span></li>
+    <% end %>
+  </ul>
+</aside>

@@ -1,0 +1,63 @@
+<div class="box has-text-centered p-6">
+  <h1 class="title is-3">Preparing Your Downloads</h1>
+  <p class="subtitle mt-3" id="status-text">Starting collection...</p>
+
+  <div class="columns is-centered mt-5">
+    <div class="column is-6">
+      <progress id="job-progress" class="progress is-primary is-large" value="0" max="100">0%</progress>
+      <p class="has-text-grey mt-2" id="progress-stats">0 / 0 files</p>
+    </div>
+  </div>
+
+  <div id="finished-actions" style="display: none;" class="mt-6">
+    <a id="download-btn" href="/job/<%= @job.id %>/download" class="button is-success is-large is-rounded">
+      <span class="icon"><i class="fas fa-download"></i></span>
+      <strong>Download Zip</strong>
+    </a>
+    <p class="mt-4"><a href="javascript:history.back()">Go Back</a></p>
+  </div>
+
+  <div id="failed-actions" style="display: none;" class="mt-6">
+    <div class="notification is-danger" id="error-msg"></div>
+    <p><a href="javascript:history.back()">Go Back and Retry</a></p>
+  </div>
+</div>
+
+<script>
+  function updateProgress() {
+    fetch('/job/<%= @job.id %>/status')
+      .then(response => response.json())
+      .then(data => {
+        const progressBar = document.getElementById('job-progress');
+        const statusText = document.getElementById('status-text');
+        const progressStats = document.getElementById('progress-stats');
+        const finishedActions = document.getElementById('finished-actions');
+        const failedActions = document.getElementById('failed-actions');
+        const errorMsg = document.getElementById('error-msg');
+
+        progressBar.value = data.progress;
+        progressStats.innerText = `${data.completed} / ${data.total} files`;
+
+        if (data.status === 'completed') {
+          statusText.innerText = "All files collected and zipped!";
+          finishedActions.style.display = 'block';
+          // Auto-trigger download
+          window.location.href = document.getElementById('download-btn').href;
+        } else if (data.status === 'failed') {
+          statusText.innerText = "Something went wrong.";
+          failedActions.style.display = 'block';
+          errorMsg.innerText = data.error || 'Unknown error occurred.';
+        } else {
+          statusText.innerText = `Downloading and zipping... (${data.progress}%)`;
+          setTimeout(updateProgress, 1500);
+        }
+      })
+      .catch(error => {
+        console.error('Error polling status:', error);
+        setTimeout(updateProgress, 3000);
+      });
+  }
+
+  // Start polling
+  updateProgress();
+</script>

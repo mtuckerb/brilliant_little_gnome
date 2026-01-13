@@ -1,0 +1,80 @@
+<%= erb :'partials/course_detail_header' %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :'partials/sidebar' %>
+  </div>
+  <div class="column is-9">
+    <% if @module %>
+      <div class="box">
+        <div class="level">
+          <div class="level-left">
+            <h4 class="title is-4"><%= @module['Title'] %></h4>
+          </div>
+          <div class="level-right">
+            <% 
+               # Count downloadable files
+               download_count = (@module['Topics'] || []).count { |t| t['Url'] && t['Url'].start_with?('/content/enforced/') }
+            %>
+            <% if download_count > 1 %>
+              <a href="/course/<%= @course_id %>/module/<%= @module_id %>/download_all" class="button is-primary is-small">
+                 <span class="icon is-small mr-1"><i class="fas fa-file-zipper"></i></span>
+                 Download all in Module (<%= download_count %>)
+              </a>
+            <% end %>
+          </div>
+        </div>
+        <div class="content">
+          <% 
+             desc = @module['Description']
+             desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+          %>
+          <%= desc_text unless desc_text.empty? %>
+        </div>
+
+        <% if @module['Topics'] && !@module['Topics'].empty? %>
+          <h5 class="subtitle is-5 mt-5">Topics</h5>
+          <div class="list is-hoverable">
+            <% @module['Topics'].each do |topic| %>
+              <div class="list-item p-3">
+                <div class="is-flex is-justify-content-space-between is-align-items-center">
+                  <div>
+                    <span class="topic-icon mr-2">
+                      <% if topic['Type'] == 1 %> <!-- File -->
+                        <i class="fas fa-file"></i>
+                      <% elsif topic['Type'] == 3 %> <!-- Link -->
+                        <i class="fas fa-link"></i>
+                      <% else %>
+                        <i class="fas fa-info-circle"></i>
+                      <% end %>
+                    </span>
+                    <span class="has-text-weight-medium"><%= topic['Title'] %></span>
+                  </div>
+                  <% if topic['Url'] && topic['Url'].start_with?('/content/enforced/') %>
+                    <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] %>/download" class="button is-small is-link is-outlined" target="_blank">
+                      <i class="fas fa-download mr-1"></i> Download
+                    </a>
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+
+        <% if @module['Modules'] && !@module['Modules'].empty? %>
+          <h5 class="subtitle is-5 mt-5">Sub-modules</h5>
+          <div class="columns is-multiline">
+            <% @module['Modules'].each do |sub| %>
+              <div class="column is-6">
+                <a href="/course/<%= @course_id %>/module/<%= sub['ModuleId'] %>" class="box has-background-white-bis has-text-centered">
+                  <h6 class="title is-6"><%= sub['Title'] %></h6>
+                </a>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
+    <% else %>
+      <div class="notification is-danger">Module not found.</div>
+    <% end %>
+  </div>
+</div>
