@@ -13,7 +13,7 @@
           <div class="level-right">
             <% 
                # Count downloadable files
-               download_count = (@module['Topics'] || []).count { |t| t['Url'] && t['Url'].start_with?('/content/enforced/') }
+               download_count = collect_all_files(@module, "").size
             %>
             <% if download_count > 1 %>
               <a href="/course/<%= @course_id %>/module/<%= @module_id %>/download_all" class="button is-primary is-small">
@@ -23,7 +23,7 @@
             <% end %>
           </div>
         </div>
-        <div class="content">
+        <div class="content mb-5">
           <% 
              desc = @module['Description']
              desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
@@ -32,8 +32,7 @@
         </div>
 
         <% if @module['Topics'] && !@module['Topics'].empty? %>
-          <h5 class="subtitle is-5 mt-5">Topics</h5>
-          <div class="list is-hoverable">
+          <div class="list is-hoverable mb-5">
             <% @module['Topics'].each do |topic| %>
               <div class="list-item p-3">
                 <div class="is-flex is-justify-content-space-between is-align-items-center">
@@ -61,18 +60,35 @@
         <% end %>
 
         <% if @module['Modules'] && !@module['Modules'].empty? %>
-          <h5 class="subtitle is-5 mt-5">Sub-modules</h5>
-          <div class="columns is-multiline">
+          <div class="submodules-section mt-6">
+            <h5 class="subtitle is-5 border-bottom pb-2">Sub-modules</h5>
             <% @module['Modules'].each do |sub| %>
-              <div class="column is-6">
-                <a href="/course/<%= @course_id %>/module/<%= sub['ModuleId'] %>" class="box has-background-white-bis has-text-centered">
-                  <h6 class="title is-6"><%= sub['Title'] %></h6>
-                </a>
-              </div>
+              <%= erb :'partials/module_collapsible', locals: { mod: sub } %>
             <% end %>
           </div>
         <% end %>
       </div>
+
+      <script>
+        function toggleCollapsibleModule(id) {
+          const content = document.getElementById('content-' + id);
+          const icon = document.getElementById('icon-' + id);
+          if (content.style.display === 'none') {
+            content.style.display = 'block';
+            icon.classList.remove('fa-chevron-right');
+            icon.classList.add('fa-chevron-down');
+          } else {
+            content.style.display = 'none';
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-right');
+          }
+        }
+      </script>
+
+      <style>
+        .border-left { border-left: 2px solid #f5f5f5; }
+        .border-bottom { border-bottom: 2px solid #f5f5f5; }
+      </style>
     <% else %>
       <div class="notification is-danger">Module not found.</div>
     <% end %>

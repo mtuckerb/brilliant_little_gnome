@@ -1,0 +1,60 @@
+<div class="module-content-block mb-4">
+  <div class="is-flex is-align-items-center mb-2">
+    <a href="javascript:void(0)" onclick="toggleCollapsibleModule('<%= mod['ModuleId'] %>')" class="mr-2 has-text-grey">
+      <i id="icon-<%= mod['ModuleId'] %>" class="fas fa-chevron-down"></i>
+    </a>
+    <h6 class="title is-6 mb-0">
+      <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" class="has-text-dark">
+        <%= mod['Title'] %>
+      </a>
+    </h6>
+  </div>
+
+  <div id="content-<%= mod['ModuleId'] %>" class="pl-4 border-left">
+    <% if mod['Description'] %>
+      <div class="content is-size-7 mb-3">
+        <% 
+           desc = mod['Description']
+           desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+        %>
+        <%= desc_text unless desc_text.empty? %>
+      </div>
+    <% end %>
+
+    <% if mod['Topics'] && !mod['Topics'].empty? %>
+      <div class="list is-hoverable mb-3">
+        <% mod['Topics'].each do |topic| %>
+          <div class="list-item p-2">
+            <div class="is-flex is-justify-content-space-between is-align-items-center">
+              <div class="is-size-7">
+                <span class="topic-icon mr-2">
+                  <% if topic['Type'] == 1 %> <!-- File -->
+                    <i class="fas fa-file"></i>
+                  <% elsif topic['Type'] == 3 %> <!-- Link -->
+                    <i class="fas fa-link"></i>
+                  <% else %>
+                    <i class="fas fa-info-circle"></i>
+                  <% end %>
+                </span>
+                <span class="has-text-weight-medium"><%= topic['Title'] %></span>
+              </div>
+              <% if topic['Url'] && topic['Url'].start_with?('/content/enforced/') %>
+                <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] %>/download" class="button is-small is-ghost px-1" target="_blank">
+                  <i class="fas fa-download"></i>
+                </a>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
+
+    <% if mod['Modules'] && !mod['Modules'].empty? %>
+      <div class="ml-2">
+        <% mod['Modules'].each do |sub| %>
+          <%= erb :'partials/module_collapsible', locals: { mod: sub } %>
+        <% end %>
+      </div>
+    <% end %>
+  </div>
+</div>

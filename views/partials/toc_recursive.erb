@@ -1,14 +1,8 @@
 <li style="list-style-type: none;">
   <% 
      is_active = (@active_tab == "module_#{mod['ModuleId']}")
-     is_open = @lineage && @lineage.include?(mod['ModuleId'].to_s)
   %>
   <div class="is-flex is-align-items-center mb-1">
-    <div style="width: 20px; text-align: center;">
-      <% if mod['Modules'] && !mod['Modules'].empty? %>
-        <i class="fas <%= is_open ? 'fa-caret-down' : 'fa-caret-right' %> is-size-7 has-text-grey-light"></i>
-      <% end %>
-    </div>
     <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" 
        class="<%= 'is-active slide-active' if is_active %>" 
        style="flex-grow: 1; padding: 2px 5px !important; font-size: 0.85rem; <%= is_active ? 'font-weight: bold;' : '' %>">
@@ -23,7 +17,7 @@
   </div>
 
   <% if mod['Modules'] && !mod['Modules'].empty? %>
-    <ul class="toc-nested" style="<%= is_open ? 'display: block;' : 'display: none;' %> list-style-type: none; margin-top: 0;">
+    <ul class="toc-nested" style="display: block; list-style-type: none; margin-top: 0; padding-left: 1rem;">
       <% mod['Modules'].each do |sub| %>
         <%= erb :'partials/toc_recursive', locals: { mod: sub, depth: depth + 1 } %>
       <% end %>
