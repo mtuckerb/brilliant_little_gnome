@@ -1,4 +1,5 @@
-# Brightspace Student Tool PoC
+# Brilliant Little Gnome
+a Brightspace Student Helper
 
 This is a Proof of Concept (PoC) Ruby script to interact with the D2L Brightspace API.
 It implements the OAuth 2.0 flow to authenticate a student and retrieve their course enrollments.
