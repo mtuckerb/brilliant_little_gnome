@@ -1,0 +1,155 @@
+<div class="columns">
+  <div class="column is-3">
+    <div class="box">
+      <h3 class="title is-5 mb-4"><i class="fas fa-filter mr-2"></i> Filters</h3>
+      
+      <form action="/notifications" method="get">
+        <div class="field mb-3">
+          <label class="label is-size-7">Sort By</label>
+          <div class="control">
+            <div class="select is-fullwidth is-small">
+              <select name="sort" onchange="this.form.submit()">
+                <option value="date" <%= 'selected' if params[:sort] == 'date' %>>Newest First</option>
+                <option value="urgency" <%= 'selected' if params[:sort] == 'urgency' %>>Urgency First</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field mb-3">
+          <label class="label is-size-7">Semester</label>
+          <div class="control">
+            <div class="select is-fullwidth is-small">
+              <select name="semester" onchange="this.form.submit()">
+                <option value="">All Semesters</option>
+                <% 
+                  semesters = Notification.pluck(:semester).compact.uniq.sort
+                  semesters.each do |s| 
+                %>
+                  <option value="<%= s %>" <%= 'selected' if params[:semester] == s %>>
+                    <%= s %>
+                  </option>
+                <% end %>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field mb-3">
+          <label class="label is-size-7">Course</label>
+          <div class="control">
+            <div class="select is-fullwidth is-small">
+              <select name="course_id" onchange="this.form.submit()">
+                <option value="">All Courses</option>
+                <% @courses.each do |c| %>
+                  <% info = extract_course_info(c['OrgUnit']['Name']) %>
+                  <option value="<%= c['OrgUnit']['Id'] %>" <%= 'selected' if params[:course_id] == c['OrgUnit']['Id'].to_s %>>
+                    <%= info[:course_display] %>
+                  </option>
+                <% end %>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field mb-3">
+          <label class="label is-size-7">Urgency</label>
+          <div class="control">
+            <div class="select is-fullwidth is-small">
+              <select name="urgency" onchange="this.form.submit()">
+                <option value="">Any Urgency</option>
+                <option value="3" <%= 'selected' if params[:urgency] == '3' %>>High (Red)</option>
+                <option value="2" <%= 'selected' if params[:urgency] == '2' %>>Medium (Yellow)</option>
+                <option value="1" <%= 'selected' if params[:urgency] == '1' %>>Low (Blue)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field mb-4">
+          <label class="checkbox is-size-7">
+            <input type="checkbox" name="personal_only" value="true" <%= 'checked' if params[:personal_only] == 'true' %> onchange="this.form.submit()">
+            Directly for me only
+          </label>
+        </div>
+
+        <hr class="my-4">
+        
+        <div class="is-size-7 has-text-grey">
+          <p class="mb-2"><strong>Urgency Legend:</strong></p>
+          <p><span class="icon is-small has-text-danger"><i class="fas fa-circle"></i></span> High (Direct Reply / Grade)</p>
+          <p><span class="icon is-small has-text-warning"><i class="fas fa-circle"></i></span> Medium (Involvement)</p>
+          <p><span class="icon is-small has-text-info"><i class="fas fa-circle"></i></span> Low (Broadcast/General)</p>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="column is-9">
+    <div class="level mb-5">
+      <div class="level-left">
+        <h1 class="title">Notifications</h1>
+      </div>
+      <div class="level-right">
+        <button class="button is-white is-small" onclick="window.location.reload()">
+          <i class="fas fa-sync-alt mr-2"></i> Refresh
+        </button>
+      </div>
+    </div>
+
+    <% if @notifications.empty? %>
+      <div class="box has-text-centered py-6">
+        <span class="icon is-large has-text-grey-light mb-4">
+          <i class="fas fa-bell-slash fa-2x"></i>
+        </span>
+        <p class="has-text-grey">No notifications found with these filters.</p>
+      </div>
+    <% else %>
+      <div class="notification-list">
+        <% @notifications.each do |n| %>
+          <div class="box mb-3 notification-card p-4" onclick="window.location='<%= n.url %>'" style="cursor: pointer; border-left: 5px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
+            <div class="columns is-mobile is-gapless mb-0">
+              <div class="column">
+                <div class="is-flex is-align-items-center mb-1">
+                  <span class="tag is-small is-rounded mr-2 <%= n.notification_type == 'Grade' ? 'is-success' : (n.notification_type == 'Discussion' ? 'is-warning' : 'is-link') %> is-light">
+                    <%= n.notification_type %>
+                  </span>
+                  <span class="is-size-7 has-text-weight-bold has-text-grey-darker">
+                    <%= n.course_name || (n.course_id ? "Course #{n.course_id}" : "General") %>
+                  </span>
+                  <% if n.semester %>
+                    <span class="is-size-7 has-text-grey ml-2">(<%= n.semester %>)</span>
+                  <% end %>
+                </div>
+                <h3 class="title is-6 mb-1"><%= n.title %></h3>
+                <div class="content is-size-7 has-text-grey-dark mb-0">
+                  <%= n.body ? truncate_text(n.body, 150) : "No description" %>
+                </div>
+              </div>
+              <div class="column is-narrow has-text-right">
+                <p class="is-size-7 has-text-grey mb-1">
+                  <%= n.date.strftime("%b %d, %H:%M") rescue "Recently" %>
+                </p>
+                <% if n.is_personal %>
+                  <span class="icon is-small has-text-danger" title="Directly for you">
+                    <i class="fas fa-user-circle"></i>
+                  </span>
+                <% end %>
+              </div>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
+  </div>
+</div>
+
+<style>
+.notification-card {
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.notification-card:hover {
+  transform: translateX(3px);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+</style>

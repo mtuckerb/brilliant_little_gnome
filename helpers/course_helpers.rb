@@ -223,6 +223,37 @@ module CourseHelpers
     nil
   end
 
+  def extract_course_info(full_name)
+    # Pattern: SWO 370:0001-Human Behav (Online) (2026 Spring)
+    regex = /^(\w{3}\s\d{3}):\d{4}-(.*?)\s*(\(Online\))?\s*(\(\d{4}\s+(?:Spring|Fall|Summer|Winter)\))$/i
+    match = full_name.match(regex)
+    
+    if match
+      {
+        course_display: "#{match[1]} - #{match[2].strip}",
+        is_online: !match[3].to_s.empty?,
+        semester: match[4].to_s.gsub(/[()]/, '').strip
+      }
+    else 
+      # Fallback logic
+      is_online = full_name.downcase.include?('online')
+      semester_match = full_name.match(/(\(?(?:\d{4}\s+(?:Spring|Fall|Summer|Winter))\)?)/i)
+      semester = semester_match ? semester_match[1].gsub(/[()]/, '').strip : nil
+      
+      course_display = full_name
+      if semester
+        course_display = course_display.gsub(/\(#{Regexp.escape(semester)}\)/, '').gsub(semester, '').strip
+      end
+      course_display = course_display.gsub('(Online)', '').strip
+      
+      {
+        course_display: course_display,
+        is_online: is_online,
+        semester: semester
+      }
+    end
+  end
+
   # NEW: Search TOC for topics or modules matching a query
   def search_toc(modules, query, results = { modules: [], topics: [] })
     return results unless modules && query && !query.empty?

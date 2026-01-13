@@ -1,10 +1,14 @@
 require 'sinatra'
+require 'sinatra/activerecord'
 require 'time'
 require 'zip'
 require 'tempfile'
 require 'icalendar'
+
 require_relative 'lib/brightspace/client'
 require_relative 'helpers/course_helpers'
+require_relative 'models/notification'
+require_relative 'models/api_cache'
 require_relative 'models/download_job'
 
 # Basic Configuration
@@ -31,6 +35,7 @@ end
 before '/course/:id*' do
   redirect '/' unless $client.authenticated?
   
+  @user = $client.get_who_am_i
   @course_id = params[:id]
   @toc = $client.get_toc(@course_id)
   
@@ -141,17 +146,14 @@ get '/course/:id/assignments/:assignment_id' do
   @feedback = $client.get_assignment_feedback(@course_id, @assignment_id)
   @submission_data = $client.get_assignment_submissions(@course_id, @assignment_id)
   
-  # The Submissions API often contains the most complete feedback if /myFeedback is sparse
   if @submission_data.is_a?(Array) && !@submission_data.empty?
       sub_group = @submission_data[0]
       @submissions = sub_group['Submissions']
-      # If we don't have official feedback yet, try to use the one from the submission loop
       if (@feedback.nil? || (@feedback['Feedback']&.empty? rescue true))
           @feedback = sub_group['Feedback']
       end
   end
 
-  # Fallback: Check grades for comments if no direct feedback found
   if (@feedback.nil? || (@feedback['Feedback']&.empty? rescue true))
     grades = $client.get_grades(@course_id)
     @grade_entry = grades.find { |g| g['GradeObjectIdentifier'] == @assignment['GradeItemId'].to_s } if grades && @assignment['GradeItemId']
@@ -170,6 +172,51 @@ get '/course/:id/announcements' do
   @breadcrumb_trail = [{ title: 'Announcements', url: "/course/#{@course_id}/announcements" }]
   @news = $client.get_news(@course_id)
   erb :announcements
+end
+
+# Notifications
+get '/notifications' do
+  @active_tab = 'notifications'
+  @courses = $client.get_enrollments
+  @user = $client.get_who_am_i
+  
+  # Trigger a quick background sync for news/grades when viewing notifications
+  # In a real app, this might be a separate background worker
+  Thread.new { $client.sync_notifications(@courses, @user) }
+
+  query = Notification.all
+
+  # Filter: Course
+  if params[:course_id] && !params[:course_id].empty?
+    query = query.where(course_id: params[:course_id])
+  end
+  
+  # Filter: Semester
+  if params[:semester] && !params[:semester].empty?
+    query = query.where(semester: params[:semester])
+  end
+
+  # Filter: Urgency
+  if params[:urgency] && !params[:urgency].empty?
+    query = query.where(urgency: params[:urgency])
+  end
+
+  # Filter: Personal
+  if params[:personal_only] == 'true'
+    query = query.where(is_personal: true)
+  end
+
+  # Sort logic
+  sort_by = params[:sort] || 'date'
+  if sort_by == 'urgency'
+    query = query.order(urgency: :desc, date: :desc)
+  else
+    query = query.order(date: :desc)
+  end
+
+  @notifications = query.limit(100)
+  
+  erb :notifications
 end
 
 # Grades
@@ -201,7 +248,7 @@ get '/course/:id/discussions/:forum_id/topics' do
   erb :discussion_topics
 end
 
-# Discussion Threads (The "Everything" Topic View)
+# Discussion Threads
 get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   @active_tab = 'discussions'
   @forum_id = params[:forum_id]
@@ -216,19 +263,9 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
     { title: @topic['Name'], url: "/course/#{@course_id}/discussions/#{@forum_id}/topics/#{@topic_id}" }
   ]
   
-  @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id, force_refresh: params[:force_refresh] == 'true')
-
-  # DEBUG: Log the raw response to help troubleshoot
-  File.write("debugging/threads_#{Time.now.to_i}.json", @threads_data.to_json) if @threads_data
+  @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id)
+  @threads = @threads_data.is_a?(Hash) ? (@threads_data['Items'] || []) : (@threads_data || [])
   
-  @threads = []
-  if @threads_data.is_a?(Hash)
-    @threads = @threads_data['Items'] || []
-  elsif @threads_data.is_a?(Array)
-    @threads = @threads_data
-  end
-  
-  # Fetch posts for every thread to show the "Thread Tree" immediately
   @threads_with_posts = @threads.sort_by { |t| t['IsPinned'] ? 0 : 1 }.map do |thread|
     posts_data = $client.get_thread_posts(@course_id, @forum_id, @topic_id, thread['ThreadId'])
     posts = posts_data.is_a?(Hash) ? (posts_data['Items'] || []) : (posts_data || [])
@@ -241,7 +278,7 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   erb :discussion_threads
 end
 
-# Discussion Posts (Tree view of posts in a thread)
+# Discussion Posts
 get '/course/:id/discussions/:forum_id/topics/:topic_id/threads/:thread_id' do
   @active_tab = 'discussions'
   @forum_id = params[:forum_id]
@@ -262,33 +299,26 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id/threads/:thread_id' do
   erb :discussion_posts
 end
 
-
-# Generic Download Route for explicit paths
+# Generic Download Route
 get '/course/:id/download' do
   path = params[:path]
   name = params[:name] || "download"
   
-  puts "[Britespace Download] Requested path: #{path}"
-  
-  # Ensure path starts with /
   path = "/#{path}" unless path.start_with?('/')
-  
   http_resp = $client.download_file(path)
   
   if http_resp && http_resp.code == '200'
     content_type http_resp['Content-Type'] || 'application/octet-stream'
-    # Use URI encoding for the filename in the header to handle spaces and special chars safely
     safe_name = name.gsub(/[^0-9A-Za-z.\- ]/, '_')
     headers["Content-Disposition"] = "attachment; filename=\"#{safe_name}\""
     http_resp.body
   else
     status_code = http_resp ? http_resp.code : 'No Response'
-    puts "[Britespace Download] FAILED with status #{status_code} for path #{path}"
-    "Download failed: Status #{status_code}. <br>Detailed Path: #{path}"
+    "Download failed: Status #{status_code}."
   end
 end
 
-# NEW: Search
+# Search
 get '/course/:id/search' do
   @query = params[:q]
   @active_tab = 'search'
@@ -296,34 +326,7 @@ get '/course/:id/search' do
   erb :search
 end
 
-# Download Route (Overview Attachment)
-get '/course/:id/overview/download' do
-  http_resp = $client.download_file("/d2l/api/le/1.40/#{@course_id}/overview/attachment")
-  
-  if http_resp && http_resp.code == '200'
-    content_type http_resp['Content-Type']
-    headers["Content-Disposition"] = http_resp['Content-Disposition'] || "attachment; filename=\"syllabus.pdf\""
-    http_resp.body
-  else
-    "Download failed: #{http_resp ? http_resp.code : 'Unknown error'}"
-  end
-end
-
-# Download Route (Topic/File)
-get '/course/:id/topic/:topic_id/download' do
-  topic_id = params[:topic_id]
-  http_resp = $client.download_file("/d2l/api/le/1.40/#{@course_id}/content/topics/#{topic_id}/file")
-
-  if http_resp && http_resp.code == '200'
-    content_type http_resp['Content-Type']
-    headers["Content-Disposition"] = http_resp['Content-Disposition'] || "attachment; filename=\"file_#{topic_id}.pdf\""
-    http_resp.body
-  else
-    "Download failed: #{http_resp ? http_resp.code : 'Unknown error'}"
-  end
-end
-
-# ASYNC: Download All Files in a Course
+# Download All
 get '/course/:id/download_all' do
   files = collect_everything(@course_id, $client, @toc)
   if files.empty?
@@ -335,58 +338,27 @@ get '/course/:id/download_all' do
   redirect "/job/#{job.id}"
 end
 
-# ASYNC: Download All Files in a Module
-get '/course/:id/module/:module_id/download_all' do
-  module_id = params[:module_id]
-  mod_obj = find_module(@toc['Modules'], module_id)
-  
-  # For a single module, we'll just use its name as the folder
-  folder_name = mod_obj ? mod_obj['Title'].gsub(/[^0-9a-z]/i, '_') : "Module"
-  files = collect_all_files(mod_obj, folder_name)
-  
-  if files.empty?
-    return "No downloadable files found in this module."
-  end
-
-  # Use the course ID for the filename as per requirement
-  filename = "Britespace-#{@course_id}-#{Time.now.strftime('%Y%m%d')}.zip"
-  job = DownloadJob.create(module_id, files, $client, download_filename: filename)
-  redirect "/job/#{job.id}"
-end
-
-# Job Status View
+# Job Status
 get '/job/:id' do
   @job = DownloadJob.find(params[:id])
-  unless @job
-    return "Job not found."
-  end
   erb :job_status
 end
 
-# Job JSON API (for polling)
 get '/job/:id/status' do
   job = DownloadJob.find(params[:id])
   if job
     content_type :json
-    { 
-      status: job.status, 
-      progress: job.progress, 
-      total: job.total_files, 
-      completed: job.completed_files,
-      error: job.error 
-    }.to_json
+    { status: job.status, progress: job.progress }.to_json
   else
     status 404
-    { error: "Job not found" }.to_json
   end
 end
 
-# Download Finished ZIP
 get '/job/:id/download' do
   job = DownloadJob.find(params[:id])
   if job && job.status == :completed && File.exist?(job.zip_path)
     send_file job.zip_path, :type => 'application/zip', :disposition => 'attachment', :filename => job.download_filename
   else
-    "File not ready or job failed."
+    "Not ready."
   end
 end

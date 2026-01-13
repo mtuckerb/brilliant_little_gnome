@@ -42,6 +42,12 @@
     </div>
     <div class="navbar-end">
        <div class="navbar-item">
+          <a href="/notifications" class="button is-white <%= 'has-text-primary' if @active_tab == 'notifications' %>">
+            <span class="icon"><i class="fas fa-bell"></i></span>
+            <span>Notifications</span>
+          </a>
+       </div>
+       <div class="navbar-item">
           <% if @user %>
              <span class="tag is-light is-medium">
                <i class="fas fa-user mr-2"></i> <%= "#{@user['FirstName']} #{@user['LastName']}" %>

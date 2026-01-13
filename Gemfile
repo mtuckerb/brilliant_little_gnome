@@ -1,8 +1,11 @@
 source 'https://rubygems.org'
 
 gem 'sinatra'
+gem 'sinatra-activerecord'
+gem 'activerecord', '~> 5.2.0'
+gem 'sqlite3', '~> 1.3.6'
 gem 'puma'
-gem 'thin'
 gem 'json'
 gem 'rubyzip'
 gem 'icalendar'
+gem 'rake'

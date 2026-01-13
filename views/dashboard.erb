@@ -21,41 +21,17 @@
             <% @courses.each do |c| %>
               <tr class="course-row" onclick="window.location='/course/<%= c['OrgUnit']['Id'] %>'">
                 <td class="py-4">
-                  <% 
-                    full_name = c['OrgUnit']['Name']
-                    
-                    # Pattern: SWO 370:0001-Human Behav (Online) (2026 Spring)
-                    regex = /^(\w{3}\s\d{3}):\d{4}-(.*?)\s*(\(Online\))?\s*(\(\d{4}\s+(?:Spring|Fall|Summer|Winter)\))$/i
-                    match = full_name.match(regex)
-                    
-                    if match
-                      course_display = "#{match[1]} - #{match[2].strip}"
-                      is_online = !match[3].to_s.empty?
-                      semester = match[4].to_s.gsub(/[()]/, '').strip
-                    else 
-                      # Fallback logic
-                      course_display = full_name
-                      is_online = full_name.downcase.include?('online')
-                      semester_match = full_name.match(/(\(?(?:\d{4}\s+(?:Spring|Fall|Summer|Winter))\)?)/i)
-                      semester = semester_match ? semester_match[1].gsub(/[()]/, '').strip : nil
-                      
-                      # Clean up course_display for fallback
-                      if semester
-                        course_display = course_display.gsub(/\(#{Regexp.escape(semester)}\)/, '').gsub(semester, '').strip
-                      end
-                      course_display = course_display.gsub('(Online)', '').strip
-                    end
-                  %>
+                  <% info = extract_course_info(c['OrgUnit']['Name']) %>
                   <div class="has-text-weight-bold is-size-5 mb-1">
-                    <%= course_display %>
+                    <%= info[:course_display] %>
                   </div>
                   
                   <div class="tags mb-2">
-                    <% if semester %>
-                      <span class="tag is-info is-light"><%= semester %></span>
+                    <% if info[:semester] %>
+                      <span class="tag is-info is-light"><%= info[:semester] %></span>
                     <% end %>
                     
-                    <% if is_online %>
+                    <% if info[:is_online] %>
                       <span class="tag is-success is-light">Online</span>
                     <% end %>
                     
@@ -88,7 +64,8 @@
       <% @all_news.each do |news| %>
         <div class="box mb-4">
           <p class="is-size-7 has-text-primary has-text-weight-bold mb-1">
-            <%= news['CourseName'] %>
+            <% course = @courses.find { |c| c['OrgUnit']['Id'].to_s == news['CourseId'].to_s } %>
+            <%= course ? extract_course_info(course['OrgUnit']['Name'])[:course_display] : news['CourseName'] %>
           </p>
           <h6 class="title is-6 mb-2"><%= news['Title'] %></h6>
           <div class="content is-size-7 mb-2">
