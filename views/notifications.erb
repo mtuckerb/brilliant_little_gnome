@@ -146,7 +146,7 @@
               </div>
               <div class="column is-narrow has-text-right">
                 <p class="is-size-7 has-text-grey mb-1">
-                  <%= n.date.strftime("%b %d, %Y %H:%M") rescue "Recently" %>
+                  <%= format_date(n.date, "%b %d, %Y %H:%M") rescue "Recently" %>
                 </p>
                 <% if n.is_personal %>
                   <span class="icon is-small has-text-danger" title="Directly for you">

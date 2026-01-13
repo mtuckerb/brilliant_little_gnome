@@ -25,12 +25,12 @@
         <div class="tags">
           <% if @topic['EndDate'] %>
             <span class="tag is-danger is-light">
-              <i class="fas fa-calendar-times mr-1"></i> Due: <%= Time.parse(@topic['EndDate']).strftime("%b %d, %Y %I:%M %p") %>
+              <i class="fas fa-calendar-times mr-1"></i> Due: <%= format_date(@topic["EndDate"]) %>
             </span>
           <% end %>
           <% if @topic['StartDate'] %>
             <span class="tag is-info is-light">
-              <i class="fas fa-calendar-check mr-1"></i> Available: <%= Time.parse(@topic['StartDate']).strftime("%b %d, %Y") %>
+              <i class="fas fa-calendar-check mr-1"></i> Available: <%= format_date(@topic["StartDate"], "%b %d, %Y") %>
             </span>
           <% end %>
           <span class="tag is-white">
@@ -102,7 +102,7 @@
                     <span class="has-text-weight-semibold author-name"><i class="fas fa-user-circle mr-1"></i> <%= author_name(thread) %></span>
                     <% if thread['LastModified'] %>
                       <span class="mx-2">&bull;</span>
-                      <i class="fas fa-clock mr-1"></i> <span><%= Time.parse(thread['LastModified']).strftime("%b %d, %l:%M %p") %></span>
+                      <i class="fas fa-clock mr-1"></i> <span><%= format_date(thread["LastModified"]) %></span>
                     <% end %>
                     <% if thread['ReplyCount'] %>
                       <span class="mx-2">&bull;</span>

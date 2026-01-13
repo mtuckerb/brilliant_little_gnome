@@ -14,7 +14,7 @@
           <% if instructor %><span class="instructor-tag ml-1">INSTRUCTOR</span><% end %>
         </div>
       </div>
-      <div class="post-date"><%= Time.parse(post['DatePosted']).strftime("%b %d, %I:%M %p") %></div>
+      <div class="post-date"><%= format_date(post["DatePosted"]) %></div>
     </div>
     <div class="post-body content">
        <%= post['Message'] ? (post['Message']['Html'] || post['Message']['Text']) : "" %>

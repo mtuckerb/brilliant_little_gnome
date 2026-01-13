@@ -49,9 +49,9 @@
        </div>
        <div class="navbar-item">
           <% if @user %>
-             <span class="tag is-light is-medium">
-               <i class="fas fa-user mr-2"></i> <%= "#{@user['FirstName']} #{@user['LastName']}" %>
-             </span>
+             <a href="/settings" class="tag is-light is-medium" style="text-decoration: none;">
+               <i class="fas fa-user mr-2"></i> <%= @user_prefs.display_name || "#{@user['FirstName']} #{@user['LastName']}" %>
+             </a>
           <% end %>
        </div>
     </div>

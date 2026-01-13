@@ -1,0 +1,52 @@
+<section class="section">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-half">
+        <div class="box">
+          <h1 class="title has-text-centered">Setup Brilliant</h1>
+          <p class="subtitle has-text-centered">Connect to your Brightspace instance</p>
+          
+          <% if @error %>
+            <div class="notification is-danger">
+              <%= @error %>
+            </div>
+          <% end %>
+
+          <form action="/setup" method="POST">
+            <div class="field">
+              <label class="label">Brightspace Host</label>
+              <div class="control has-icons-left">
+                <input class="input" type="text" name="host" placeholder="e.g. courses.maine.edu" required value="<%= @host %>">
+                <span class="icon is-small is-left">
+                  <i class="fas fa-globe"></i>
+                </span>
+              </div>
+              <p class="help">The domain where you access Brightspace.</p>
+            </div>
+
+            <div class="field">
+              <label class="label">Authentication Cookie</label>
+              <div class="control">
+                <textarea class="textarea" name="cookies" placeholder="Paste your raw cookie string here..." rows="5" required></textarea>
+              </div>
+              <p class="help">Open DevTools (F12) in your browser, go to any Brightspace page, copy the <code>Cookie</code> header from any request in the Network tab.</p>
+            </div>
+
+            <div class="field mt-5">
+              <div class="control">
+                <button type="submit" class="button is-primary is-fullwidth">
+                  <strong>Save & Connect</strong>
+                </button>
+              </div>
+            </div>
+          </form>
+
+          <hr>
+          <div class="content is-size-7 has-text-grey">
+            <p><strong>Security Tip:</strong> Your cookies are stored locally and are used to authenticate requests to the LMS on your behalf. Keep them private.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

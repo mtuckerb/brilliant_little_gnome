@@ -9,7 +9,7 @@
         <h4 class="title is-4 mb-2"><%= @assignment['Name'] %></h4>
         <div class="is-flex is-justify-content-space-between is-align-items-center">
           <div class="is-size-6 has-text-grey">
-            <i class="fas fa-calendar-alt mr-1"></i> Due: <%= @assignment['DueDate'] ? Time.parse(@assignment['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %>
+            <i class="fas fa-calendar-alt mr-1"></i> Due: <%= @assignment['DueDate'] ? format_date(@assignment["DueDate"]) : "No due date" %>
           </div>
           <a href="<%= $client.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id}) %>" class="button is-small is-link is-light" target="_blank">
             <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
@@ -164,7 +164,7 @@
                 <% @submissions.each do |sub| %>
                   <div class="mb-4 box is-light">
                     <% if sub['SubmissionDate'] %>
-                      <p class="is-size-7 has-text-grey mb-2">Submitted: <%= Time.parse(sub['SubmissionDate']).strftime("%B %d, %Y %I:%M %p") %></p>
+                      <p class="is-size-7 has-text-grey mb-2">Submitted: <%= format_date(sub["SubmissionDate"]) %></p>
                     <% end %>
                     <% (sub['Files'] || []).each do |f| %>
                       <div class="is-flex is-justify-content-space-between is-align-items-center py-2 px-3 has-background-white mb-1" style="border: 1px solid #efefef; border-radius: 4px;">

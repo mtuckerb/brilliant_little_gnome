@@ -73,7 +73,7 @@
           <div class="level is-mobile">
             <div class="level-left">
               <span class="is-size-7 has-text-grey">
-                <%= n.date.strftime("%b %d") rescue "Recently" %>
+                <%= format_date(n.date, "%b %d") rescue "Recently" %>
               </span>
               <span class="tag is-small is-rounded ml-2 is-light">
                 <%= n.notification_type %>

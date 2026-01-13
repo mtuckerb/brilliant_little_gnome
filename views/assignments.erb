@@ -32,7 +32,7 @@
                     <strong><a href="/course/<%= @course_id %>/assignments/<%= a['Id'] %>"><%= a['Name'] %></a></strong>
                   </div>
                   <div class="is-size-7 has-text-grey">
-                    <i class="fas fa-calendar-alt mr-1"></i> Due: <%= a['DueDate'] ? Time.parse(a['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %>
+                    <i class="fas fa-calendar-alt mr-1"></i> Due: <%= a['DueDate'] ? format_date(a["DueDate"]) : "No due date" %>
                   </div>
                 </td>
                 <td class="has-text-right">

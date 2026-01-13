@@ -62,7 +62,7 @@
                   </div>
                 </div>
                 <div class="post-date">
-                   <%= Time.parse(post['DatePosted']).strftime("%b %d, %I:%M %p") %>
+                   <%= format_date(post["DatePosted"]) %>
                 </div>
               </div>
               <div class="post-body content">

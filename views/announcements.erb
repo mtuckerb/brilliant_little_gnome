@@ -15,7 +15,7 @@
                   <div>
                     <h5 class="title is-5 mb-0" style="display: inline;"><%= item['Title'] %></h5>
                     <span class="is-size-7 has-text-grey ml-3">
-                      <%= Time.parse(item['StartDate']).strftime("%b %d, %Y") %>
+                      <%= format_date(item["StartDate"], "%b %d, %Y") %>
                     </span>
                   </div>
                   <span class="icon is-small has-text-grey">
@@ -25,7 +25,7 @@
               </summary>
               <div class="content p-4 has-background-white">
                 <p class="is-size-7 has-text-grey mb-3">
-                  Posted: <%= Time.parse(item['StartDate']).strftime("%B %d, %Y %I:%M %p") %>
+                  Posted: <%= format_date(item["StartDate"]) %>
                 </p>
                 <div class="announcement-body">
                   <% 

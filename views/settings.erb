@@ -1,0 +1,73 @@
+<section class="section">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-two-thirds">
+        <div class="box">
+          <h1 class="title"><i class="fas fa-cog mr-2"></i> Settings</h1>
+          <hr>
+
+          <% if @error %>
+            <div class="notification is-danger">
+              <%= @error %>
+            </div>
+          <% end %>
+
+          <form action="/settings" method="POST">
+            <h3 class="title is-4">Profile</h3>
+            <div class="field">
+              <label class="label">Display Name</label>
+              <div class="control has-icons-left">
+                <input class="input" type="text" name="display_name" value="<%= @user_prefs.display_name %>" required>
+                <span class="icon is-small is-left">
+                  <i class="fas fa-user"></i>
+                </span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label class="label">Time Zone</label>
+              <div class="control">
+                <div class="select is-fullwidth">
+                  <select name="time_zone">
+                    <option value="UTC" <%= 'selected' if @user_prefs.time_zone == 'UTC' %>>UTC</option>
+                    <option value="Eastern Time (US & Canada)" <%= 'selected' if @user_prefs.time_zone == 'Eastern Time (US & Canada)' %>>Eastern Time</option>
+                    <option value="Central Time (US & Canada)" <%= 'selected' if @user_prefs.time_zone == 'Central Time (US & Canada)' %>>Central Time</option>
+                    <option value="Mountain Time (US & Canada)" <%= 'selected' if @user_prefs.time_zone == 'Mountain Time (US & Canada)' %>>Mountain Time</option>
+                    <option value="Pacific Time (US & Canada)" <%= 'selected' if @user_prefs.time_zone == 'Pacific Time (US & Canada)' %>>Pacific Time</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <hr>
+            <h3 class="title is-4">Brightspace Connection</h3>
+            <div class="field">
+              <label class="label">Brightspace Host</label>
+              <div class="control has-icons-left">
+                <input class="input" type="text" name="host" value="<%= @host %>">
+                <span class="icon is-small is-left">
+                  <i class="fas fa-globe"></i>
+                </span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label class="label">Update Cookies (Leave blank to keep current)</label>
+              <div class="control">
+                <textarea class="textarea" name="cookies" placeholder="Paste new cookie string here..." rows="3"></textarea>
+              </div>
+            </div>
+
+            <div class="field mt-5">
+              <div class="control">
+                <button type="submit" class="button is-primary">
+                  <strong>Save Changes</strong>
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

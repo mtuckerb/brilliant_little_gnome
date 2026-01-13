@@ -1,5 +1,6 @@
 require 'sinatra'
 require 'sinatra/activerecord'
+require 'active_support/time'
 require 'time'
 require 'zip'
 require 'tempfile'
@@ -10,6 +11,7 @@ require_relative 'helpers/course_helpers'
 require_relative 'models/notification'
 require_relative 'models/api_cache'
 require_relative 'models/download_job'
+require_relative 'models/user_preference'
 
 # Basic Configuration
 set :port, 4567
@@ -22,6 +24,21 @@ $client = BrightspaceClient.new
 helpers CourseHelpers
 
 helpers do
+  def configured?
+    # Check if we have at least a cookie or token
+    $client.authenticated?
+  end
+
+  def format_date(date, format = "%b %d, %Y %I:%M %p")
+    return "Recently" if date.nil?
+    d = date.is_a?(String) ? Time.parse(date) : date
+    
+    tz_name = @user_prefs&.time_zone || "UTC"
+    d.in_time_zone(tz_name).strftime(format)
+  rescue
+    date.to_s
+  end
+
   def truncate_text(text, max_length = 20)
     return text if text.nil? || text.length <= max_length
     text[0...max_length-1] + "…"
@@ -38,6 +55,72 @@ end
 # ==========================================
 # Routes
 # ==========================================
+
+before do
+  # Allow access to setup and public files without being "configured"
+  return if ['/setup', '/favicon.ico'].include?(request.path_info) || request.path_info.start_with?('/public')
+  
+  if !configured?
+    redirect '/setup'
+  end
+
+  @user_prefs = UserPreference.current
+  
+  # Auto-fetch name from Brightspace if we still have the default or empty
+  if @user_prefs.display_name == "User" || @user_prefs.display_name.nil?
+    user_data = $client.get_who_am_i
+    if user_data && user_data['DisplayName']
+      @user_prefs.update(display_name: user_data['DisplayName'])
+    end
+  end
+end
+
+get '/settings' do
+  @active_tab = 'settings'
+  @host = $client.host
+  erb :settings
+end
+
+post '/settings' do
+  @user_prefs.update(
+    display_name: params[:display_name],
+    time_zone: params[:time_zone]
+  )
+
+  if params[:host] && params[:cookies] && !params[:cookies].empty?
+     $client.save_connection_config(params[:host], params[:cookies])
+     # Verify
+     whoami = $client.get_who_am_i
+     if !whoami || !whoami['Identifier']
+       @error = "Updated host/cookies but authentication failed. Please check them."
+     end
+  end
+
+  redirect '/settings'
+end
+
+get '/setup' do
+  @host = $client.host
+  erb :setup, layout: :layout
+end
+
+post '/setup' do
+  host = params[:host].strip
+  cookies = params[:cookies].strip
+  
+  # Update actual client instance and persist to config/connection.json
+  $client.save_connection_config(host, cookies)
+  
+  # Verify connection
+  whoami = $client.get_who_am_i
+  if whoami && whoami['Identifier']
+    redirect '/dashboard'
+  else
+    @error = "Could not authenticate with Brightspace. Please check your host and cookies."
+    @host = host
+    erb :setup
+  end
+end
 
 before '/course/:id*' do
   redirect '/' unless $client.authenticated?

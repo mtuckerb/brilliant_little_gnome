@@ -30,7 +30,7 @@
                   </a>
                   <div class="is-size-7 has-text-grey">
                     <% if topic['StartDate'] %>
-                        Created: <%= Time.parse(topic['StartDate']).strftime("%b %d, %Y") %>
+                        Created: <%= format_date(topic["StartDate"], "%b %d, %Y") %>
                     <% end %>
                   </div>
                 </td>
@@ -42,8 +42,8 @@
                 </td>
                 <td class="is-size-7">
                   <% if topic['LastPostDate'] %>
-                    <%= Time.parse(topic['LastPostDate']).strftime("%b %d, %Y") %><br>
-                    <span class="has-text-grey"><%= Time.parse(topic['LastPostDate']).strftime("%I:%M %p") %></span>
+                    <%= format_date(topic["LastPostDate"], "%b %d, %Y") %><br>
+                    <span class="has-text-grey"><%= format_date(topic["LastPostDate"], "%I:%M %p") %></span>
                   <% else %>
                     <span class="has-text-grey-light">Never</span>
                   <% end %>

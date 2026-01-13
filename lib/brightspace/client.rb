@@ -10,16 +10,37 @@ class BrightspaceClient
   attr_accessor :token, :cookie_string, :host, :user_display_name
 
   def initialize
-    @host = ENV['BS_HOST'] || "courses.maine.edu"
-    @client_id = ENV['BS_CLIENT_ID']
-    @client_secret = ENV['BS_CLIENT_SECRET']
-    @redirect_uri = ENV['BS_REDIRECT_URI'] || "http://localhost:4567/callback"
+    @config_path = 'config/connection.json'
+    load_connection_config
+    
     @api_version = "1.40"
     @sync_lock = Mutex.new
     @syncing = false
     
-    # Try loading from cookies.txt (e.g. for pre-seeded dev)
-    load_cookies_from_file if File.exist?('cookies.txt')
+    # Legacy/Fallback: Try loading from cookies.txt
+    load_cookies_from_file if !authenticated? && File.exist?('cookies.txt')
+  end
+
+  def load_connection_config
+    if File.exist?(@config_path)
+      config = JSON.parse(File.read(@config_path))
+      @host = config['host'] || ENV['BS_HOST'] || "courses.maine.edu"
+      @cookie_string = config['cookies']&.sub(/^Cookie:\s*/i, '')
+    else
+      @host = ENV['BS_HOST'] || "courses.maine.edu"
+    end
+    
+    @client_id = ENV['BS_CLIENT_ID']
+    @client_secret = ENV['BS_CLIENT_SECRET']
+    @redirect_uri = ENV['BS_REDIRECT_URI'] || "http://localhost:4567/callback"
+  end
+
+  def save_connection_config(host, cookies)
+    @host = host
+    @cookie_string = cookies.sub(/^Cookie:\s*/i, '')
+    
+    FileUtils.mkdir_p('config')
+    File.write(@config_path, { host: @host, cookies: @cookie_string }.to_json)
   end
 
   def sync_all_courses_proactively
