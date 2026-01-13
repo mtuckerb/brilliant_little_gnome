@@ -139,7 +139,15 @@ class BrightspaceClient
     items.select do |i| 
       (i.dig('OrgUnit', 'Type', 'Code') == 'Course Offering' || 
        i.dig('OrgUnit', 'Type', 'Name') == 'Course Offering')
-    end.sort_by { |i| i['PinDate'] ? 0 : 1 } # Pinned first (PinDate exists if pinned)
+    end.sort_by do |i|
+      # Sort criteria:
+      # 1. Pinned (0) vs Unpinned (1)
+      # 2. Date (Descending) - we use LastAccessed as a reliable fallback for StartDate
+      pin_score = i['PinDate'] ? 0 : 1
+      access_date = i.dig('Access', 'LastAccessed') || "0000-00-00"
+      
+      [pin_score, -Time.parse(access_date).to_i]
+    end
   end
 
   def get_toc(org_unit_id)

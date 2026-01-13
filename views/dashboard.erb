@@ -14,16 +14,62 @@
           <thead>
             <tr>
               <th>Course Name</th>
-              <th>Code</th>
               <th class="has-text-right">Action</th>
             </tr>
           </thead>
           <tbody>
             <% @courses.each do |c| %>
               <tr class="course-row" onclick="window.location='/course/<%= c['OrgUnit']['Id'] %>'">
-                <td class="has-text-weight-medium is-size-5"><%= c['OrgUnit']['Name'] %></td>
-                <td class="has-text-grey"><%= c['OrgUnit']['Code'] %></td>
-                <td class="has-text-right">
+                <td class="py-4">
+                  <% 
+                    full_name = c['OrgUnit']['Name']
+                    
+                    # Pattern: SWO 370:0001-Human Behav (Online) (2026 Spring)
+                    regex = /^(\w{3}\s\d{3}):\d{4}-(.*?)\s*(\(Online\))?\s*(\(\d{4}\s+(?:Spring|Fall|Summer|Winter)\))$/i
+                    match = full_name.match(regex)
+                    
+                    if match
+                      course_display = "#{match[1]} - #{match[2].strip}"
+                      is_online = !match[3].to_s.empty?
+                      semester = match[4].to_s.gsub(/[()]/, '').strip
+                    else 
+                      # Fallback logic
+                      course_display = full_name
+                      is_online = full_name.downcase.include?('online')
+                      semester_match = full_name.match(/(\(?(?:\d{4}\s+(?:Spring|Fall|Summer|Winter))\)?)/i)
+                      semester = semester_match ? semester_match[1].gsub(/[()]/, '').strip : nil
+                      
+                      # Clean up course_display for fallback
+                      if semester
+                        course_display = course_display.gsub(/\(#{Regexp.escape(semester)}\)/, '').gsub(semester, '').strip
+                      end
+                      course_display = course_display.gsub('(Online)', '').strip
+                    end
+                  %>
+                  <div class="has-text-weight-bold is-size-5 mb-1">
+                    <%= course_display %>
+                  </div>
+                  
+                  <div class="tags mb-2">
+                    <% if semester %>
+                      <span class="tag is-info is-light"><%= semester %></span>
+                    <% end %>
+                    
+                    <% if is_online %>
+                      <span class="tag is-success is-light">Online</span>
+                    <% end %>
+                    
+                    <%# Check for building/classroom in OrgUnit Code or other fields if available %>
+                    <% if c['OrgUnit']['Location'] %>
+                      <span class="tag is-warning is-light"><%= c['OrgUnit']['Location'] %></span>
+                    <% end %>
+                  </div>
+
+                  <div class="is-size-7 has-text-grey-light has-text-weight-normal">
+                    <%= c['OrgUnit']['Code'] %>
+                  </div>
+                </td>
+                <td class="has-text-right is-vcentered">
                   <a href="/course/<%= c['OrgUnit']['Id'] %>" class="button is-small is-primary is-light">
                     View <i class="fas fa-arrow-right ml-2"></i>
                   </a>
