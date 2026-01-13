@@ -94,6 +94,27 @@
               </tr>
             <% end %>
           </tbody>
+          <% if @grade_stats && @grade_stats[:total_weight_possible] > 0 %>
+            <tfoot>
+              <tr class="has-background-white-bis">
+                <td class="has-text-weight-bold">
+                  Course Total
+                  <span class="has-text-grey is-size-7 ml-2">(Normalized to graded portion)</span>
+                </td>
+                <td class="has-text-centered has-text-weight-bold">
+                  <%= @grade_stats[:total_weight_graded] %>% <span class="has-text-grey is-size-7">/ <%= @grade_stats[:total_weight_possible] %>%</span>
+                </td>
+                <td class="has-text-centered">
+                  <span class="is-size-7 has-text-grey">Weighted Total</span>
+                </td>
+                <td class="has-text-right">
+                  <span class="tag <%= grade_color(@grade_stats[:score]) %> is-medium" style="font-weight: bold;">
+                    <%= @grade_stats[:score] %>%
+                  </span>
+                </td>
+              </tr>
+            </tfoot>
+          <% end %>
         </table>
       <% else %>
         <p class="has-text-grey">No grade values found yet.</p>

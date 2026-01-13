@@ -602,7 +602,7 @@ class BrightspaceClient
       topic = DiscussionTopic.find_or_initialize_by(brightspace_id: t['TopicId'].to_s, forum_id: forum_id.to_s)
       topic.course_id = course_id.to_s
       topic.name = t['Name']
-      topic.description = t.dig('Description', 'Text')
+      topic.description = t.dig('Description', 'Html') || t.dig('Description', 'Text')
       topic.sort_order = index
       topic.thread_count = t['ThreadCount'] || 0
       topic.post_count = t['PostCount'] || 0
@@ -629,14 +629,26 @@ class BrightspaceClient
   def sync_grades(course_id, grade_values)
     return unless grade_values.is_a?(Array)
     
+    # Fetch Grade Object Metadata to get Weights
+    # /d2l/api/le/(version)/(orgUnitId)/grades/ returns all grade objects
+    metadata_path = "/d2l/api/le/#{@api_version}/#{course_id}/grades/"
+    metadata_raw = do_get(metadata_path)
+    metadata = metadata_raw.is_a?(Array) ? metadata_raw : (metadata_raw['Items'] || [])
+    
+    weights_map = {}
+    metadata.each do |m|
+      weights_map[m['Id'].to_s] = m['Weight']
+    end
+
     ActiveRecord::Base.transaction do
       grade_values.each do |g|
-        grade = Grade.find_or_initialize_by(brightspace_id: g['GradeObjectIdentifier'].to_s, course_id: course_id.to_s)
+        obj_id = g['GradeObjectIdentifier'].to_s
+        grade = Grade.find_or_initialize_by(brightspace_id: obj_id, course_id: course_id.to_s)
         grade.name = g['GradeObjectName']
         grade.displayed_grade = g['DisplayedGrade']
         grade.numerator = g.dig('PointsNumerator')
         grade.denominator = g.dig('PointsDenominator')
-        grade.weight = g.dig('Weight')
+        grade.weight = weights_map[obj_id] || g.dig('Weight')
         grade.grade_object_type = g['GradeObjectType']
         grade.last_modified = Time.parse(g['LastModified']) rescue nil
         grade.comments = g.dig('Comments', 'Text')

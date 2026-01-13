@@ -23,14 +23,19 @@
           </thead>
           <tbody>
             <% 
-               # Sort by last post date (handling both objects and hashes)
+               # Normalize and sort by last post date
                sorted_topics = @topics.sort_by do |t| 
-                 t.is_a?(DiscussionTopic) ? (t.last_post_date || Time.at(0)) : (t['LastPostDate'] || "")
+                 date = if t.is_a?(DiscussionTopic)
+                   t.last_post_date
+                 else
+                   t['LastPostDate'] ? Time.parse(t['LastPostDate']) : nil
+                 end
+                 date || Time.at(0)
                end.reverse
                
                sorted_topics.each do |topic| 
-                 is_obj = topic.is_a?(DiscussionTopic)
-                 topic_id = is_obj ? topic.brightspace_id : topic['TopicId']
+                  is_obj = topic.is_a?(DiscussionTopic)
+                  topic_id = is_obj ? topic.brightspace_id : topic['TopicId']
                  forum_id = is_obj ? topic.forum_id : topic['ForumId']
                  name = is_obj ? topic.name : topic['Name']
                  thread_count = is_obj ? topic.thread_count : topic['ThreadCount']

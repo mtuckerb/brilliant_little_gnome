@@ -8,7 +8,16 @@
       <div class="topic-header mb-6">
         <div class="level mb-2">
           <div class="level-left">
-            <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> <%= @topic['Name'] %></h4>
+            <%
+               # Normalize topic attributes for both ActiveRecord and Hash
+               top_obj = @topic.is_a?(DiscussionTopic)
+               t_name = top_obj ? @topic.name : @topic['Name']
+               t_post_count = top_obj ? @topic.post_count : @topic['PostCount']
+               t_desc = top_obj ? @topic.description : @topic['Description']
+               t_end = top_obj ? nil : @topic['EndDate'] # DB doesn't have end date yet
+               t_start = top_obj ? nil : @topic['StartDate']
+            %>
+            <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> <%= t_name %></h4>
           </div>
           <div class="level-right">
             <form action="" method="get" class="mr-2">
@@ -23,26 +32,26 @@
         </div>
 
         <div class="tags">
-          <% if @topic['EndDate'] %>
+          <% if t_end %>
             <span class="tag is-danger is-light">
-              <i class="fas fa-calendar-times mr-1"></i> Due: <%= format_date(@topic["EndDate"]) %>
+              <i class="fas fa-calendar-times mr-1"></i> Due: <%= format_date(t_end) %>
             </span>
           <% end %>
-          <% if @topic['StartDate'] %>
+          <% if t_start %>
             <span class="tag is-info is-light">
-              <i class="fas fa-calendar-check mr-1"></i> Available: <%= format_date(@topic["StartDate"], "%b %d, %Y") %>
+              <i class="fas fa-calendar-check mr-1"></i> Available: <%= format_date(t_start, "%b %d, %Y") %>
             </span>
           <% end %>
           <span class="tag is-white">
-            <i class="fas fa-reply-all mr-1"></i> <%= @topic['PostCount'] %> Posts
+            <i class="fas fa-reply-all mr-1"></i> <%= t_post_count %> Posts
           </span>
         </div>
 
         <div class="content box is-light is-size-6 py-4 px-5">
            <p class="has-text-weight-bold mb-2">Instructions / Description:</p>
            <% 
-              desc = @topic['Description']
-              desc_html = desc.is_a?(Hash) ? (desc['Html'] || desc['Text']) : desc.to_s
+              desc = t_desc
+              desc_html = desc.is_a?(Hash) ? (desc['Html'] || desc['Text']) : desc
            %>
            <%= desc_html && !desc_html.strip.empty? ? desc_html : "<p class='has-text-grey italic'>No description provided.</p>" %>
         </div>
