@@ -39,11 +39,21 @@ class DownloadJob
 
         Zip::File.open(@zip_path, Zip::File::CREATE) do |zipfile|
           @files.each do |f|
-            resp = @client.download_file(f[:path])
-            if resp && resp.code == '200'
+            file_body = nil
+            
+            if f[:content]
+              file_body = f[:content]
+            elsif f[:path]
+              resp = @client.download_file(f[:path])
+              if resp && resp.code == '200'
+                file_body = resp.body
+              end
+            end
+
+            if file_body
               safe_name = f[:title].gsub(/[^0-9A-Za-z.\- ]/, '_')
-              safe_name += ".pdf" unless safe_name.include?('.')
-              
+              safe_name += ".pdf" unless safe_name.include?('.') || f[:content]
+
               # Construct path within zip using the folder metadata
               zip_entry_path = if f[:folder]
                                  "#{f[:folder]}/#{safe_name}"
@@ -66,7 +76,7 @@ class DownloadJob
                 counter += 1
               end
 
-              zipfile.get_output_stream(zip_entry_path) { |os| os.write resp.body }
+              zipfile.get_output_stream(zip_entry_path) { |os| os.write file_body }
             end
             @completed_files += 1
             sleep(0.5) # Respectful rate limit

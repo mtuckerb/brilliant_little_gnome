@@ -18,7 +18,7 @@ $client = BrightspaceClient.new
 helpers CourseHelpers
 
 helpers do
-  def truncate_text(text, max_length = 10)
+  def truncate_text(text, max_length = 20)
     return text if text.nil? || text.length <= max_length
     text[0...max_length-1] + "…"
   end
@@ -200,7 +200,7 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id, force_refresh: params[:force_refresh] == 'true')
 
   # DEBUG: Log the raw response to help troubleshoot
-  File.write("debug_threads_#{Time.now.to_i}.json", @threads_data.to_json) if @threads_data
+  File.write("debugging/threads_#{Time.now.to_i}.json", @threads_data.to_json) if @threads_data
   
   @threads = []
   if @threads_data.is_a?(Hash)

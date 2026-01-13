@@ -99,16 +99,7 @@
                     <%= thread['Subject'] || thread['Title'] %>
                   </h5>
                   <div class="is-size-7 has-text-grey">
-                    <% 
-                       thread_author = if thread['Author']
-                                         thread['Author']['DisplayName']
-                                       elsif thread['PostingUserDisplayName']
-                                         thread['PostingUserDisplayName']
-                                       else
-                                         "Unknown"
-                                       end
-                    %>
-                    <span class="has-text-weight-semibold author-name"><i class="fas fa-user-circle mr-1"></i> <%= thread_author %></span>
+                    <span class="has-text-weight-semibold author-name"><i class="fas fa-user-circle mr-1"></i> <%= author_name(thread) %></span>
                     <% if thread['LastModified'] %>
                       <span class="mx-2">&bull;</span>
                       <i class="fas fa-clock mr-1"></i> <span><%= Time.parse(thread['LastModified']).strftime("%b %d, %l:%M %p") %></span>

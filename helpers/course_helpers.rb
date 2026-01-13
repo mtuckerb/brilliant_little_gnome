@@ -4,6 +4,23 @@ module CourseHelpers
     text[0...max_length-1] + "…"
   end
 
+  def author_name(obj)
+    return "Anonymous" unless obj
+    
+    if obj['Author']
+      obj['Author']['DisplayName']
+    elsif obj['PostingUserDisplayName']
+      obj['PostingUserDisplayName']
+    else
+      "Anonymous"
+    end
+  end
+
+  def is_instructor?(obj)
+    return false unless obj && obj['Author']
+    obj['Author']['IsInstructor'] == true || obj['Author']['RoleName'] =~ /Instructor/i
+  end
+
 
   def find_module(modules, id)
     return nil unless modules
@@ -53,6 +70,13 @@ module CourseHelpers
             path: "/d2l/api/le/1.40/#{@course_id}/content/topics/#{t['Id'] || t['TopicId']}/file",
             folder: folder_name
           }
+        elsif t['Url'] && t['Type'] == 3 # Link type topic
+          safe_title = t['Title'].gsub(/[^0-9a-z]/i, '_')
+          files << {
+            title: "#{safe_title}.url",
+            content: "[InternetShortcut]\r\nURL=#{t['Url']}\r\n",
+            folder: folder_name
+          }
         end
       end
     end
@@ -93,13 +117,28 @@ module CourseHelpers
     end
 
     # 3. Assignments (with attachments)
-    assignments = client.get_assignments(course_id) || []
-    assignments.each do |a|
+    assignments_list = client.get_assignments(course_id) || []
+    assignments_list.each do |a_summary|
+      # Fetch detail for each assignment to ensure we get attachments 
+      # (The list view often excludes them)
+      a = client.get_assignment(course_id, a_summary['Id']) || a_summary
+      
       if a['Attachments'] && !a['Attachments'].empty?
         a['Attachments'].each do |att|
           files << {
             title: att['FileName'],
             path: "/d2l/api/le/1.40/#{course_id}/dropbox/folders/#{a['Id']}/attachments/#{att['FileId']}",
+            folder: "Assignments/#{a['Name'].gsub(/[^0-9a-z]/i, '_')}"
+          }
+        end
+      end
+
+      if a['LinkAttachments'] && !a['LinkAttachments'].empty?
+        a['LinkAttachments'].each do |link|
+          safe_link_name = link['LinkName'].gsub(/[^0-9a-z]/i, '_')
+          files << {
+            title: "#{safe_link_name}.url",
+            content: "[InternetShortcut]\r\nURL=#{link['Href']}\r\n",
             folder: "Assignments/#{a['Name'].gsub(/[^0-9a-z]/i, '_')}"
           }
         end

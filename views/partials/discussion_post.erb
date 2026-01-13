@@ -1,24 +1,17 @@
 <% 
-  author_name = if post['Author']
-                  post['Author']['DisplayName']
-                elsif post['PostingUserDisplayName']
-                  post['PostingUserDisplayName']
-                else
-                  "Anonymous"
-                end
-  
-  is_instructor = post['Author'] && (post['Author']['IsInstructor'] == true || post['Author']['RoleName'] =~ /Instructor/i)
+  author = author_name(post)
+  instructor = is_instructor?(post)
 %>
 <div class="post-item <%= 'post-replies' if depth > 0 %>">
-  <div class="post-card <%= 'is-instructor' if is_instructor %>" id="post-<%= post['PostId'] %>">
+  <div class="post-card <%= 'is-instructor' if instructor %>" id="post-<%= post['PostId'] %>">
     <div class="post-header is-flex is-align-items-center is-justify-content-space-between">
       <div class="is-flex is-align-items-center">
         <div class="image is-24x24 mr-2">
-          <img class="is-rounded" src="https://ui-avatars.com/api/?name=<%= URI.encode_www_form_component(author_name) %>&background=<%= is_instructor ? '739AC3' : 'ddd' %>&color=fff" alt="Avatar">
+          <img class="is-rounded" src="https://ui-avatars.com/api/?name=<%= URI.encode_www_form_component(author) %>&background=<%= instructor ? '739AC3' : 'ddd' %>&color=fff" alt="Avatar">
         </div>
         <div class="is-size-7">
-          <span class="has-text-weight-bold"><%= author_name %></span>
-          <% if is_instructor %><span class="instructor-tag ml-1">INSTRUCTOR</span><% end %>
+          <span class="has-text-weight-bold"><%= author %></span>
+          <% if instructor %><span class="instructor-tag ml-1">INSTRUCTOR</span><% end %>
         </div>
       </div>
       <div class="post-date"><%= Time.parse(post['DatePosted']).strftime("%b %d, %I:%M %p") %></div>

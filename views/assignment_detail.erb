@@ -27,21 +27,23 @@
       <hr>
 
       <div class="content">
-        <h6 class="subtitle is-6 has-text-grey uppercase">Instructions</h6>
+        <h5 class="title is-5 mb-3"><i class="fas fa-info-circle mr-2 has-text-primary"></i> Instructions</h5>
         <% 
-           desc = @assignment['Instructions']
+           desc = @assignment['Instructions'] || @assignment['CustomInstructions']
            desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
         %>
-        <% if desc_text.strip.empty? %>
-          <p class="has-text-grey-light italic">No specific instructions provided.</p>
-        <% else %>
-          <%= desc_text %>
-        <% end %>
+        <div class="box is-light py-4 px-5">
+          <% if desc_text.strip.empty? %>
+            <p class="has-text-grey italic">No specific instructions provided.</p>
+          <% else %>
+            <%= desc_text %>
+          <% end %>
+        </div>
       </div>
 
       <% if @assignment['Attachments'] && !@assignment['Attachments'].empty? %>
         <div class="mt-6">
-          <h6 class="subtitle is-6 has-text-grey uppercase">Attachments</h6>
+          <h5 class="title is-5 mb-3"><i class="fas fa-paperclip mr-2 has-text-primary"></i> Attachments</h5>
           <div class="list is-hoverable">
             <% @assignment['Attachments'].each do |att| %>
               <% 
@@ -52,6 +54,28 @@
                   <span><i class="fas fa-file-alt mr-2 has-text-grey"></i><%= att['FileName'] %></span>
                   <a href="/course/<%= @course_id %>/download?path=<%= URI.encode_www_form_component(download_url) %>&name=<%= URI.encode_www_form_component(att['FileName']) %>" class="button is-small is-light">
                     <span class="icon is-small"><i class="fas fa-download"></i></span>
+                  </a>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+
+      <% if @assignment['LinkAttachments'] && !@assignment['LinkAttachments'].empty? %>
+        <div class="mt-6">
+          <h5 class="title is-5 mb-3"><i class="fas fa-external-link-alt mr-2 has-text-primary"></i> External Links</h5>
+          <div class="list is-hoverable">
+            <% @assignment['LinkAttachments'].each do |link| %>
+              <div class="list-item">
+                <div class="is-flex is-justify-content-space-between is-align-items-center">
+                  <span>
+                    <i class="fas fa-link mr-2 has-text-grey"></i>
+                    <strong><%= link['LinkName'] %></strong>
+                  </span>
+                  <a href="<%= link['Href'] %>" class="button is-small is-primary is-light" target="_blank">
+                    <span class="icon is-small"><i class="fas fa-arrow-right"></i></span>
+                    <span>Open Link</span>
                   </a>
                 </div>
               </div>
