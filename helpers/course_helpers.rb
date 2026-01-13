@@ -103,11 +103,33 @@ module CourseHelpers
     files = []
     
     # 1. Syllabus/Overview
-    files << {
-      title: "Syllabus_Overview.pdf",
-      path: "/d2l/api/le/1.40/#{course_id}/overview/attachment",
-      folder: "Syllabus_Overview"
-    }
+    overview = client.get_overview(course_id)
+    if overview
+      files << {
+        title: "Syllabus_Overview.pdf",
+        path: "/d2l/api/le/1.40/#{course_id}/overview/attachment",
+        folder: "Syllabus_Overview"
+      }
+      if overview['Attachments']
+        overview['Attachments'].each do |att|
+          files << {
+            title: att['FileName'],
+            path: "/d2l/api/le/1.40/#{course_id}/overview/attachments/#{att['FileId'] || att['Id']}",
+            folder: "Syllabus_Overview"
+          }
+        end
+      end
+      if overview['LinkAttachments']
+        overview['LinkAttachments'].each do |link|
+          safe_link_name = (link['Title'] || link['LinkName'] || "Link").gsub(/[^0-9a-z]/i, '_')
+          files << {
+            title: "#{safe_link_name}.url",
+            content: "[InternetShortcut]\r\nURL=#{link['Url'] || link['Href']}\r\n",
+            folder: "Syllabus_Overview"
+          }
+        end
+      end
+    end
 
     # 2. Announcements (only if they have attachments)
     news = client.get_news(course_id) || []

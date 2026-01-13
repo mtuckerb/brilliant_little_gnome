@@ -8,20 +8,55 @@
       <h4 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Announcements</h4>
       <% if @news && !@news.empty? %>
         <% @news.each do |item| %>
-          <div class="content mb-6 pb-4" style="border-bottom: 1px solid #eee;">
-            <h5 class="title is-5 mb-1"><%= item['Title'] %></h5>
-            <p class="is-size-7 has-text-grey mb-3">
-              Posted: <%= Time.parse(item['StartDate']).strftime("%B %d, %Y %I:%M %p") %>
-            </p>
-            <div class="announcement-content">
-              <% 
-                 desc = item['Body']
-                 desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
-              %>
-              <%= desc_text %>
-            </div>
+          <div class="mb-5 pb-2" style="border-bottom: 1px solid #eee;">
+            <details class="announcement-item">
+              <summary class="is-clickable p-2 has-background-light is-radiusless" style="list-style: none; outline: none;">
+                <div class="is-flex is-justify-content-space-between is-align-items-center">
+                  <div>
+                    <h5 class="title is-5 mb-0" style="display: inline;"><%= item['Title'] %></h5>
+                    <span class="is-size-7 has-text-grey ml-3">
+                      <%= Time.parse(item['StartDate']).strftime("%b %d, %Y") %>
+                    </span>
+                  </div>
+                  <span class="icon is-small has-text-grey">
+                    <i class="fas fa-chevron-down"></i>
+                  </span>
+                </div>
+              </summary>
+              <div class="content p-4 has-background-white">
+                <p class="is-size-7 has-text-grey mb-3">
+                  Posted: <%= Time.parse(item['StartDate']).strftime("%B %d, %Y %I:%M %p") %>
+                </p>
+                <div class="announcement-body">
+                  <% 
+                     desc = item['Body']
+                     desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+                  %>
+                  <%= desc_text %>
+                </div>
+
+                <% if item['Attachments'] && !item['Attachments'].empty? %>
+                  <div class="mt-4 pt-3" style="border-top: 1px dashed #ddd;">
+                    <p class="is-size-7 has-text-weight-bold mb-2">Attachments:</p>
+                    <div class="buttons">
+                      <% item['Attachments'].each do |att| %>
+                        <a href="/course/<%= @course_id %>/download?path=<%= URI.encode_www_form_component("/d2l/api/le/1.40/#{@course_id}/news/#{item['Id']}/attachments/#{att['FileId']}") %>&name=<%= URI.encode_www_form_component(att['FileName']) %>" class="button is-small is-link is-outlined">
+                          <span class="icon is-small"><i class="fas fa-paperclip"></i></span>
+                          <span><%= att['FileName'] %></span>
+                        </a>
+                      <% end %>
+                    </div>
+                  </div>
+                <% end %>
+              </div>
+            </details>
           </div>
         <% end %>
+        <style>
+          .announcement-item summary::-webkit-details-marker { display: none; }
+          .announcement-item[open] summary .fa-chevron-down { transform: rotate(180deg); }
+          .announcement-item summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
+        </style>
       <% else %>
         <p class="has-text-grey">No announcements found for this course.</p>
       <% end %>
