@@ -57,6 +57,9 @@ end
 get '/dashboard' do
   redirect '/' unless $client.authenticated?
   
+  # Trigger proactive sync in background
+  $client.sync_all_courses_proactively
+  
   @user = $client.get_who_am_i
   @courses = $client.get_enrollments
   @all_news = $client.get_all_news(@courses)
@@ -151,15 +154,38 @@ get '/course/:id/discussions/:forum_id/topics' do
   erb :discussion_topics
 end
 
-# Discussion Threads (List of threads in a topic)
+# Discussion Threads (The "Everything" Topic View)
 get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   @active_tab = 'discussions'
   @forum_id = params[:forum_id]
   @topic_id = params[:topic_id]
+  
   @forum = $client.get_discussion_forum(@course_id, @forum_id)
   @topic = $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
-  @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id)
-  @threads = @threads_data.is_a?(Hash) ? (@threads_data['Items'] || []) : (@threads_data || [])
+  @evaluation = $client.get_discussion_evaluation(@course_id, @forum_id, @topic_id)
+  
+  @threads_data = $client.get_discussion_threads(@course_id, @forum_id, @topic_id, force_refresh: true)
+
+  # DEBUG: Log the raw response to help troubleshoot
+  File.write("debug_threads_#{Time.now.to_i}.json", @threads_data.to_json) if @threads_data
+  
+  @threads = []
+  if @threads_data.is_a?(Hash)
+    @threads = @threads_data['Items'] || []
+  elsif @threads_data.is_a?(Array)
+    @threads = @threads_data
+  end
+  
+  # Fetch posts for every thread to show the "Thread Tree" immediately
+  @threads_with_posts = @threads.sort_by { |t| t['IsPinned'] ? 0 : 1 }.map do |thread|
+    posts_data = $client.get_thread_posts(@course_id, @forum_id, @topic_id, thread['ThreadId'])
+    posts = posts_data.is_a?(Hash) ? (posts_data['Items'] || []) : (posts_data || [])
+    {
+      thread: thread,
+      post_tree: build_post_tree(posts)
+    }
+  end
+
   erb :discussion_threads
 end
 

@@ -15,10 +15,64 @@ class BrightspaceClient
     @redirect_uri = ENV['BS_REDIRECT_URI'] || "http://localhost:4567/callback"
     @api_version = "1.40"
     @cache_dir = File.join(Dir.pwd, ".cache", "brightspace")
+    @sync_lock = Mutex.new
+    @syncing = false
     FileUtils.mkdir_p(@cache_dir)
     
     # Try loading from cookies.txt (e.g. for pre-seeded dev)
     load_cookies_from_file if File.exist?('cookies.txt')
+  end
+
+  def sync_all_courses_proactively
+    return if @syncing
+    
+    Thread.new do
+      @sync_lock.synchronize { @syncing = true }
+      begin
+        puts "Starting proactive sync (slow mode)..."
+        courses = get_enrollments 
+        
+        courses.each do |c|
+          course_id = c['OrgUnit']['Id']
+          
+          # Sync Core
+          get_toc(course_id)
+          sleep 2.0
+          get_assignments(course_id)
+          sleep 2.0
+          
+          # Sync Discussions
+          forums = get_discussions(course_id) || []
+          forums.each do |f|
+            topics_data = get_discussion_topics(course_id, f['ForumId'])
+            topics = topics_data.is_a?(Hash) ? (topics_data['Items'] || []) : (topics_data || [])
+
+            topics.each do |t|
+              get_discussion_topic(course_id, f['ForumId'], t['TopicId'])
+              sleep 1.0
+              
+              threads_data = get_discussion_threads(course_id, f['ForumId'], t['TopicId']) || []
+              threads = threads_data.is_a?(Hash) ? (threads_data['Items'] || []) : threads_data
+              
+              threads.each do |th|
+                if th.is_a?(Hash) && th['ThreadId']
+                   # ONLY sync posts for things we don't have yet to reduce noise
+                   unless read_cache("/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/#{f['ForumId']}/topics/#{t['TopicId']}/threads/#{th['ThreadId']}/posts/")
+                     get_thread_posts(course_id, f['ForumId'], t['TopicId'], th['ThreadId'])
+                     sleep 3.0 # Very slow to avoid attention
+                   end
+                end
+              end
+            end
+          end
+        end
+        puts "Proactive sync complete."
+      rescue => e
+        # Silent fail for sync
+      ensure
+        @sync_lock.synchronize { @syncing = false }
+      end
+    end
   end
 
   def load_cookies_from_file
@@ -114,8 +168,25 @@ class BrightspaceClient
     forums = get_discussions(org_unit_id) || []
     all_topics = []
     forums.each do |f|
-      topics = get_discussion_topics(org_unit_id, f['ForumId']) || []
-      topics.each { |t| t['ForumId'] = f['ForumId']; t['ForumName'] = f['Name'] }
+      topics_data = get_discussion_topics(org_unit_id, f['ForumId'])
+      topics = topics_data.is_a?(Hash) ? (topics_data['Items'] || []) : (topics_data || [])
+      topics.each do |t| 
+        t['ForumId'] = f['ForumId']
+        t['ForumName'] = f['Name']
+        
+        # Enrich Topic with thread stats if missing
+        threads_data = get_discussion_threads(org_unit_id, f['ForumId'], t['TopicId']) || []
+        threads = threads_data.is_a?(Hash) ? (threads_data['Items'] || []) : (threads_data || [])
+        
+        # Calculate stats for the user if the server didn't provide them
+        t['ThreadCount'] ||= threads.size
+        # PostCount is total replies + initial posts in threads
+        t['PostCount'] ||= threads.map { |th| (th['ReplyCount'] || 0) + 1 }.sum
+        
+        # Find latest activity date
+        last_modified = threads.map { |th| th['LastModified'] }.compact.max
+        t['LastPostDate'] ||= last_modified
+      end
       all_topics.concat(topics)
     end
     all_topics
@@ -129,8 +200,12 @@ class BrightspaceClient
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}")
   end
 
-  def get_discussion_threads(org_unit_id, forum_id, topic_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/")
+  def get_discussion_threads(org_unit_id, forum_id, topic_id, force_refresh: false)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/", force_refresh: force_refresh)
+  end
+
+  def get_discussion_evaluation(org_unit_id, forum_id, topic_id)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/evaluations/myEvaluation")
   end
 
   def get_discussion_thread(org_unit_id, forum_id, topic_id, thread_id)
@@ -146,13 +221,14 @@ class BrightspaceClient
   def get_all_news(courses)
     news_items = []
     courses.each do |c|
-      items = get_news(c['OrgUnit']['Id'])
+      items_data = get_news(c['OrgUnit']['Id'])
+      items = items_data.is_a?(Hash) ? (items_data['Items'] || []) : (items_data || [])
       if items && items.is_a?(Array)
         items.each { |i| i['CourseName'] = c['OrgUnit']['Name']; i['CourseId'] = c['OrgUnit']['Id'] }
         news_items.concat(items)
       end
     end
-    news_items.sort_by { |i| i['StartDate'] }.reverse.tap { |arr| arr.slice!(0..10) } # Just top 10
+    news_items.sort_by { |i| i['StartDate'] || "" }.reverse.take(10)
   end
 
   def get_news(org_unit_id)
@@ -214,22 +290,62 @@ class BrightspaceClient
   def read_cache(path)
     file = get_cache_path(path)
     if File.exist?(file)
-      # Check if cache is older than 1 hour (optional, but good for offline)
       JSON.parse(File.read(file))
     end
   rescue
     nil
   end
 
+  def cache_metadata(path)
+    file = get_cache_path(path)
+    return nil unless File.exist?(file)
+    { mtime: File.mtime(file) }
+  end
+
   def write_cache(path, data)
+    # Protection against cache poisoning: 
+    # Must be an array or hash, and must not look like an error response
+    return unless data.is_a?(Hash) || data.is_a?(Array)
+    if data.is_a?(Hash) && (data.key?('Errors') || data.key?('ErrorMessage'))
+      return 
+    end
+
     file = get_cache_path(path)
     File.write(file, data.to_json)
   rescue => e
     puts "Cache write error: #{e.message}"
   end
 
-  def do_get(path)
-    return read_cache(path) unless authenticated?
+  def do_get(path, force_refresh: false)
+    cached_data = read_cache(path)
+    metadata = cache_metadata(path)
+
+    # Cache Logic:
+    # 1. If force_refresh is true, go to API.
+    # 2. If no cache, go to API.
+    # 3. If cache exists and is very fresh (< 10 mins), return cached.
+    # 4. If cache exists but is stale (> 10 mins), return cached and trigger background revalidate.
+    
+    is_fresh = metadata && (Time.now - metadata[:mtime] < 600) # 10 mins
+
+    if !force_refresh && cached_data && (is_fresh || !authenticated?)
+      return cached_data
+    end
+
+    # If we have stale data, return it immediately and revalidate in background
+    if !force_refresh && cached_data && authenticated?
+      Thread.new { fetch_and_cache(path) }
+      return cached_data
+    end
+
+    # Otherwise, synchronous fetch
+    fetch_and_cache(path)
+  end
+
+  private
+
+  def fetch_and_cache(path)
+    return nil unless authenticated?
 
     uri = URI("https://#{@host}#{path}")
     request = Net::HTTP::Get.new(uri)
@@ -244,7 +360,7 @@ class BrightspaceClient
 
     http = Net::HTTP.new(uri.host, uri.port)
     http.use_ssl = true
-    http.read_timeout = 10 # 10 seconds timeout
+    http.read_timeout = 15
     
     begin
       response = http.request(request)
@@ -252,13 +368,16 @@ class BrightspaceClient
         data = JSON.parse(response.body)
         write_cache(path, data)
         data
+      elsif response.code == '404'
+        # Silently cache empty results for things like evaluations to stop the noise
+        # but don't log it as a big error.
+        nil
       else
-        puts "API Error #{path}: #{response.code} #{response.message}"
-        read_cache(path) # Fallback to cache on server error
+        puts "!!! API Error #{path}: #{response.code}" if response.code.to_i >= 500
+        read_cache(path)
       end
     rescue => e
-      puts "Connection Error #{path}: #{e.message}. Falling back to cache."
-      read_cache(path) # Fallback to cache on connection failure (offline)
+      read_cache(path)
     end
   end
 end

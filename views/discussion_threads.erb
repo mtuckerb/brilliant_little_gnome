@@ -47,44 +47,69 @@
               desc = @topic['Description']
               desc_html = desc.is_a?(Hash) ? (desc['Html'] || desc['Text']) : desc.to_s
            %>
-           <%= desc_html && !desc_html.empty? ? desc_html : "<p class='has-text-grey italic'>No description provided.</p>" %>
+           <%= desc_html && !desc_html.strip.empty? ? desc_html : "<p class='has-text-grey italic'>No description provided.</p>" %>
         </div>
 
-        <%# Instructor Feedback Section - checking if topic itself carries feedback or if we need to fetch user grade/comments %>
-        <% if @topic['Feedback'] %>
+        <%# Instructor Feedback / Evaluation Section %>
+        <% if @evaluation %>
           <div class="notification is-success is-light">
             <p class="has-text-weight-bold"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
-            <%= @topic['Feedback']['Html'] || @topic['Feedback']['Text'] %>
+            <% if @evaluation['Feedback'] %>
+              <div class="content mt-2">
+                <%= @evaluation['Feedback']['Html'] || @evaluation['Feedback']['Text'] %>
+              </div>
+            <% end %>
+            <% if @evaluation['Score'] %>
+              <div class="mt-2">
+                <span class="tag is-success">Score: <%= @evaluation['Score'] %></span>
+              </div>
+            <% end %>
+          </div>
+        <% elsif @topic['Feedback'] %>
+          <div class="notification is-success is-light">
+            <p class="has-text-weight-bold"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
+            <div class="content mt-2">
+              <%= @topic['Feedback']['Html'] || @topic['Feedback']['Text'] %>
+            </div>
           </div>
         <% end %>
       </div>
 
+      <style>
+        .thread-container { border-top: 2px solid #f5f5f5; padding-top: 2rem; margin-top: 3rem; }
+        .post-replies { margin-left: 1.5rem; border-left: 2px solid #f0f4f8; padding-left: 1rem; position: relative; }
+        .post-card { border: 1px solid #eee; border-radius: 6px; margin-bottom: 1rem; transition: all 0.2s; background: white; }
+        .post-card:hover { border-color: #739AC3; }
+        .post-header { background: #fafafa; padding: 0.5rem 1rem; border-bottom: 1px solid #eee; border-radius: 6px 6px 0 0; }
+        .post-body { padding: 1rem; font-size: 0.95rem; line-height: 1.6; }
+        .is-instructor { border-left: 4px solid #739AC3 !important; background: #f9fbfd; }
+        .instructor-tag { background: #739AC3; color: white; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
+        .post-date { color: #888; font-size: 0.75rem; }
+      </style>
+
       <h5 class="title is-5 mb-4">Threads</h5>
       
-      <% if @threads && @threads.any? %>
-        <% @threads.sort_by { |t| t['IsPinned'] ? 0 : 1 }.each do |thread| %>
-          <div class="card mb-4">
-            <header class="card-header">
-              <p class="card-header-title">
-                <a href="/course/<%= @course_id %>/discussions/<%= @forum_id %>/topics/<%= @topic_id %>/threads/<%= thread['ThreadId'] %>">
-                  <%= thread['IsPinned'] ? '<i class="fas fa-thumbtack mr-2 has-text-primary"></i>' : '' %>
-                  <%= thread['Title'] %>
+      <% if @threads_with_posts && @threads_with_posts.any? %>
+        <% @threads_with_posts.each do |item| %>
+          <div class="thread-container">
+            <div class="level mb-4">
+              <div class="level-left">
+                <h5 class="title is-5">
+                  <%= item[:thread]['IsPinned'] ? '<i class="fas fa-thumbtack mr-2 has-text-primary"></i>' : '' %>
+                  <%= item[:thread]['Title'] %>
+                </h5>
+              </div>
+              <div class="level-right">
+                <a href="<%= $client.portal_url_for(:discussion_thread, {course_id: @course_id, id: item[:thread]['ThreadId']}) %>" class="tag is-link is-light" target="_blank">
+                   View Thread in Portal <i class="fas fa-external-link-alt ml-1"></i>
                 </a>
-              </p>
-              <div class="card-header-icon">
-                 <span class="tag is-white"><%= thread['ReplyCount'] %> replies</span>
               </div>
-            </header>
-            <div class="card-content py-3">
-              <div class="is-flex is-align-items-center">
-                 <div class="image is-24x24 mr-2">
-                   <img class="is-rounded" src="https://ui-avatars.com/api/?name=<%= URI.encode_www_form_component(thread['StartedBy'] ? thread['StartedBy']['DisplayName'] : 'U') %>&background=739AC3&color=fff" alt="Avatar">
-                 </div>
-                 <div class="is-size-7">
-                   <span class="has-text-weight-bold"><%= thread['StartedBy'] ? thread['StartedBy']['DisplayName'] : "Anonymous" %></span>
-                   <span class="has-text-grey ml-2">Last active: <%= Time.parse(thread['LastModified']).strftime("%b %d, %I:%M %p") %></span>
-                 </div>
-              </div>
+            </div>
+            
+            <div class="discussion-timeline">
+              <% item[:post_tree].each do |post| %>
+                <%= erb :'partials/discussion_post', locals: { post: post, depth: 0 } %>
+              <% end %>
             </div>
           </div>
         <% end %>
@@ -93,7 +118,7 @@
       <% end %>
 
       <div class="notification is-info is-light mt-6">
-        <i class="fas fa-info-circle mr-2"></i> Select a thread to view the full discussion tree and instructor replies.
+        <i class="fas fa-info-circle mr-2"></i> All discussions for this topic are listed above. To post, use the portal.
       </div>
     </div>
   </div>

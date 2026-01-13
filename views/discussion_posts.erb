@@ -8,20 +8,19 @@
       <nav class="breadcrumb is-small" aria-label="breadcrumbs">
         <ul>
           <li><a href="/course/<%= @course_id %>/discussions"><span class="icon is-small"><i class="fas fa-home"></i></span></a></li>
-          <li><a href="/course/<%= @course_id %>/discussions/<%= @forum_id %>/topics"><%= @forum ? @forum['Name'] : 'Forums' %></a></li>
-          <li><a href="/course/<%= @course_id %>/discussions/<%= @forum_id %>/topics/<%= @topic_id %>"><%= @topic ? @topic['Name'] : 'Topic' %></a></li>
-          <li class="is-active"><a href="#" aria-current="page"><%= @thread ? @thread['Title'] : 'Thread' %></a></li>
+          <li><a href="/course/<%= @course_id %>/discussions/<%= @forum_id %>/topics/<%= @topic_id %>"><%= @topic['Name'] %></a></li>
+          <li class="is-active"><a href="#" aria-current="page"><%= @thread['Title'] %></a></li>
         </ul>
       </nav>
 
       <div class="level">
         <div class="level-left">
-          <h4 class="title is-4"><%= @thread ? @thread['Title'] : 'Discussion Post' %></h4>
+          <h4 class="title is-4"><%= @thread['Title'] %></h4>
         </div>
         <div class="level-right">
           <a href="<%= $client.portal_url_for(:discussion_thread, {course_id: @course_id, id: @thread_id}) %>" class="button is-small is-link is-light" target="_blank">
             <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
-            <span>View Thread in Brightspace</span>
+            <span>View in Brightspace</span>
           </a>
         </div>
       </div>
@@ -35,38 +34,49 @@
         
         <style>
           .post-thread { margin-bottom: 2rem; }
-          .post-replies { margin-left: 2rem; border-left: 2px solid #f0f0f0; padding-left: 1rem; }
-          .post-card { border: 1px solid #eee; border-radius: 6px; margin-bottom: 1rem; transition: background-color 0.2s; }
-          .post-card:hover { border-color: #739AC3; }
+          .post-replies { margin-left: 1.5rem; border-left: 2px solid #f0f4f8; padding-left: 1rem; position: relative; }
+          .post-replies::before { content: ""; position: absolute; left: -2px; top: 0; height: 20px; border-left: 2px solid #739AC3; }
+          
+          .post-card { border: 1px solid #eee; border-radius: 6px; margin-bottom: 1rem; transition: all 0.2s; background: white; }
+          .post-card:hover { border-color: #739AC3; transform: translateX(2px); }
+          
           .post-header { background: #fafafa; padding: 0.5rem 1rem; border-bottom: 1px solid #eee; border-top-left-radius: 6px; border-top-right-radius: 6px; }
-          .post-body { padding: 1rem; font-size: 0.95rem; }
-          .is-instructor { border-left: 4px solid #739AC3 !important; }
+          .post-body { padding: 1rem; font-size: 0.95rem; line-height: 1.6; }
+          
+          .is-instructor { border-left: 4px solid #739AC3 !important; background: #f9fbfd; }
           .instructor-tag { background: #739AC3; color: white; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
+          
+          .post-date { color: #888; font-size: 0.75rem; }
         </style>
 
         <% def render_post(post, depth = 0) %>
-          <div class="post-item mb-4 <%= 'post-replies' if depth > 0 %>">
+          <div class="post-item <%= 'post-replies' if depth > 0 %>">
             <% 
               is_instructor = post['Author'] && (post['Author']['IsInstructor'] == true || post['Author']['RoleName'] =~ /Instructor/i)
             %>
-            <div class="post-card <%= 'is-instructor' if is_instructor %>">
-              <div class="post-header is-flex is-align-items-center">
-                <div class="image is-24x24 mr-2">
-                  <img class="is-rounded" src="https://ui-avatars.com/api/?name=<%= URI.encode_www_form_component(post['Author'] ? post['Author']['DisplayName'] : 'U') %>&background=<%= is_instructor ? '739AC3' : 'ddd' %>&color=fff" alt="Avatar">
+            <div class="post-card <%= 'is-instructor' if is_instructor %>" id="post-<%= post['PostId'] %>">
+              <div class="post-header is-flex is-align-items-center is-justify-content-space-between">
+                <div class="is-flex is-align-items-center">
+                  <div class="image is-24x24 mr-2">
+                    <img class="is-rounded" src="https://ui-avatars.com/api/?name=<%= URI.encode_www_form_component(post['Author'] ? post['Author']['DisplayName'] : 'U') %>&background=<%= is_instructor ? '739AC3' : 'ddd' %>&color=fff" alt="Avatar">
+                  </div>
+                  <div class="is-size-7">
+                    <span class="has-text-weight-bold">
+                      <%= post['Author'] ? post['Author']['DisplayName'] : "Anonymous" %>
+                    </span>
+                    <% if is_instructor %>
+                      <span class="instructor-tag ml-1">INSTRUCTOR</span>
+                    <% end %>
+                  </div>
                 </div>
-                <div class="is-size-7">
-                  <span class="has-text-weight-bold">
-                    <%= post['Author'] ? post['Author']['DisplayName'] : "Anonymous" %>
-                  </span>
-                  <% if is_instructor %>
-                    <span class="instructor-tag ml-1">INSTRUCTOR</span>
-                  <% end %>
-                  <span class="has-text-grey ml-2">
-                    <%= Time.parse(post['DatePosted']).strftime("%b %d, %I:%M %p") %>
-                  </span>
+                <div class="post-date">
+                   <%= Time.parse(post['DatePosted']).strftime("%b %d, %I:%M %p") %>
                 </div>
               </div>
               <div class="post-body content">
+                <% if post['Title'] && post['Title'] != @thread['Title'] && depth > 0 %>
+                  <p class="is-size-7 has-text-grey-light mb-2">Re: <%= post['Title'] %></p>
+                <% end %>
                 <%= post['Message']['Html'] || post['Message']['Text'] %>
               </div>
             </div>
@@ -89,8 +99,8 @@
         <p class="has-text-grey">No posts found in this thread.</p>
       <% end %>
 
-      <div class="notification is-info is-light mt-6">
-        <i class="fas fa-info-circle mr-2"></i> Instructor feedback and replies are displayed in-line. To reply, please use the official portal.
+      <div class="notification is-success is-light mt-6">
+        <i class="fas fa-check-circle mr-2"></i> All posts and replies in this thread are displayed above. Use the official portal to add a new post.
       </div>
     </div>
   </div>
