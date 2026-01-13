@@ -3,6 +3,7 @@ require 'uri'
 require 'net/http'
 require 'json'
 require 'base64'
+require 'time'
 
 # Basic Configuration
 set :port, 4567
@@ -116,7 +117,7 @@ class BrightspaceClient
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/overview")
   end
 
-  # NEW: Download Helper (returns headers and body stream ideally, here returns full body for simplicity)
+  # NEW: Download Helper
   def download_file(path)
     return nil unless authenticated?
 
@@ -169,8 +170,47 @@ end
 $client = BrightspaceClient.new
 
 # ==========================================
+# Helpers
+# ==========================================
+
+helpers do
+  def find_module(modules, id)
+    return nil unless modules
+    modules.each do |m|
+      return m if m['ModuleId'].to_s == id.to_s
+      found = find_module(m['Modules'], id)
+      return found if found
+    end
+    nil
+  end
+
+  def find_syllabus_module(modules)
+    return nil unless modules
+    modules.each do |m|
+      return m if m['Title'].downcase.include?('syllabus')
+      return m if m['Title'].downcase.include?('overview')
+      found = find_syllabus_module(m['Modules'])
+      return found if found
+    end
+    nil
+  end
+end
+
+# ==========================================
 # Routes
 # ==========================================
+
+before '/course/:id*' do
+  redirect '/' unless $client.authenticated?
+  
+  @course_id = params[:id]
+  @toc = $client.get_toc(@course_id)
+  
+  # Fetch course name from enrollments (caching this would be better)
+  enrollments = $client.get_enrollments
+  course_obj = enrollments.find { |e| e['OrgUnit']['Id'].to_s == @course_id }
+  @course_name = course_obj ? course_obj['OrgUnit']['Name'] : "Course #{@course_id}"
+end
 
 get '/' do
   if $client.authenticated?
@@ -202,111 +242,48 @@ get '/dashboard' do
   erb :dashboard
 end
 
-# NEW: Course Details Route (Main/Syllabus)
+# Course Overview / Syllabus
 get '/course/:id' do
-  redirect '/' unless $client.authenticated?
-  
-  @course_id = params[:id]
   @active_tab = 'overview'
-  @toc = $client.get_toc(@course_id)
   @overview = $client.get_overview(@course_id)
+  @syllabus_module = find_syllabus_module(@toc['Modules']) if @toc
   
-  if @toc && @toc['Modules']
-    @syllabus_module = @toc['Modules'].find { |m| m['Title'].downcase.include?('syllabus') } || 
-                       @toc['Modules'].find { |m| m['Title'].downcase.include?('overview') }
-  end
-
-  # Get course name
-  enrollments = $client.get_enrollments
-  course_obj = enrollments.find { |e| e['OrgUnit']['Id'].to_s == @course_id }
-  @course_name = course_obj ? course_obj['OrgUnit']['Name'] : "Course #{@course_id}"
-
   erb :course_detail
 end
 
-# NEW: Specific Module Route
+# Specific Module Details
 get '/course/:id/module/:module_id' do
-  redirect '/' unless $client.authenticated?
-  
-  @course_id = params[:id]
   @module_id = params[:module_id]
   @active_tab = "module_#{@module_id}"
-  @toc = $client.get_toc(@course_id)
-
-  # Find the specific module in the TOC tree
-  def find_module(modules, id)
-    return nil unless modules
-    modules.each do |m|
-      return m if m['ModuleId'].to_s == id.to_s
-      found = find_module(m['Modules'], id)
-      return found if found
-    end
-    nil
-  end
-  
-  @module = find_module(@toc['Modules'], @module_id) if @toc
-
-  enrollments = $client.get_enrollments
-  course_obj = enrollments.find { |e| e['OrgUnit']['Id'].to_s == @course_id }
-  @course_name = course_obj ? course_obj['OrgUnit']['Name'] : "Course #{@course_id}"
+  @module = find_module(@toc['Modules'], @module_id)
   
   erb :module_detail
 end
 
-# NEW: Course Assignments
+# Assignments
 get '/course/:id/assignments' do
-  redirect '/' unless $client.authenticated?
-  
-  @course_id = params[:id]
   @active_tab = 'assignments'
-  @toc = $client.get_toc(@course_id)
   @assignments = $client.get_assignments(@course_id)
-  
-  enrollments = $client.get_enrollments
-  course_obj = enrollments.find { |e| e['OrgUnit']['Id'].to_s == @course_id }
-  @course_name = course_obj ? course_obj['OrgUnit']['Name'] : "Course #{@course_id}"
-  
   erb :assignments
 end
 
-# NEW: Course Grades
+# Grades
 get '/course/:id/grades' do
-  redirect '/' unless $client.authenticated?
-  
-  @course_id = params[:id]
   @active_tab = 'grades'
-  @toc = $client.get_toc(@course_id)
   @grades = $client.get_grades(@course_id)
-  
-  enrollments = $client.get_enrollments
-  course_obj = enrollments.find { |e| e['OrgUnit']['Id'].to_s == @course_id }
-  @course_name = course_obj ? course_obj['OrgUnit']['Name'] : "Course #{@course_id}"
-  
   erb :grades
 end
 
-# NEW: Course Discussions
+# Discussions
 get '/course/:id/discussions' do
-  redirect '/' unless $client.authenticated?
-  
-  @course_id = params[:id]
   @active_tab = 'discussions'
-  @toc = $client.get_toc(@course_id)
   @forums = $client.get_discussions(@course_id)
-  
-  enrollments = $client.get_enrollments
-  course_obj = enrollments.find { |e| e['OrgUnit']['Id'].to_s == @course_id }
-  @course_name = course_obj ? course_obj['OrgUnit']['Name'] : "Course #{@course_id}"
-  
   erb :discussions
 end
 
-# NEW: Download Route (Overview Attachment)
+# Download Route (Overview Attachment)
 get '/course/:id/overview/download' do
-  redirect '/' unless $client.authenticated?
-  
-  course_id = params[:id]
-  http_resp = $client.download_file("/d2l/api/le/1.40/#{course_id}/overview/attachment")
+  http_resp = $client.download_file("/d2l/api/le/1.40/#{@course_id}/overview/attachment")
   
   if http_resp && http_resp.code == '200'
     content_type http_resp['Content-Type']
@@ -317,15 +294,10 @@ get '/course/:id/overview/download' do
   end
 end
 
-# NEW: Download Route (Topic/File)
+# Download Route (Topic/File)
 get '/course/:course_id/topic/:topic_id/download' do
-  redirect '/' unless $client.authenticated?
-  
-  course_id = params[:course_id]
   topic_id = params[:topic_id]
-  
-  # The generic file download endpoint for a topic
-  http_resp = $client.download_file("/d2l/api/le/1.40/#{course_id}/content/topics/#{topic_id}/file")
+  http_resp = $client.download_file("/d2l/api/le/1.40/#{@course_id}/content/topics/#{topic_id}/file")
 
   if http_resp && http_resp.code == '200'
     content_type http_resp['Content-Type']
@@ -346,7 +318,7 @@ __END__
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Brightspace Student Dashboard</title>
+  <title>Britespace | <%= @course_name || "Dashboard" %></title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.9.4/css/bulma.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <style>
@@ -355,10 +327,11 @@ __END__
     .course-row { transition: background-color 0.2s; cursor: pointer; }
     .course-row:hover { background-color: #f5f5f5; }
     .navbar { box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    .module-list li { padding: 8px 12px; border-left: 3px solid transparent; cursor: pointer; }
-    .module-list li:hover { background: #f5f5f5; border-left-color: #00d1b2; }
-    .module-list li.active { background: #eefdfd; border-left-color: #00d1b2; font-weight: bold; }
-    .menu-label { margin-top: 1.5em; }
+    .menu-list a.is-active { background-color: #00d1b2; color: #fff; }
+    .menu-list a.is-active .icon { color: #fff; }
+    .menu-label { margin-top: 1.5em; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; }
+    .toc-nested { margin-left: 10px !important; border-left: 1px solid #eee; }
+    .topic-icon { color: #3273dc; width: 20px; text-align: center; }
   </style>
 </head>
 <body>
@@ -389,12 +362,8 @@ __END__
 <section class="hero is-primary is-fullheight-with-navbar">
   <div class="hero-body">
     <div class="container has-text-centered">
-      <h1 class="title is-1">
-        Student Dashboard
-      </h1>
-      <h2 class="subtitle is-3">
-        Your simplified learning experience.
-      </h2>
+      <h1 class="title is-1">Britespace</h1>
+      <h2 class="subtitle is-3">Your simplified learning experience.</h2>
       <a href="/login" class="button is-white is-large is-rounded">
         <strong><i class="fas fa-sign-in-alt mr-2"></i> Login with Brightspace</strong>
       </a>
@@ -411,18 +380,14 @@ __END__
 </div>
 
 <% if @courses.empty? %>
-  <div class="notification is-warning">
-    No active courses found.
-  </div>
+  <div class="notification is-warning">No active courses found.</div>
 <% else %>
-
   <div class="box p-0">
     <table class="table is-fullwidth is-hoverable">
       <thead>
         <tr>
           <th>Course Name</th>
           <th>Code</th>
-          <th>ID</th>
           <th class="has-text-right">Action</th>
         </tr>
       </thead>
@@ -431,7 +396,6 @@ __END__
           <tr class="course-row" onclick="window.location='/course/<%= c['OrgUnit']['Id'] %>'">
             <td class="has-text-weight-medium is-size-5"><%= c['OrgUnit']['Name'] %></td>
             <td class="has-text-grey"><%= c['OrgUnit']['Code'] %></td>
-            <td class="is-family-code has-text-grey-light"><%= c['OrgUnit']['Id'] %></td>
             <td class="has-text-right">
               <a href="/course/<%= c['OrgUnit']['Id'] %>" class="button is-small is-primary is-light">
                 View Content <i class="fas fa-arrow-right ml-2"></i>
@@ -442,64 +406,21 @@ __END__
       </tbody>
     </table>
   </div>
-  
 <% end %>
 
 @@ course_detail
-<nav class="breadcrumb" aria-label="breadcrumbs">
-  <ul>
-    <li><a href="/dashboard">Courses</a></li>
-    <li class="is-active"><a href="#" aria-current="page"><%= @course_name %></a></li>
-  </ul>
-</nav>
-
-<h1 class="title mb-4"><%= @course_name %></h1>
-
+<%= erb :course_detail_header %>
 <div class="columns">
-  <!-- Left Sidebar: Menu -->
   <div class="column is-3">
-    <aside class="menu">
-      <p class="menu-label">General</p>
-      <ul class="menu-list">
-        <li><a href="/course/<%= @course_id %>" class="<%= 'is-active' if @active_tab == 'overview' %>">
-          <span class="icon is-small"><i class="fas fa-info-circle"></i></span> Syllabus / Overview</a>
-        </li>
-        <li><a href="/course/<%= @course_id %>/assignments" class="<%= 'is-active' if @active_tab == 'assignments' %>">
-          <span class="icon is-small"><i class="fas fa-tasks"></i></span> Assignments</a>
-        </li>
-        <li><a href="/course/<%= @course_id %>/grades" class="<%= 'is-active' if @active_tab == 'grades' %>">
-          <span class="icon is-small"><i class="fas fa-poll"></i></span> Grades</a>
-        </li>
-        <li><a href="/course/<%= @course_id %>/discussions" class="<%= 'is-active' if @active_tab == 'discussions' %>">
-          <span class="icon is-small"><i class="fas fa-comments"></i></span> Discussions</a>
-        </li>
-      </ul>
-      
-      <p class="menu-label">Table of Contents</p>
-      <ul class="menu-list module-list">
-        <% if @toc && @toc['Modules'] %>
-          <% @toc['Modules'].each do |mod| %>
-            <li>
-              <a><%= mod['Title'] %></a>
-            </li>
-          <% end %>
-        <% else %>
-          <li><span class="has-text-grey-light">No modules found.</span></li>
-        <% end %>
-      </ul>
-    </aside>
+    <%= erb :sidebar %>
   </div>
-  
-  <!-- Right Content Area: Details -->
   <div class="column is-9">
     <div class="box">
-      <!-- Overview Section -->
       <% if @overview %>
          <div class="level">
              <div class="level-left">
                 <h4 class="title is-4">Syllabus / Overview</h4>
              </div>
-             
              <% if @overview['Attachment'] %>
              <div class="level-right">
                 <a href="/course/<%= @course_id %>/overview/download" class="button is-link is-small" target="_blank">
@@ -509,54 +430,104 @@ __END__
              </div>
              <% end %>
          </div>
-         
          <div class="content">
             <% 
                desc = @overview['Description']
                desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
             %>
-            
             <% unless desc_text.strip.empty? %>
               <%= desc_text %> 
             <% else %>
               <p class="has-text-grey-light">No description provided and no "Overview" attachment.</p>
-              
               <% if @syllabus_module %>
                 <hr />
-                <h5 class="title is-5 is-flex is-align-items-center">
-                  <span class="icon has-text-primary mr-2"><i class="fas fa-folder-open"></i></span> 
-                  Found "Syllabus" Module
-                </h5>
-                <p class="mb-4">This course uses a module for its syllabus. Here are the files:</p>
-                
+                <h5 class="title is-5"><span class="icon has-text-primary mr-2"><i class="fas fa-folder-open"></i></span> Found "Syllabus" Module</h5>
                 <% if @syllabus_module['Topics'] && !@syllabus_module['Topics'].empty? %>
                    <div class="list is-hoverable">
                      <% @syllabus_module['Topics'].each do |topic| %>
-                       <% next unless topic['Type'] == 1 %>
                        <div class="list-item">
                           <div class="is-flex is-justify-content-space-between is-align-items-center">
                              <div>
                                <span class="icon is-small has-text-info mr-2"><i class="fas fa-file-pdf"></i></span>
                                <span class="has-text-weight-medium"><%= topic['Title'] %></span>
                              </div>
-                             <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] %>/download" class="button is-small is-link is-outlined" target="_blank">
-                               Download
-                             </a>
+                             <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] %>/download" class="button is-small is-link is-outlined" target="_blank">Download</a>
                           </div>
                        </div>
                      <% end %>
                    </div>
-                <% else %>
-                   <div class="notification is-light">No files found inside the Syllabus module.</div>
                 <% end %>
               <% end %>
             <% end %>
          </div>
-      <% else %>
-         <h4 class="title is-4">Select a module...</h4>
-         <p class="has-text-grey">Click on a module on the left to view its topics.</p>
       <% end %>
     </div>
+  </div>
+</div>
+
+@@ module_detail
+<%= erb :course_detail_header %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :sidebar %>
+  </div>
+  <div class="column is-9">
+    <% if @module %>
+      <div class="box">
+        <h4 class="title is-4"><%= @module['Title'] %></h4>
+        <div class="content">
+          <% 
+             desc = @module['Description']
+             desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+          %>
+          <%= desc_text unless desc_text.empty? %>
+        </div>
+
+        <% if @module['Topics'] && !@module['Topics'].empty? %>
+          <h5 class="subtitle is-5 mt-5">Topics</h5>
+          <div class="list is-hoverable">
+            <% @module['Topics'].each do |topic| %>
+              <div class="list-item p-3">
+                <div class="is-flex is-justify-content-space-between is-align-items-center">
+                  <div>
+                    <span class="topic-icon mr-2">
+                      <% if topic['Type'] == 1 %> <!-- File -->
+                        <i class="fas fa-file"></i>
+                      <% elsif topic['Type'] == 3 %> <!-- Link -->
+                        <i class="fas fa-link"></i>
+                      <% else %>
+                        <i class="fas fa-info-circle"></i>
+                      <% end %>
+                    </span>
+                    <span class="has-text-weight-medium"><%= topic['Title'] %></span>
+                  </div>
+                  <% if topic['Url'] && topic['Url'].start_with?('/content/enforced/') %>
+                    <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] %>/download" class="button is-small is-link is-outlined" target="_blank">
+                      <i class="fas fa-download mr-1"></i> Download
+                    </a>
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+
+        <% if @module['Modules'] && !@module['Modules'].empty? %>
+          <h5 class="subtitle is-5 mt-5">Sub-modules</h5>
+          <div class="columns is-multiline">
+            <% @module['Modules'].each do |sub| %>
+              <div class="column is-6">
+                <a href="/course/<%= @course_id %>/module/<%= sub['ModuleId'] %>" class="box has-background-white-bis has-text-centered">
+                  <h6 class="title is-6"><%= sub['Title'] %></h6>
+                </a>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
+    <% else %>
+      <div class="notification is-danger">Module not found.</div>
+    <% end %>
   </div>
 </div>
 
@@ -584,7 +555,7 @@ __END__
                 <td><strong><%= a['Name'] %></strong></td>
                 <td><%= a['DueDate'] ? Time.parse(a['DueDate']).strftime("%B %d, %Y %I:%M %p") : "No due date" %></td>
                 <td class="has-text-right">
-                  <a href="#" class="button is-small is-primary is-light">View</a>
+                  <span class="tag is-light">Submission Portal in Brightspace</span>
                 </td>
               </tr>
             <% end %>
@@ -620,9 +591,7 @@ __END__
               <tr>
                 <td><%= g['GradeObjectName'] %></td>
                 <td><%= g['DisplayedGrade'] %></td>
-                <td>
-                   <span class="tag is-info"><%= g['PointsNumerator'] %> / <%= g['PointsDenominator'] %></span>
-                </td>
+                <td><span class="tag is-info"><%= g['PointsNumerator'] %> / <%= g['PointsDenominator'] %></span></td>
               </tr>
             <% end %>
           </tbody>
@@ -647,7 +616,11 @@ __END__
         <% @forums.each do |forum| %>
           <div class="content mb-6">
             <h5 class="title is-5"><%= forum['Name'] %></h5>
-            <p><%= forum['Description']['Text'] if forum['Description'] %></p>
+            <% 
+               desc = forum['Description']
+               desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+            %>
+            <div class="is-size-6"><%= desc_text %></div>
             <hr />
           </div>
         <% end %>
@@ -665,23 +638,49 @@ __END__
     <li class="is-active"><a href="#" aria-current="page"><%= @course_name %></a></li>
   </ul>
 </nav>
-<h1 class="title mb-4"><%= @course_name %></h1>
+<h1 class="title mb-5"><%= @course_name %></h1>
 
 @@ sidebar
 <aside class="menu">
   <p class="menu-label">General</p>
   <ul class="menu-list">
     <li><a href="/course/<%= @course_id %>" class="<%= 'is-active' if @active_tab == 'overview' %>">
-      <span class="icon is-small"><i class="fas fa-info-circle"></i></span> Syllabus / Overview</a>
+      <span class="icon is-small mr-2"><i class="fas fa-info-circle"></i></span> Syllabus / Overview</a>
     </li>
     <li><a href="/course/<%= @course_id %>/assignments" class="<%= 'is-active' if @active_tab == 'assignments' %>">
-      <span class="icon is-small"><i class="fas fa-tasks"></i></span> Assignments</a>
+      <span class="icon is-small mr-2"><i class="fas fa-tasks"></i></span> Assignments</a>
     </li>
     <li><a href="/course/<%= @course_id %>/grades" class="<%= 'is-active' if @active_tab == 'grades' %>">
-      <span class="icon is-small"><i class="fas fa-poll"></i></span> Grades</a>
+      <span class="icon is-small mr-2"><i class="fas fa-poll"></i></span> Grades</a>
     </li>
     <li><a href="/course/<%= @course_id %>/discussions" class="<%= 'is-active' if @active_tab == 'discussions' %>">
-      <span class="icon is-small"><i class="fas fa-comments"></i></span> Discussions</a>
+      <span class="icon is-small mr-2"><i class="fas fa-comments"></i></span> Discussions</a>
     </li>
   </ul>
+  
+  <p class="menu-label">Table of Contents</p>
+  <ul class="menu-list">
+    <% if @toc && @toc['Modules'] %>
+      <% @toc['Modules'].each do |mod| %>
+        <%= erb :toc_recursive, locals: { mod: mod, depth: 0 } %>
+      <% end %>
+    <% else %>
+      <li><span class="has-text-grey-light">No modules found.</span></li>
+    <% end %>
+  </ul>
 </aside>
+
+@@ toc_recursive
+<li>
+  <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" 
+     class="<%= 'is-active' if @active_tab == "module_#{mod['ModuleId']}" %>">
+    <%= mod['Title'] %>
+  </a>
+  <% if mod['Modules'] && !mod['Modules'].empty? %>
+    <ul class="toc-nested">
+      <% mod['Modules'].each do |sub| %>
+        <%= erb :toc_recursive, locals: { mod: sub, depth: depth + 1 } %>
+      <% end %>
+    </ul>
+  <% end %>
+</li>
