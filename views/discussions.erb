@@ -22,28 +22,43 @@
             </tr>
           </thead>
           <tbody>
-            <% @topics.sort_by { |t| t['LastPostDate'] || "" }.reverse.each do |topic| %>
+            <% 
+               # Sort by last post date (handling both objects and hashes)
+               sorted_topics = @topics.sort_by do |t| 
+                 t.is_a?(DiscussionTopic) ? (t.last_post_date || Time.at(0)) : (t['LastPostDate'] || "")
+               end.reverse
+               
+               sorted_topics.each do |topic| 
+                 is_obj = topic.is_a?(DiscussionTopic)
+                 topic_id = is_obj ? topic.brightspace_id : topic['TopicId']
+                 forum_id = is_obj ? topic.forum_id : topic['ForumId']
+                 name = is_obj ? topic.name : topic['Name']
+                 thread_count = is_obj ? topic.thread_count : topic['ThreadCount']
+                 post_count = is_obj ? topic.post_count : topic['PostCount']
+                 last_post_date = is_obj ? topic.last_post_date : (topic['LastPostDate'] ? Time.parse(topic['LastPostDate']) : nil)
+                 created_date = is_obj ? topic.created_at : topic['StartDate']
+            %>
               <tr>
                 <td>
-                  <a href="/course/<%= @course_id %>/discussions/<%= topic['ForumId'] %>/topics/<%= topic['TopicId'] %>" class="has-text-weight-bold">
-                    <%= topic['Name'] %>
+                  <a href="/course/<%= @course_id %>/discussions/<%= forum_id %>/topics/<%= topic_id %>" class="has-text-weight-bold">
+                    <%= name %>
                   </a>
                   <div class="is-size-7 has-text-grey">
-                    <% if topic['StartDate'] %>
-                        Created: <%= format_date(topic["StartDate"], "%b %d, %Y") %>
+                    <% if created_date %>
+                        Created: <%= format_date(created_date, "%b %d, %Y") %>
                     <% end %>
                   </div>
                 </td>
                 <td class="has-text-centered">
-                    <%= topic['ThreadCount'] || 0 %>
+                    <%= thread_count || 0 %>
                 </td>
                 <td class="has-text-centered">
-                    <%= topic['PostCount'] || 0 %>
+                    <%= post_count || 0 %>
                 </td>
                 <td class="is-size-7">
-                  <% if topic['LastPostDate'] %>
-                    <%= format_date(topic["LastPostDate"], "%b %d, %Y") %><br>
-                    <span class="has-text-grey"><%= format_date(topic["LastPostDate"], "%I:%M %p") %></span>
+                  <% if last_post_date %>
+                    <%= format_date(last_post_date, "%b %d, %Y") %><br>
+                    <span class="has-text-grey"><%= format_date(last_post_date, "%I:%M %p") %></span>
                   <% else %>
                     <span class="has-text-grey-light">Never</span>
                   <% end %>

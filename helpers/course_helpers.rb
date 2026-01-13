@@ -7,6 +7,8 @@ module CourseHelpers
   def author_name(obj)
     return "Anonymous" unless obj
     
+    return obj.author_name if obj.respond_to?(:author_name) && obj.author_name
+
     if obj['Author']
       obj['Author']['DisplayName']
     elsif obj['PostingUserDisplayName']
@@ -19,6 +21,8 @@ module CourseHelpers
   def is_instructor?(obj)
     return false unless obj && obj['Author']
     obj['Author']['IsInstructor'] == true || obj['Author']['RoleName'] =~ /Instructor/i
+  rescue
+    false
   end
 
 

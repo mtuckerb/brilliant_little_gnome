@@ -31,6 +31,10 @@ configure :development, :production do
     puts "Verifying database schema..."
     # Ensure the directory exists
     FileUtils.mkdir_p("db")
+
+    # Optimization: Enable WAL mode for SQLite to handle concurrency
+    ActiveRecord::Base.connection.execute("PRAGMA journal_mode=WAL;")
+    ActiveRecord::Base.connection.execute("PRAGMA synchronous=NORMAL;")
     
     # Run migrations if pending
     # In AR 5.2 MigrationContext takes only the migrations path
@@ -484,11 +488,15 @@ get '/course/:id/discussions' do
   @active_tab = 'discussions'
   
   # Proactively sync forums/topics
-  @forums_raw = $client.get_discussions(@course_id) || []
-  Thread.new { $client.sync_discussions(@course_id, @forums_raw) }
-  
   @forums = DiscussionForum.where(course_id: @course_id).order(name: :asc)
   @topics = DiscussionTopic.where(course_id: @course_id).order(sort_order: :asc)
+
+  if @forums.empty? || params[:force_refresh] == 'true'
+    @forums_raw = $client.get_discussions(@course_id) || []
+    # Sync in background but use raw for immediate display if DB empty
+    Thread.new { $client.sync_discussions(@course_id, @forums_raw) }
+    @topics = @forums_raw.map { |f| $client.get_discussion_topics(@course_id, f['ForumId']) }.flatten.map { |t| t['Items'] || t }.flatten if @topics.empty?
+  end
   
   @breadcrumb_trail = [{ title: 'Discussions', url: "/course/#{@course_id}/discussions" }]
   erb :discussions
@@ -498,17 +506,21 @@ end
 get '/course/:id/discussions/:forum_id/topics' do
   @active_tab = 'discussions'
   @forum_id = params[:forum_id]
+  force_refresh = params[:force_refresh] == 'true'
   
   @forum = DiscussionForum.find_by(brightspace_id: @forum_id, course_id: @course_id)
   # Fallback
   @forum ||= $client.get_discussion_forum(@course_id, @forum_id)
 
-  @topics = DiscussionTopic.where(forum_id: @forum_id, course_id: @course_id).order(sort_order: :asc)
-  # Fallback/Sync
-  if @topics.empty?
+  @topics = DiscussionTopic.where(forum_id: @forum_id, course_id: @course_id)
+  @topics = @topics.order(sort_order: :asc) if @topics.any?
+
+  # Sort by database or refresh if requested/empty
+  if @topics.empty? || force_refresh
     topics_raw = $client.get_discussion_topics(@course_id, @forum_id)
     @topics_data = topics_raw.is_a?(Hash) ? (topics_raw['Items'] || []) : (topics_raw || [])
     Thread.new { $client.sync_discussion_topics(@course_id, @forum_id, @topics_data) }
+    @topics = @topics_data if @topics.empty?
   end
 
   @breadcrumb_trail = [
@@ -527,6 +539,7 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   @forum = DiscussionForum.find_by(brightspace_id: @forum_id, course_id: @course_id) || $client.get_discussion_forum(@course_id, @forum_id)
   @topic = DiscussionTopic.find_by(brightspace_id: @topic_id, forum_id: @forum_id) || $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
   @evaluation = $client.get_discussion_evaluation(@course_id, @forum_id, @topic_id)
+  force_refresh = params[:force_refresh] == 'true'
   
   @breadcrumb_trail = [
     { title: 'Discussions', url: "/course/#{@course_id}/discussions" },
@@ -534,24 +547,37 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   ]
   
   # Fetch and sync threads
-  @threads_data_raw = $client.get_discussion_threads(@course_id, @forum_id, @topic_id)
-  @threads_raw = @threads_data_raw.is_a?(Hash) ? (@threads_data_raw['Items'] || []) : (@threads_data_raw || [])
-  
-  # Use DB for display if available, otherwise raw
-  Thread.new do 
-    @threads_raw.each { |th| $client.sync_discussion_thread(@course_id, @topic_id, th) }
-  end
+  # Refactor: Fetch all posts for the topic in one go. 
+  # This is much faster and bypasses 404 issues on the /threads/ collection endpoint.
+  posts_data_raw = $client.get_topic_posts(@course_id, @forum_id, @topic_id, force_refresh: force_refresh)
+  all_posts = posts_data_raw.is_a?(Hash) ? (posts_data_raw['Items'] || []) : (posts_data_raw || [])
 
-  @threads = @threads_raw # Stick to raw for immediate view accuracy, background syncs for cache
+  # Group posts by ThreadId
+  threads_groups = all_posts.group_by { |p| p['ThreadId'] }
   
-  @threads_with_posts = @threads.sort_by { |t| t['IsPinned'] ? 0 : 1 }.map do |thread|
-    posts_data = $client.get_thread_posts(@course_id, @forum_id, @topic_id, thread['ThreadId'])
-    posts = posts_data.is_a?(Hash) ? (posts_data['Items'] || []) : (posts_data || [])
+  @threads_with_posts = threads_groups.map do |thread_id, posts|
+    # Find the root post or synthesize thread info
+    root_post = posts.find { |p| p['ParentPostId'].nil? } || posts.min_by { |p| p['DatePosted'] }
+    
+    # Create a thread object that fits the existing view expectations
+    thread = {
+      'ThreadId' => thread_id,
+      'Subject' => root_post['Subject'],
+      'Title' => root_post['Subject'],
+      'PostingUserDisplayName' => root_post['PostingUserDisplayName'],
+      'LastModified' => root_post['DatePosted'] || root_post['LastEditDate'],
+      'IsPinned' => root_post['IsPinned'] || false,
+      'ReplyCount' => posts.size - 1
+    }
+
+    # Background sync
+    Thread.new(thread, @topic_id, @course_id) { |t, tid, cid| $client.sync_discussion_thread(cid, tid, t) }
+
     {
       thread: thread,
-      post_tree: build_post_tree(posts)
+      post_tree: build_post_tree(posts) # build_post_tree already handles ParentPostId nil roots
     }
-  end
+  end.sort_by { |item| item[:thread]['IsPinned'] ? 0 : 1 }
 
   erb :discussion_threads
 end
@@ -691,7 +717,12 @@ get '/job/:id/status' do
   job = DownloadJob.find(params[:id])
   if job
     content_type :json
-    { status: job.status, progress: job.progress }.to_json
+    { 
+      status: job.status, 
+      progress: job.progress,
+      completed: job.completed_files,
+      total: job.total_files
+    }.to_json
   else
     status 404
   end

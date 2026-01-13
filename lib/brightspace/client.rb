@@ -110,20 +110,24 @@ class BrightspaceClient
     puts "[Brightspace API] Syncing notifications to DB..."
     
     # Sync courses to normalized table
-    courses.each do |c|
-      course = Course.find_or_initialize_by(org_unit_id: c['OrgUnit']['Id'].to_s)
-      course.name = c['OrgUnit']['Name']
-      course.code = c['OrgUnit']['Code']
-      course.is_pinned = !c['PinDate'].nil?
-      course.last_accessed_at = Time.parse(c.dig('Access', 'LastAccessed')) rescue nil
-      course.semester = extract_semester_from_name(course.name)
-      course.save!
+    ActiveRecord::Base.transaction do
+      courses.each do |c|
+        course = Course.find_or_initialize_by(org_unit_id: c['OrgUnit']['Id'].to_s)
+        course.name = c['OrgUnit']['Name']
+        course.code = c['OrgUnit']['Code']
+        course.is_pinned = !c['PinDate'].nil?
+        course.last_accessed_at = Time.parse(c.dig('Access', 'LastAccessed')) rescue nil
+        course.semester = extract_semester_from_name(course.name)
+        course.save!
+      end
     end
 
     # Get unified feed first (broad coverage)
     feed_items = get_unified_feed(courses)
-    feed_items.each do |item|
-      upsert_notification(item)
+    ActiveRecord::Base.transaction do
+      feed_items.each do |item|
+        upsert_notification(item)
+      end
     end
 
     # Get per-course News/Announcements explicitly
@@ -134,55 +138,63 @@ class BrightspaceClient
       news_data = get_news(course_id)
       items = news_data.is_a?(Array) ? news_data : (news_data['Items'] || [])
       
-      items.each do |item|
-        upsert_notification({
-          id: "news_#{course_id}_#{item['Id']}",
-          type: 'News',
-          title: item['Title'],
-          body: item.dig('Summary', 'Text') || item.dig('Body', 'Text'),
-          date: item['StartDate'] || item['LastModifiedDate'] || item['CreatedDate'],
-          course_id: course_id,
-          course_name: c['OrgUnit']['Name'],
-          urgency: 1,
-          is_personal: false,
-          url: "/course/#{course_id}/announcements"
-        })
-      end
+      ActiveRecord::Base.transaction do
+        items.each do |item|
+          upsert_notification({
+            id: "news_#{course_id}_#{item['Id']}",
+            type: 'News',
+            title: item['Title'],
+            body: item.dig('Summary', 'Text') || item.dig('Body', 'Text'),
+            date: item['StartDate'] || item['LastModifiedDate'] || item['CreatedDate'],
+            course_id: course_id,
+            course_name: c['OrgUnit']['Name'],
+            urgency: 1,
+            is_personal: false,
+            url: "/course/#{course_id}/announcements"
+          })
+        end
 
-      # Course Overview (requested specifically by user)
-      overview = get_overview(course_id)
-      if overview && (overview['Description']&.fetch('Text', nil) || overview['Title'])
-        upsert_notification({
-          id: "overview_#{course_id}",
-          type: 'Content',
-          title: "Course Overview: #{overview['Title'] || 'Updated'}",
-          body: overview.dig('Description', 'Text') || "The course overview has been updated.",
-          date: overview['LastModifiedDate'],
-          course_id: course_id,
-          course_name: c['OrgUnit']['Name'],
-          urgency: 1,
-          is_personal: false,
-          url: "/course/#{course_id}"
-        })
+        # Course Overview (requested specifically by user)
+        overview = get_overview(course_id)
+        if overview && (overview['Description']&.fetch('Text', nil) || overview['Title'])
+          upsert_notification({
+            id: "overview_#{course_id}",
+            type: 'Content',
+            title: "Course Overview: #{overview['Title'] || 'Updated'}",
+            body: overview.dig('Description', 'Text') || "The course overview has been updated.",
+            date: overview['LastModifiedDate'],
+            course_id: course_id,
+            course_name: c['OrgUnit']['Name'],
+            urgency: 1,
+            is_personal: false,
+            url: "/course/#{course_id}"
+          })
+        end
       end
     end
 
     # Get content updates
     content_items = get_content_notifications(courses)
-    content_items.each do |item|
-      upsert_notification(item)
+    ActiveRecord::Base.transaction do
+      content_items.each do |item|
+        upsert_notification(item)
+      end
     end
 
     # Get grades
     grade_items = get_recent_grades_notifications(courses)
-    grade_items.each do |item|
-      upsert_notification(item)
+    ActiveRecord::Base.transaction do
+      grade_items.each do |item|
+        upsert_notification(item)
+      end
     end
 
     # Get discussions
     disc_items = get_discussion_notifications(courses, user['Identifier'])
-    disc_items.each do |item|
-      upsert_notification(item)
+    ActiveRecord::Base.transaction do
+      disc_items.each do |item|
+        upsert_notification(item)
+      end
     end
     
     puts "[Brightspace API] Notification sync complete."
@@ -404,8 +416,24 @@ class BrightspaceClient
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}")
   end
 
-  def get_discussion_threads(org_unit_id, forum_id, topic_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/")
+  def get_discussion_threads(org_unit_id, forum_id, topic_id, force_refresh: false)
+    path = "/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/"
+    data = do_get(path, force_refresh: force_refresh)
+    
+    # Fallback: if threads endpoint 404s or is empty, try to synthesize from posts
+    if data.nil? || (data.is_a?(Hash) && (data['Items'] || []).empty?)
+      puts "[Brightspace API] Threads 404 or empty for topic #{topic_id}. Attempting synthesis from posts..."
+      posts_data = get_topic_posts(org_unit_id, forum_id, topic_id)
+      posts = posts_data.is_a?(Hash) ? (posts_data['Items'] || []) : posts_data
+      
+      if posts && posts.any?
+        # Group by ThreadId and take the "first" post (the one with ParentPostId nil) as the thread representative
+        threads = synthesize_threads_from_posts(posts)
+        return { 'Items' => threads }
+      end
+    end
+    
+    data
   end
 
   def get_discussion_evaluation(org_unit_id, forum_id, topic_id)
@@ -418,6 +446,33 @@ class BrightspaceClient
 
   def get_thread_posts(org_unit_id, forum_id, topic_id, thread_id)
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/threads/#{thread_id}/posts/")
+  end
+
+  def get_topic_posts(org_unit_id, forum_id, topic_id, force_refresh: false)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/#{topic_id}/posts/", force_refresh: force_refresh)
+  end
+
+  def synthesize_threads_from_posts(posts)
+    # Find posts that effectively started a thread (either ParentPostId is nil or they are the earliest post with a specific ThreadId)
+    # Actually, if we have ThreadId, we can group by it.
+    threads_map = {}
+    
+    posts.each do |p|
+      tid = p['ThreadId']
+      # We want the 'root' post of the thread
+      if p['ParentPostId'].nil?
+        threads_map[tid] = {
+          'ThreadId' => tid,
+          'Subject' => p['Subject'],
+          'Title' => p['Subject'],
+          'PostingUserDisplayName' => p['PostingUserDisplayName'],
+          'LastModified' => p['DatePosted'],
+          'DatePosted' => p['DatePosted'],
+          'IsPinned' => false # Best guess
+        }
+      end
+    end
+    threads_map.values
   end
 
   def get_all_news(courses)
@@ -547,6 +602,9 @@ class BrightspaceClient
       topic.name = t['Name']
       topic.description = t.dig('Description', 'Text')
       topic.sort_order = index
+      topic.thread_count = t['ThreadCount'] || 0
+      topic.post_count = t['PostCount'] || 0
+      topic.last_post_date = Time.parse(t['LastPostDate']) rescue nil
       topic.save!
       
       # We don't sync threads here by default as it's too heavy for a broad sync,
