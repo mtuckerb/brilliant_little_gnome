@@ -35,6 +35,7 @@ configure :development, :production do
     # Optimization: Enable WAL mode for SQLite to handle concurrency
     ActiveRecord::Base.connection.execute("PRAGMA journal_mode=WAL;")
     ActiveRecord::Base.connection.execute("PRAGMA synchronous=NORMAL;")
+    ActiveRecord::Base.connection.execute("PRAGMA busy_timeout=5000;")
     
     # Run migrations if pending
     # In AR 5.2 MigrationContext takes only the migrations path
@@ -325,7 +326,7 @@ get '/notifications' do
   @user = $client.get_who_am_i
   
   # Trigger a quick background sync for news/grades when viewing notifications
-  Thread.new { $client.sync_notifications(@courses, @user) }
+  Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_notifications(@courses, @user) } }
 
   query = Notification.all
 
@@ -479,6 +480,9 @@ get '/course/:id/grades' do
   
   # Fallback to raw if DB still empty
   @grades = @grades_raw if @grades.empty?
+
+  # Calculate Grade Stats (Analytics)
+  @grade_stats = calculate_grade_stats(@course_id)
   
   erb :grades
 end

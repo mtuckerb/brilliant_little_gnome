@@ -311,4 +311,27 @@ module CourseHelpers
     # Sort top level by date (oldest first is typical for threads)
     tree.sort_by { |p| p['DatePosted'] || "" }
   end
+
+  # Grade Analytics Helpers
+  def calculate_grade_stats(course_id)
+    stats = Grade.calculate_weighted_total(course_id)
+    stats || { score: 0, confidence: 0, total_weight_graded: 0, total_weight_possible: 0 }
+  rescue => e
+    puts "Error calculating grade stats: #{e.message}"
+    { score: 0, confidence: 0, total_weight_graded: 0, total_weight_possible: 0 }
+  end
+
+  def confidence_color(confidence)
+    return "has-text-grey-light" if confidence.nil?
+    return "has-text-danger" if confidence < 30
+    return "has-text-warning" if confidence < 70
+    "has-text-success"
+  end
+
+  def grade_color(score)
+    return "has-text-grey-light" if score.nil?
+    return "has-text-danger" if score < 60
+    return "has-text-warning" if score < 80
+    "has-text-success"
+  end
 end

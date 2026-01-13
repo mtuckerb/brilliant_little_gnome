@@ -48,56 +48,58 @@ class BrightspaceClient
     return if @syncing
     
     Thread.new do
-      @sync_lock.synchronize { @syncing = true }
-      @sync_status = { status: "syncing", progress: 0, current_task: "Starting proactive sync..." }
-      
-      begin
-        courses = get_enrollments || []
-        user = get_who_am_i
+      ActiveRecord::Base.connection_pool.with_connection do
+        @sync_lock.synchronize { @syncing = true }
+        @sync_status = { status: "syncing", progress: 0, current_task: "Starting proactive sync..." }
         
-        total_steps = 1 + courses.size # Notifications + each course
-        current_step = 0
+        begin
+          courses = get_enrollments || []
+          user = get_who_am_i
+          
+          total_steps = 1 + courses.size # Notifications + each course
+          current_step = 0
 
-        @sync_status[:current_task] = "Syncing Notifications..."
-        sync_notifications(courses, user)
-        current_step += 1
-        @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
-
-        courses.each do |c|
-          course_id = c['OrgUnit']['Id']
-          course_name = c['OrgUnit']['Name']
-          @sync_status[:current_task] = "Syncing #{course_name}..."
-          
-          # Sync Core
-          toc = get_toc(course_id)
-          sync_course_content(course_id, toc) if toc
-          
-          sleep 0.2
-          assignments = get_assignments(course_id)
-          sync_assignments(course_id, assignments) if assignments
-          
-          sleep 0.2
-          
-          # Sync Discussions
-          forums = get_discussions(course_id) || []
-          sync_discussions(course_id, forums) if forums.any?
-          
-          sleep 0.2
-          
-          # Sync Grades
-          grades_raw = get_grades(course_id)
-          sync_grades(course_id, grades_raw) if grades_raw.is_a?(Array)
-
+          @sync_status[:current_task] = "Syncing Notifications..."
+          sync_notifications(courses, user)
           current_step += 1
           @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
+
+          courses.each do |c|
+            course_id = c['OrgUnit']['Id']
+            course_name = c['OrgUnit']['Name']
+            @sync_status[:current_task] = "Syncing #{course_name}..."
+            
+            # Sync Core
+            toc = get_toc(course_id)
+            sync_course_content(course_id, toc) if toc
+            
+            sleep 0.1
+            assignments = get_assignments(course_id)
+            sync_assignments(course_id, assignments) if assignments
+            
+            sleep 0.1
+            
+            # Sync Discussions
+            forums = get_discussions(course_id) || []
+            sync_discussions(course_id, forums) if forums.any?
+            
+            sleep 0.1
+            
+            # Sync Grades
+            grades_raw = get_grades(course_id)
+            sync_grades(course_id, grades_raw) if grades_raw.is_a?(Array)
+
+            current_step += 1
+            @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
+          end
+          
+          @sync_status = { status: "completed", progress: 100, current_task: "Proactive sync complete." }
+        rescue => e
+          @sync_status = { status: "error", progress: 0, current_task: "Sync error: #{e.message}" }
+          shared_puts "Sync error: #{e.message}"
+        ensure
+          @sync_lock.synchronize { @syncing = false }
         end
-        
-        @sync_status = { status: "completed", progress: 100, current_task: "Proactive sync complete." }
-      rescue => e
-        @sync_status = { status: "error", progress: 0, current_task: "Sync error: #{e.message}" }
-        shared_puts "Sync error: #{e.message}"
-      ensure
-        @sync_lock.synchronize { @syncing = false }
       end
     end
   end
@@ -627,16 +629,19 @@ class BrightspaceClient
   def sync_grades(course_id, grade_values)
     return unless grade_values.is_a?(Array)
     
-    grade_values.each do |g|
-      grade = Grade.find_or_initialize_by(brightspace_id: g['GradeObjectIdentifier'].to_s, course_id: course_id.to_s)
-      grade.name = g['GradeObjectName']
-      grade.displayed_grade = g['DisplayedGrade']
-      grade.numerator = g.dig('PointsNumerator')
-      grade.denominator = g.dig('PointsDenominator')
-      grade.grade_object_type = g['GradeObjectType']
-      grade.last_modified = Time.parse(g['LastModified']) rescue nil
-      grade.comments = g.dig('Comments', 'Text')
-      grade.save!
+    ActiveRecord::Base.transaction do
+      grade_values.each do |g|
+        grade = Grade.find_or_initialize_by(brightspace_id: g['GradeObjectIdentifier'].to_s, course_id: course_id.to_s)
+        grade.name = g['GradeObjectName']
+        grade.displayed_grade = g['DisplayedGrade']
+        grade.numerator = g.dig('PointsNumerator')
+        grade.denominator = g.dig('PointsDenominator')
+        grade.weight = g.dig('Weight')
+        grade.grade_object_type = g['GradeObjectType']
+        grade.last_modified = Time.parse(g['LastModified']) rescue nil
+        grade.comments = g.dig('Comments', 'Text')
+        grade.save!
+      end
     end
   end
 

@@ -5,14 +5,45 @@
   </div>
   <div class="column is-9">
     <div class="box">
-      <h4 class="title is-4"><i class="fas fa-poll mr-2"></i> Grades</h4>
+      <div class="level mb-5">
+        <div class="level-left">
+          <div>
+            <h4 class="title is-4 mb-0"><i class="fas fa-poll mr-2"></i> Grades</h4>
+            <p class="is-size-7 has-text-grey">Data is synced in the background.</p>
+          </div>
+        </div>
+        <div class="level-right">
+          <% if @grade_stats && @grade_stats[:total_weight_possible] > 0 %>
+            <div class="level-item has-text-centered px-4">
+              <div>
+                <p class="heading">Current Grade</p>
+                <p class="title <%= grade_color(@grade_stats[:score]) %>"><%= @grade_stats[:score] %>%</p>
+              </div>
+            </div>
+            <div class="level-item has-text-centered px-4" style="border-left: 1px solid #eee;">
+              <div>
+                <p class="heading">Confidence</p>
+                <p class="title <%= confidence_color(@grade_stats[:confidence]) %>"><%= @grade_stats[:confidence] %>%</p>
+              </div>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
+      <% if @grade_stats && @grade_stats[:confidence] < 100 %>
+         <div class="notification is-light is-info py-2 px-4 is-size-7 mb-4">
+           <strong>Confidence Note:</strong> Only <%= @grade_stats[:total_weight_graded] %>% of the total <%= @grade_stats[:total_weight_possible] %>% weight for this course has been graded so far.
+         </div>
+      <% end %>
+
       <% if @grades && !@grades.empty? %>
-        <table class="table is-fullwidth">
+        <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
               <th>Item</th>
-              <th>Points</th>
-              <th>Grade</th>
+              <th class="has-text-centered">Weight</th>
+              <th class="has-text-centered">Points</th>
+              <th class="has-text-right">Result</th>
             </tr>
           </thead>
           <tbody>
@@ -23,16 +54,41 @@
                 displayed = g.respond_to?(:displayed_grade) ? g.displayed_grade : g['DisplayedGrade']
                 numerator = g.respond_to?(:numerator) ? g.numerator : g['PointsNumerator']
                 denominator = g.respond_to?(:denominator) ? g.denominator : g['PointsDenominator']
+                weight = g.respond_to?(:weight) ? g.weight : g['Weight']
+                
+                is_graded = g.respond_to?(:is_graded?) ? g.is_graded? : (!numerator.nil? && numerator > 0)
               %>
-              <tr>
-                <td><%= name %></td>
-                <td style="font-family: monospace;"><%= displayed %></td>
+              <tr class="<%= is_graded ? '' : 'has-background-white-ter has-text-grey-light' %>">
                 <td>
-                  <% if numerator && denominator %>
-                    <span class="tag is-info"><%= numerator %> / <%= denominator %></span>
-                    <% if denominator > 0 %>
-                      <span class="tag is-light is-info"><%= ((numerator.to_f / denominator) * 100).round(1) %>%</span>
-                    <% end %>
+                  <%= name %>
+                  <% unless is_graded %>
+                    <span class="tag is-small is-light ml-2">Ungraded</span>
+                  <% end %>
+                </td>
+                <td class="has-text-centered">
+                  <% if weight %>
+                    <span class="is-size-7"><%= weight %>%</span>
+                  <% else %>
+                    <span class="has-text-grey-light">-</span>
+                  <% end %>
+                </td>
+                <td class="has-text-centered">
+                   <div class="is-size-7" style="font-family: monospace;">
+                     <% if numerator && denominator %>
+                        <%= numerator %> / <%= denominator %>
+                     <% else %>
+                        -
+                     <% end %>
+                   </div>
+                </td>
+                <td class="has-text-right">
+                  <% if is_graded && numerator && denominator && denominator > 0 %>
+                    <% perc = ((numerator.to_f / denominator) * 100).round(1) %>
+                    <span class="tag <%= grade_color(perc) %> is-light" style="font-weight: bold;">
+                      <%= perc %>%
+                    </span>
+                  <% else %>
+                    <span class="has-text-grey-light">-</span>
                   <% end %>
                 </td>
               </tr>
