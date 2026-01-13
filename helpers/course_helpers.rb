@@ -32,15 +32,22 @@ module CourseHelpers
     nil
   end
 
-  def find_syllabus_module(modules)
-    return nil unless modules
+  def find_syllabus_items(modules, items = { modules: [], topics: [] })
+    return items unless modules
     modules.each do |m|
-      return m if m['Title'].downcase.include?('syllabus')
-      return m if m['Title'].downcase.include?('overview')
-      found = find_syllabus_module(m['Modules'])
-      return found if found
+      if m['Title'].downcase.match?(/syllabus|course overview|getting started|start here/)
+        items[:modules] << m
+      end
+      
+      (m['Topics'] || []).each do |t|
+        if t['Title'].downcase.match?(/syllabus|course overview/)
+          items[:topics] << t
+        end
+      end
+      
+      find_syllabus_items(m['Modules'], items) if m['Modules']
     end
-    nil
+    items
   end
 
   # Builds breadcrumbs from TOC for a given module ID

@@ -83,7 +83,7 @@ get '/course/:id' do
   @active_tab = 'overview'
   @breadcrumb_trail = [{ title: 'Overview', url: "/course/#{@course_id}" }]
   @overview = $client.get_overview(@course_id)
-  @syllabus_module = find_syllabus_module(@toc['Modules']) if @toc
+  @syllabus_info = find_syllabus_items(@toc['Modules']) if @toc
   
   erb :course_detail
 end
