@@ -564,6 +564,50 @@ class BrightspaceClient
     fetch_and_cache(path)
   end
 
+  def dismiss_news_item(course_id, news_id)
+    # Matches D2L LE API for dismissing a news item
+    do_post("/d2l/api/le/#{@api_version}/#{course_id}/news/#{news_id}/dismiss", {})
+  end
+
+  def mark_notification_read(notification_id)
+    # Common LP API pattern for marking notification as read
+    # This varies significantly by D2L version, but we'll try the standard LP path
+    do_post("/d2l/api/lp/#{@api_version}/notifications/#{notification_id}/read", {})
+  end
+
+  def do_post(path, body_data)
+    return nil unless authenticated?
+
+    uri = URI("https://#{@host}#{path}")
+    request = Net::HTTP::Post.new(uri)
+    
+    if @token
+      request['Authorization'] = "Bearer #{@token}"
+    elsif @cookie_string
+      request['Cookie'] = @cookie_string
+    end
+    
+    request.content_type = 'application/json'
+    request.body = body_data.to_json
+
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+    
+    begin
+      response = http.request(request)
+      if response.code.start_with?('2')
+        puts "[Brightspace API] POST Success: #{path}"
+        true
+      else
+        puts "[Brightspace API] POST Error #{response.code}: #{path}"
+        false
+      end
+    rescue => e
+      puts "[Brightspace API] POST Exception: #{e.message}"
+      false
+    end
+  end
+
   def fetch_and_cache(path)
     return nil unless authenticated?
     

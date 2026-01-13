@@ -252,6 +252,22 @@ end
 post '/notifications/:id/mark_read' do
   notification = Notification.find(params[:id])
   notification.update(is_read: true)
+
+  # Brightspace Integration: Sync Read Status
+  Thread.new do
+    ext_id = notification.external_id
+    if ext_id.start_with?("news_")
+      # Format: news_{course_id}_{item_id}
+      parts = ext_id.split('_')
+      $client.dismiss_news_item(parts[1], parts[2]) if parts.size >= 3
+    elsif ext_id.match?(/^\d+$/)
+      # Pure numeric IDs in the LP feed are usually standard notifications
+      $client.mark_notification_read(ext_id)
+    end
+    # Note: Content updates and Grades don't always have a direct "mark as read" 
+    # in the API same way News does, but we perform the local state change above.
+  end
+
   redirect back
 end
 
@@ -262,8 +278,30 @@ post '/notifications/:id/mark_unread' do
 end
 
 post '/notifications/mark_all_read' do
-  # Apply same filters as current view if possible, or just mark all for current user
+  # Identify the IDs we are about to mark read across Brightspace
+  unread_notifications = Notification.where(is_read: false).select(:external_id, :course_id)
+  
   Notification.update_all(is_read: true)
+
+  # Sync all dismissals to Brightspace in background
+  Thread.new do
+    unread_notifications.each do |n|
+      ext_id = n.external_id
+      begin
+        if ext_id.start_with?("news_")
+          parts = ext_id.split('_')
+          $client.dismiss_news_item(parts[1], parts[2]) if parts.size >= 3
+        elsif ext_id.match?(/^\d+$/)
+          $client.mark_notification_read(ext_id)
+        end
+      rescue => e
+        puts "[Brilliant] Bulk background sync error: #{e.message}"
+      end
+      # Small sleep to prevent rate limiting D2L
+      sleep 0.1
+    end
+  end
+
   redirect '/notifications'
 end
 
