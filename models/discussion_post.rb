@@ -1,6 +1,23 @@
 class DiscussionPost < ActiveRecord::Base
   validates :brightspace_id, presence: true, uniqueness: { scope: [:topic_id, :thread_id] }
   
+  belongs_to :discussion_topic, foreign_key: :topic_id, primary_key: :brightspace_id
+
+  after_save :update_topic_counts
+  after_destroy :update_topic_counts
+
+  def update_topic_counts
+    return unless discussion_topic
+    
+    # Use update_columns to avoid triggering callbacks on the topic itself
+    # and to be as efficient as possible.
+    discussion_topic.update_columns(
+      thread_count: discussion_topic.discussion_posts.distinct.count(:thread_id),
+      post_count: discussion_topic.discussion_posts.count,
+      last_post_date: discussion_topic.discussion_posts.maximum(:posted_at)
+    )
+  end
+
   def self.sync_from_api(course_id, forum_id, topic_id, api_posts)
     return unless api_posts.is_a?(Array)
     
@@ -18,8 +35,7 @@ class DiscussionPost < ActiveRecord::Base
         post.posted_at = Time.parse(p['DatePosted']) rescue nil
         
         # Determine if instructor based on DisplayName or other metadata
-        # (Usually needs to be passed in or checked against a known list)
-        post.is_instructor = p.dig('Author', 'IsInstructor') || false
+        post.is_instructor = p.dig('Author', 'IsInstructor') == true || p.dig('Author', 'RoleName') =~ /Instructor/i rescue false
         
         post.save!
       end

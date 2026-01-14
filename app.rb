@@ -499,11 +499,16 @@ get '/course/:id/discussions' do
   
   # Always trigger a fast background refresh of metadata (counts, etc)
   # This keeps the Dashboard and Discussion tables fresh
-  unless params[:force_refresh] == 'true'
-    Thread.new(@course_id) do |cid|
-      ActiveRecord::Base.connection_pool.with_connection do
-        forums_raw = $client.get_discussions(cid) || []
-        $client.sync_discussions(cid, forums_raw)
+  Thread.new(@course_id) do |cid|
+    ActiveRecord::Base.connection_pool.with_connection do
+      forums_raw = $client.get_discussions(cid) || []
+      $client.sync_discussions(cid, forums_raw)
+      
+      # Deep sync: for each topic, trigger a post sync to verify counts
+      DiscussionTopic.where(course_id: cid).find_each do |topic|
+        posts_data = $client.get_topic_posts(cid, topic.forum_id, topic.brightspace_id)
+        posts = posts_data.is_a?(Hash) ? (posts_data['Items'] || []) : posts_data
+        $client.sync_topic_posts(cid, topic.forum_id, topic.brightspace_id, posts) if posts
       end
     end
   end
@@ -573,6 +578,10 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   posts_data_raw = $client.get_topic_posts(@course_id, @forum_id, @topic_id, force_refresh: force_refresh)
   all_posts = posts_data_raw.is_a?(Hash) ? (posts_data_raw['Items'] || []) : (posts_data_raw || [])
 
+  # Determine if manual post exists for collapse logic
+  user_post = all_posts.find { |p| p['PostingUserDisplayName'] == $client.user_display_name }
+  @instructions_collapsed = @user_prefs.topic_collapsed?(@topic_id) || !user_post.nil?
+
   # FALLBACK: If posts are empty, try fetching threads directly.
   # This handles topics that exist but have no posts yet (or Synthesis fails)
   if all_posts.empty?
@@ -638,6 +647,18 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   end.sort_by { |item| item[:thread]['IsPinned'] ? 0 : 1 }
 
   erb :discussion_threads
+end
+
+post '/course/:id/discussions/toggle_collapse' do
+  topic_id = params[:topic_id]
+  @user_prefs.toggle_topic_collapse(topic_id)
+  
+  if request.xhr?
+    content_type :json
+    { status: 'ok', collapsed: @user_prefs.topic_collapsed?(topic_id) }.to_json
+  else
+    redirect back
+  end
 end
 
 # Discussion Posts
