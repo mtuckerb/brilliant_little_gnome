@@ -51,7 +51,7 @@
            <!-- DEBUG: @instructions_collapsed = <%= @instructions_collapsed.inspect %> -->
            <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
              <p class="has-text-weight-bold mb-0">Instructions / Description:</p>
-             <button class="button is-small is-ghost" onclick="toggleInstructions()" title="Toggle instructions">
+             <button class="button is-small is-ghost" onclick="toggleSection('instructions')" title="Toggle instructions">
                <span class="icon is-small">
                  <i id="instructions-chevron" class="fas fa-chevron-<%= @instructions_collapsed ? 'right' : 'down' %>"></i>
                </span>
@@ -68,9 +68,9 @@
         </div>
 
         <script>
-          function toggleInstructions() {
-            const content = document.getElementById('instructions-content');
-            const chevron = document.getElementById('instructions-chevron');
+          function toggleSection(section) {
+            const content = document.getElementById(section + '-content');
+            const chevron = document.getElementById(section + '-chevron');
             const isHidden = content.classList.contains('is-hidden');
             
             if (isHidden) {
@@ -87,7 +87,7 @@
             fetch('/course/<%= @course_id %>/discussions/toggle_collapse', {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: 'topic_id=<%= @topic_id %>'
+              body: 'topic_id=<%= @topic_id %>&section=' + section
             });
           }
         </script>
@@ -95,23 +95,43 @@
         <%# Instructor Feedback / Evaluation Section %>
         <% if @evaluation %>
           <div class="notification is-success is-light">
-            <p class="has-text-weight-bold"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
-            <% if @evaluation['Feedback'] %>
-              <div class="content mt-2">
-                <%= @evaluation['Feedback']['Html'] || @evaluation['Feedback']['Text'] %>
-              </div>
-            <% end %>
-            <% if @evaluation['Score'] %>
-              <div class="mt-2">
-                <span class="tag is-success">Score: <%= @evaluation['Score'] %></span>
-              </div>
-            <% end %>
+            <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
+              <p class="has-text-weight-bold mb-0"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
+              <button class="button is-small is-ghost has-text-success" onclick="toggleSection('feedback')" title="Toggle feedback">
+                 <span class="icon is-small">
+                   <i id="feedback-chevron" class="fas fa-chevron-<%= @feedback_collapsed ? 'right' : 'down' %>"></i>
+                 </span>
+              </button>
+            </div>
+            
+            <div id="feedback-content" class="<%= 'is-hidden' if @feedback_collapsed %>">
+              <% if @evaluation['Feedback'] %>
+                <div class="content mt-2">
+                  <%= @evaluation['Feedback']['Html'] || @evaluation['Feedback']['Text'] %>
+                </div>
+              <% end %>
+              <% if @evaluation['Score'] %>
+                <div class="mt-2">
+                  <span class="tag is-success">Score: <%= @evaluation['Score'] %></span>
+                </div>
+              <% end %>
+            </div>
           </div>
         <% elsif @topic['Feedback'] %>
           <div class="notification is-success is-light">
-            <p class="has-text-weight-bold"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
-            <div class="content mt-2">
-              <%= @topic['Feedback']['Html'] || @topic['Feedback']['Text'] %>
+            <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
+               <p class="has-text-weight-bold mb-0"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
+               <button class="button is-small is-ghost has-text-success" onclick="toggleSection('feedback')" title="Toggle feedback">
+                 <span class="icon is-small">
+                   <i id="feedback-chevron" class="fas fa-chevron-<%= @feedback_collapsed ? 'right' : 'down' %>"></i>
+                 </span>
+               </button>
+            </div>
+
+            <div id="feedback-content" class="<%= 'is-hidden' if @feedback_collapsed %>">
+              <div class="content mt-2">
+                <%= @topic['Feedback']['Html'] || @topic['Feedback']['Text'] %>
+              </div>
             </div>
           </div>
         <% end %>

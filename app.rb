@@ -565,6 +565,20 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   @forum = DiscussionForum.find_by(brightspace_id: @forum_id, course_id: @course_id) || $client.get_discussion_forum(@course_id, @forum_id)
   @topic = DiscussionTopic.find_by(brightspace_id: @topic_id, forum_id: @forum_id) || $client.get_discussion_topic(@course_id, @forum_id, @topic_id)
   @evaluation = $client.get_discussion_evaluation(@course_id, @forum_id, @topic_id)
+  
+  # FALLBACK: If API evaluation is hidden (404/nil), search Grades for a matching name
+  if @evaluation.nil?
+    topic_name = @topic.is_a?(DiscussionTopic) ? @topic.name : @topic['Name']
+    # Try fuzzy match in DB
+    grade_match = Grade.where(course_id: @course_id).where("name LIKE ?", "%#{topic_name}%").first
+    if grade_match && grade_match.comments.present?
+      @evaluation = {
+        'Feedback' => { 'Html' => grade_match.comments },
+        'Score' => grade_match.displayed_grade
+      }
+    end
+  end
+
   force_refresh = params[:force_refresh] == 'true'
   
   @breadcrumb_trail = [
@@ -599,6 +613,7 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
 
   # Persistence + Participation
   @instructions_collapsed = @user_prefs.topic_collapsed?(@topic_id) || participated
+  @feedback_collapsed = @user_prefs.topic_collapsed?("#{@topic_id}:feedback")
 
   # FALLBACK: If posts are empty, try fetching threads directly.
   # This handles topics that exist but have no posts yet (or Synthesis fails)
@@ -669,11 +684,14 @@ end
 
 post '/course/:id/discussions/toggle_collapse' do
   topic_id = params[:topic_id]
-  @user_prefs.toggle_topic_collapse(topic_id)
+  section = params[:section]
+  key = (section && section != 'instructions') ? "#{topic_id}:#{section}" : topic_id
+  
+  @user_prefs.toggle_topic_collapse(key)
   
   if request.xhr?
     content_type :json
-    { status: 'ok', collapsed: @user_prefs.topic_collapsed?(topic_id) }.to_json
+    { status: 'ok', collapsed: @user_prefs.topic_collapsed?(key) }.to_json
   else
     redirect back
   end

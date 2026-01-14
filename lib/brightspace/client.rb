@@ -716,7 +716,7 @@ class BrightspaceClient
         grade.weight = weights_map[obj_id] || g.dig('Weight')
         grade.grade_object_type = g['GradeObjectType']
         grade.last_modified = Time.parse(g['LastModified']) rescue nil
-        grade.comments = g.dig('Comments', 'Text')
+        grade.comments = g.dig('Comments', 'Html') || g.dig('Comments', 'Text')
         grade.save!
       end
     end
