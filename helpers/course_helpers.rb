@@ -312,6 +312,46 @@ module CourseHelpers
     tree.sort_by { |p| p['DatePosted'] || "" }
   end
 
+  # NEW: Build a nested TOC tree from ActiveRecord objects
+  def build_toc_tree(course_id)
+    all_modules = ContentModule.where(course_id: course_id.to_s).order(sort_order: :asc)
+    all_items = ContentItem.joins(:content_module).where(content_modules: { course_id: course_id.to_s }).order(sort_order: :asc)
+    
+    # Map items to modules
+    items_by_module = all_items.group_by(&:module_id)
+    
+    # Build tree structure mirroring the API response format for view compatibility
+    modules_map = {}
+    all_modules.each do |m|
+      modules_map[m.brightspace_id] = {
+        'ModuleId' => m.brightspace_id,
+        'Title' => m.title,
+        'Description' => { 'Text' => m.description },
+        'Modules' => [],
+        'Topics' => (items_by_module[m.brightspace_id] || []).map do |item|
+          {
+            'Identifier' => item.brightspace_id,
+            'Title' => item.title,
+            'Type' => item.item_type.to_i,
+            'Url' => item.url,
+            'IsHidden' => item.is_hidden
+          }
+        end
+      }
+    end
+    
+    tree = []
+    all_modules.each do |m|
+      if m.parent_id && modules_map[m.parent_id]
+        modules_map[m.parent_id]['Modules'] << modules_map[m.brightspace_id]
+      else
+        tree << modules_map[m.brightspace_id]
+      end
+    end
+    
+    { 'Modules' => tree }
+  end
+
   # Grade Analytics Helpers
   def calculate_grade_stats(course_id)
     stats = Grade.calculate_weighted_total(course_id)

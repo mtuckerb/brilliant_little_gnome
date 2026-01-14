@@ -35,12 +35,12 @@
                
                sorted_topics.each do |topic| 
                   is_obj = topic.is_a?(DiscussionTopic)
-                  topic_id = is_obj ? topic.brightspace_id : topic['TopicId']
+                 topic_id = is_obj ? topic.brightspace_id : topic['TopicId']
                  forum_id = is_obj ? topic.forum_id : topic['ForumId']
                  name = is_obj ? topic.name : topic['Name']
-                 thread_count = is_obj ? topic.thread_count : topic['ThreadCount']
-                 post_count = is_obj ? topic.post_count : topic['PostCount']
-                 last_post_date = is_obj ? topic.last_post_date : (topic['LastPostDate'] ? Time.parse(topic['LastPostDate']) : nil)
+                 thread_count = is_obj ? topic.display_thread_count : (topic['ThreadCount'] || 0)
+                 post_count = is_obj ? topic.display_post_count : (topic['PostCount'] || 0)
+                 last_post_date = is_obj ? (topic.last_post_date || topic.discussion_posts.maximum(:posted_at)) : (topic['LastPostDate'] ? Time.parse(topic['LastPostDate']) : nil)
                  created_date = is_obj ? topic.created_at : topic['StartDate']
             %>
               <tr>

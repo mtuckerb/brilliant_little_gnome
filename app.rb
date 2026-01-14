@@ -19,6 +19,7 @@ require_relative 'models/assignment'
 require_relative 'models/discussion_forum'
 require_relative 'models/discussion_topic'
 require_relative 'models/discussion_thread'
+require_relative 'models/discussion_post'
 require_relative 'models/grade'
 
 # Basic Configuration
@@ -165,8 +166,13 @@ before '/course/:id*' do
   @course = Course.find_by(org_unit_id: @course_id)
   @course_name = @course ? @course.name : "Course #{@course_id}"
   
-  # Fetch TOC (can still use cache/API for complexity)
-  @toc = $client.get_toc(@course_id)
+  # Fetch TOC from database first
+  @toc = build_toc_tree(@course_id)
+  
+  # Fallback to API/Cache if database is empty for this course
+  if @toc['Modules'].empty?
+    @toc = $client.get_toc(@course_id)
+  end
   
   # Identify the lineage of the current module to keep the sidebar expanded
   current_module_id = params[:module_id] || (request.path.split('/module/')[1] if request.path.include?('/module/'))
@@ -491,15 +497,26 @@ end
 get '/course/:id/discussions' do
   @active_tab = 'discussions'
   
-  # Proactively sync forums/topics
+  # Always trigger a fast background refresh of metadata (counts, etc)
+  # This keeps the Dashboard and Discussion tables fresh
+  unless params[:force_refresh] == 'true'
+    Thread.new(@course_id) do |cid|
+      ActiveRecord::Base.connection_pool.with_connection do
+        forums_raw = $client.get_discussions(cid) || []
+        $client.sync_discussions(cid, forums_raw)
+      end
+    end
+  end
+
   @forums = DiscussionForum.where(course_id: @course_id).order(name: :asc)
   @topics = DiscussionTopic.where(course_id: @course_id).order(sort_order: :asc)
 
-  if @forums.empty? || params[:force_refresh] == 'true'
+  if @topics.empty? || params[:force_refresh] == 'true'
+    # Immediate fallback to raw data if DB is empty to avoid blank screen
     @forums_raw = $client.get_discussions(@course_id) || []
-    # Sync in background but use raw for immediate display if DB empty
-    Thread.new { $client.sync_discussions(@course_id, @forums_raw) }
-    @topics = @forums_raw.map { |f| $client.get_discussion_topics(@course_id, f['ForumId']) }.flatten.map { |t| t['Items'] || t }.flatten if @topics.empty?
+    @topics = @forums_raw.map do |f| 
+      $client.get_discussion_topics(@course_id, f['ForumId'], force_refresh: params[:force_refresh] == 'true').tap { |res| (res['Items'] || res).each { |t| t['ForumId'] = f['ForumId'] } }
+    end.flatten.map { |t| t['Items'] || t }.flatten
   end
   
   @breadcrumb_trail = [{ title: 'Discussions', url: "/course/#{@course_id}/discussions" }]
@@ -521,7 +538,7 @@ get '/course/:id/discussions/:forum_id/topics' do
 
   # Sort by database or refresh if requested/empty
   if @topics.empty? || force_refresh
-    topics_raw = $client.get_discussion_topics(@course_id, @forum_id)
+    topics_raw = $client.get_discussion_topics(@course_id, @forum_id, force_refresh: force_refresh)
     @topics_data = topics_raw.is_a?(Hash) ? (topics_raw['Items'] || []) : (topics_raw || [])
     Thread.new { $client.sync_discussion_topics(@course_id, @forum_id, @topics_data) }
     @topics = @topics_data if @topics.empty?
@@ -556,6 +573,42 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   posts_data_raw = $client.get_topic_posts(@course_id, @forum_id, @topic_id, force_refresh: force_refresh)
   all_posts = posts_data_raw.is_a?(Hash) ? (posts_data_raw['Items'] || []) : (posts_data_raw || [])
 
+  # FALLBACK: If posts are empty, try fetching threads directly.
+  # This handles topics that exist but have no posts yet (or Synthesis fails)
+  if all_posts.empty?
+    threads_raw = $client.get_discussion_threads(@course_id, @forum_id, @topic_id, force_refresh: force_refresh)
+    threads_list = threads_raw.is_a?(Hash) ? (threads_raw['Items'] || []) : (threads_raw || [])
+    
+    @threads_with_posts = threads_list.map do |t|
+      thread = {
+        'ThreadId' => t['ThreadId'],
+        'Subject' => t['Subject'] || t['Title'] || "No Subject",
+        'Title' => t['Subject'] || t['Title'] || "No Subject",
+        'PostingUserDisplayName' => t['PostingUserDisplayName'],
+        'LastModified' => t['LastModified'] || t['DatePosted'],
+        'IsPinned' => t['IsPinned'] || false,
+        'ReplyCount' => t['ReplyCount'] || 0
+      }
+      
+      # We have no posts to show, but we can show the thread structure
+      {
+        thread: thread,
+        post_tree: [] # No posts available to synthesize a tree
+      }
+    end
+    
+    return erb :discussion_threads
+  end
+
+  # NORMAL PATH: Use posts to synthesize threads
+  Thread.new(@course_id, @forum_id, @topic_id, all_posts) do |cid, fid, tid, posts|
+    ActiveRecord::Base.connection_pool.with_connection do
+      $client.sync_topic_posts(cid, fid, tid, posts)
+    end
+  end
+
+  # Transition to using normalized data if available, but fallback to raw for this request
+  # to ensure immediate feedback.
   # Group posts by ThreadId
   threads_groups = all_posts.group_by { |p| p['ThreadId'] }
   
@@ -564,12 +617,13 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
     root_post = posts.find { |p| p['ParentPostId'].nil? } || posts.min_by { |p| p['DatePosted'] }
     
     # Create a thread object that fits the existing view expectations
+    # We use the raw hash here because we already have it in memory from the API
     thread = {
       'ThreadId' => thread_id,
-      'Subject' => root_post['Subject'],
-      'Title' => root_post['Subject'],
+      'Subject' => root_post['Subject'] || "No Subject",
+      'Title' => root_post['Subject'] || "No Subject",
       'PostingUserDisplayName' => root_post['PostingUserDisplayName'],
-      'LastModified' => root_post['DatePosted'] || root_post['LastEditDate'],
+      'LastModified' => root_post['DatePosted'] || root_post['LastModified'],
       'IsPinned' => root_post['IsPinned'] || false,
       'ReplyCount' => posts.size - 1
     }

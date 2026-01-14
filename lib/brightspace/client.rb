@@ -59,8 +59,17 @@ class BrightspaceClient
           total_steps = 1 + courses.size # Notifications + each course
           current_step = 0
 
+          # Check for a "full sync" request or just differential
+          full_sync = ActiveRecord::Base.connection_pool.with_connection { 
+            UserPreference.get('force_full_sync') == 'true'
+          }
+
           @sync_status[:current_task] = "Syncing Notifications..."
-          sync_notifications(courses, user)
+          sync_notifications(courses, user, full_sync: full_sync)
+          
+          # Reset full sync flag if set
+          ActiveRecord::Base.connection_pool.with_connection { UserPreference.set('force_full_sync', 'false') } if full_sync
+
           current_step += 1
           @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
 
@@ -108,8 +117,12 @@ class BrightspaceClient
     puts msg
   end
 
-  def sync_notifications(courses, user)
+  def sync_notifications(courses, user, full_sync: false)
     puts "[Brightspace API] Syncing notifications to DB..."
+    
+    last_sync_key = "last_notification_sync_at"
+    last_sync_time = full_sync ? nil : UserPreference.get(last_sync_key)
+    since_param = last_sync_time ? "?since=#{URI.encode_www_form_component(last_sync_time)}" : ""
     
     # Sync courses to normalized table
     ActiveRecord::Base.transaction do
@@ -125,7 +138,7 @@ class BrightspaceClient
     end
 
     # Get unified feed first (broad coverage)
-    feed_items = get_unified_feed(courses)
+    feed_items = get_unified_feed(courses, since: last_sync_time)
     ActiveRecord::Base.transaction do
       feed_items.each do |item|
         upsert_notification(item)
@@ -133,11 +146,11 @@ class BrightspaceClient
     end
 
     # Get per-course News/Announcements explicitly
-    courses.take(10).each do |c|
+    courses.take(full_sync ? courses.size : 15).each do |c|
       course_id = c['OrgUnit']['Id']
       
       # News/Announcements
-      news_data = get_news(course_id)
+      news_data = get_news(course_id, since: last_sync_time)
       items = news_data.is_a?(Array) ? news_data : (news_data['Items'] || [])
       
       ActiveRecord::Base.transaction do
@@ -176,7 +189,7 @@ class BrightspaceClient
     end
 
     # Get content updates
-    content_items = get_content_notifications(courses)
+    content_items = get_content_notifications(courses, since: last_sync_time)
     ActiveRecord::Base.transaction do
       content_items.each do |item|
         upsert_notification(item)
@@ -184,7 +197,7 @@ class BrightspaceClient
     end
 
     # Get grades
-    grade_items = get_recent_grades_notifications(courses)
+    grade_items = get_recent_grades_notifications(courses) # This one is harder to "since"
     ActiveRecord::Base.transaction do
       grade_items.each do |item|
         upsert_notification(item)
@@ -199,17 +212,21 @@ class BrightspaceClient
       end
     end
     
+    UserPreference.set(last_sync_key, Time.now.utc.iso8601)
+
     puts "[Brightspace API] Notification sync complete."
   end
 
-  def get_content_notifications(courses)
+  def get_content_notifications(courses, since: nil)
     all_updates = []
-    # Only check top 10 most recent courses to avoid long sync
-    courses.take(10).each do |c|
+    # Only check recent courses to avoid long sync
+    courses.take(20).each do |c|
       course_id = c['OrgUnit']['Id']
-      # Using updates endpoint if available, but let's try a safer content-recent check if needed
-      # For now, stick to the known updates endpoint
-      data = do_get("/d2l/api/le/#{@api_version}/#{course_id}/content/updates")
+      
+      path = "/d2l/api/le/#{@api_version}/#{course_id}/content/updates"
+      path += "?since=#{URI.encode_www_form_component(since)}" if since
+      
+      data = do_get(path)
       next unless data
 
       items = data.is_a?(Array) ? data : (data['Items'] || [])
@@ -410,8 +427,8 @@ class BrightspaceClient
     all_topics
   end
 
-  def get_discussion_topics(org_unit_id, forum_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/")
+  def get_discussion_topics(org_unit_id, forum_id, force_refresh: false)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/#{forum_id}/topics/", force_refresh: force_refresh)
   end
 
   def get_discussion_topic(org_unit_id, forum_id, topic_id)
@@ -487,18 +504,24 @@ class BrightspaceClient
         news_items.concat(items)
       end
     end
-    news_items.sort_by { |i| i['StartDate'] || "" }.reverse.take(10)
+    items.sort_by { |i| i['StartDate'] || "" }.reverse.take(10)
   end
 
-  def get_news(org_unit_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/news/")
+  def get_news(org_unit_id, since: nil)
+    path = "/d2l/api/le/#{@api_version}/#{org_unit_id}/news/"
+    path += "?since=#{URI.encode_www_form_component(since)}" if since
+    
+    do_get(path)
   end
 
-  def get_unified_feed(courses = [])
+  def get_unified_feed(courses = [], since: nil)
     # Used for title mapping
     course_map = courses.each_with_object({}) { |c, h| h[c['OrgUnit']['Id'].to_s] = c['OrgUnit']['Name'] }
 
-    feed = do_get("/d2l/api/lp/#{@api_version}/feed/") || []
+    path = "/d2l/api/lp/#{@api_version}/feed/"
+    path += "?since=#{URI.encode_www_form_component(since)}" if since
+    
+    feed = do_get(path) || []
     
     feed.map do |item|
       cid = item.dig('Metadata', 'ApiViewUrl')&.match(/\/(\d+)\/news/)&.to_a&.at(1)
@@ -528,12 +551,13 @@ class BrightspaceClient
       m.save!
       
       # Sync topics/items
-      (mod['Topics'] || []).each do |topic|
+      (mod['Topics'] || []).each_with_index do |topic, t_index|
         item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'].to_s, module_id: mod['ModuleId'].to_s)
         item.title = topic['Title']
         item.item_type = topic['TypeIdentifier'] || topic['Type'] || 'Topic'
         item.url = topic['Url']
         item.is_hidden = topic['IsHidden'] || false
+        item.sort_order = t_index
         item.save!
       end
       
@@ -553,12 +577,13 @@ class BrightspaceClient
       m.parent_id = parent_id
       m.save!
       
-      (mod['Topics'] || []).each do |topic|
+      (mod['Topics'] || []).each_with_index do |topic, t_index|
         item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'].to_s, module_id: mod['ModuleId'].to_s)
         item.title = topic['Title']
         item.item_type = topic['TypeIdentifier'] || topic['Type'] || 'Topic'
         item.url = topic['Url']
         item.is_hidden = topic['IsHidden'] || false
+        item.sort_order = t_index
         item.save!
       end
       
@@ -604,13 +629,53 @@ class BrightspaceClient
       topic.name = t['Name']
       topic.description = t.dig('Description', 'Html') || t.dig('Description', 'Text')
       topic.sort_order = index
-      topic.thread_count = t['ThreadCount'] || 0
-      topic.post_count = t['PostCount'] || 0
-      topic.last_post_date = Time.parse(t['LastPostDate']) rescue nil
+      
+      # D2L API can be inconsistent with count keys
+      topic.thread_count = t['ThreadCount'] || t['TotalThreads'] || t['Threads'] || 0
+      topic.post_count = t['PostCount'] || t['TotalPosts'] || t['Posts'] || 0
+      
+      lpd = t['LastPostDate'] || t['LastPost']&.fetch('DatePosted', nil)
+      topic.last_post_date = Time.parse(lpd.to_s) rescue nil if lpd
+      
       topic.save!
       
       # We don't sync threads here by default as it's too heavy for a broad sync,
       # but we provide the method for specific topic refreshes.
+    end
+  end
+
+  def sync_topic_posts(course_id, forum_id, topic_id, posts)
+    return unless posts.is_a?(Array)
+    
+    ActiveRecord::Base.transaction do
+      posts.each do |p|
+        post = DiscussionPost.find_or_initialize_by(
+          brightspace_id: p['PostId'].to_s,
+          topic_id: topic_id.to_s,
+          thread_id: p['ThreadId'].to_s
+        )
+        post.parent_post_id = p['ParentPostId'].to_s if p['ParentPostId']
+        post.subject = p['Subject']
+        # RichText handling
+        post.body = p.dig('Body', 'Html') || p.dig('Body', 'Text') || p['Body']
+        post.author_name = p['PostingUserDisplayName']
+        post.posted_at = Time.parse(p['DatePosted']) rescue nil
+        
+        # Check for instructor role
+        post.is_instructor = p.dig('Author', 'IsInstructor') == true || p.dig('Author', 'RoleName') =~ /Instructor/i rescue false
+        
+        post.save!
+      end
+    end
+
+    # After syncing posts, update the cached counts on the topic record itself
+    # for faster rendering in lists.
+    topic = DiscussionTopic.find_by(brightspace_id: topic_id.to_s)
+    if topic
+      topic.thread_count = DiscussionPost.where(topic_id: topic_id.to_s).distinct.count(:thread_id)
+      topic.post_count = DiscussionPost.where(topic_id: topic_id.to_s).count
+      topic.last_post_date = DiscussionPost.where(topic_id: topic_id.to_s).maximum(:posted_at)
+      topic.save!
     end
   end
 

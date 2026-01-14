@@ -26,8 +26,8 @@
                name = is_obj ? topic.name : topic['Name']
                desc = is_obj ? topic.description : topic['Description']
                desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : (desc || "")
-               thread_count = is_obj ? topic.thread_count : topic['ThreadCount']
-               last_post_date = is_obj ? topic.last_post_date : (topic['LastPostDate'] ? Time.parse(topic['LastPostDate']) : nil)
+               thread_count = is_obj ? topic.display_thread_count : (topic['ThreadCount'] || 0)
+               last_post_date = is_obj ? (topic.last_post_date || topic.discussion_posts.maximum(:posted_at)) : (topic['LastPostDate'] ? Time.parse(topic['LastPostDate']) : nil)
                end_date = is_obj ? nil : topic['EndDate']
           %>
             <a href="/course/<%= @course_id %>/discussions/<%= @forum_id %>/topics/<%= topic_id %>" class="list-item py-4">
