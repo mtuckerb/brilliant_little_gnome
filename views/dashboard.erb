@@ -15,14 +15,78 @@
       <progress id="sync-progress" class="progress is-small is-primary" value="<%= @sync_status[:progress] %>" max="100"><%= @sync_status[:progress] %>%</progress>
     </div>
 
-    <div class="level mb-6">
+    <% if @current_semester && @overall_gpa %>
+      <div class="box has-background-primary-light mb-6 p-5" style="border-radius: 12px; border: 1px solid #739AC3;">
+         <div class="is-flex is-justify-content-space-between is-align-items-center is-flex-wrap-wrap">
+           <div class="mb-2">
+              <h2 class="title is-3 mb-1" style="margin-bottom: 0.5rem !important;"><i class="fas fa-graduation-cap mr-2"></i> Semester Overview</h2>
+              <div class="has-text-grey-dark is-uppercase has-text-weight-bold" style="letter-spacing: 1px; font-size: 0.9rem;">
+                <%= @current_semester %>
+              </div>
+           </div>
+           <div class="has-text-centered py-2 px-4" style="border-left: 2px solid rgba(115, 154, 195, 0.2); min-width: 140px;">
+              <p class="heading mb-1" style="letter-spacing: 1px;">Overall GPA</p>
+              <p class="title is-1 has-text-primary" style="margin-bottom: 0; line-height: 1;"><%= '%.2f' % @overall_gpa %></p>
+           </div>
+         </div>
+         
+         <div class="columns is-multiline mt-4">
+           <% @semester_grades.each do |sg| %>
+             <% info = extract_course_info(sg[:course].name) %>
+             <div class="column is-4">
+               <div class="box is-clickable p-3 has-background-white" 
+                    onclick="window.location='/course/<%= sg[:course].org_unit_id %>/grades'"
+                    style="border: 1px solid #eee; transition: all 0.2s; height: 100%;">
+                 <p class="is-size-7 has-text-grey-light mb-1"><%= sg[:course].code %></p>
+                 <p class="has-text-weight-bold is-size-6 mb-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="<%= info[:course_display] %>">
+                   <%= info[:course_display] %>
+                 </p>
+                 <div class="level is-mobile">
+                   <div class="level-left">
+                      <span class="tag <%= grade_color(sg[:score]) %> is-light has-text-weight-bold">
+                        <%= sg[:score] %>%
+                      </span>
+                   </div>
+                   <div class="level-right">
+                      <span class="is-size-7 has-text-grey" title="Confidence: <%= sg[:confidence] %>%">
+                        <i class="fas fa-shield-alt mr-1 <%= confidence_color(sg[:confidence]) %>"></i> <%= sg[:confidence].to_i %>%
+                      </span>
+                   </div>
+                 </div>
+               </div>
+             </div>
+           <% end %>
+         </div>
+      </div>
+    <% end %>
+
+    <div class="level mb-4">
       <div class="level-left">
         <h1 class="title"><i class="fas fa-book-open mr-2"></i> My Course List</h1>
       </div>
+      <div class="level-right">
+        <div class="field has-addons">
+          <p class="control">
+            <span class="button is-static is-small">Semester</span>
+          </p>
+          <div class="control">
+            <div class="select is-small">
+              <select onchange="window.location.href='?semester=' + this.value">
+                <option value="all" <%= @semester_filter == 'all' ? 'selected' : '' %>>All Semesters</option>
+                <% @all_semesters.each do |sem| %>
+                  <option value="<%= sem %>" <%= @semester_filter == sem ? 'selected' : '' %>>
+                    <%= sem %>
+                  </option>
+                <% end %>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <% if @courses.empty? %>
-      <div class="notification is-warning">No active courses found.</div>
+    <% if @display_courses.empty? %>
+      <div class="notification is-warning">No courses found matching this filter.</div>
     <% else %>
       <div class="box p-0">
         <table class="table is-fullwidth is-hoverable">
@@ -33,7 +97,7 @@
             </tr>
           </thead>
           <tbody>
-            <% @courses.each do |c| %>
+            <% @display_courses.each do |c| %>
               <%
                  id   = c.is_a?(Hash) ? c['OrgUnit']['Id'] : c.org_unit_id
                  name = c.is_a?(Hash) ? c['OrgUnit']['Name'] : c.name
@@ -123,6 +187,12 @@
 }
 .notification-card-small:hover {
   transform: translateX(3px);
+  background-color: #f9f9f9;
+}
+.box.is-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(115, 154, 195, 0.15);
+  border-color: #739AC3 !important;
 }
 </style>
 

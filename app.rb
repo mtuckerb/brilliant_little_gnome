@@ -208,12 +208,72 @@ get '/dashboard' do
   
   @user = $client.get_who_am_i
   # Load courses from normalized table for speed
-  @courses = Course.all.unscope(:order).order(is_pinned: :desc, last_accessed_at: :desc)
+  @courses_query = Course.all.unscope(:order).order(is_pinned: :desc, last_accessed_at: :desc)
   
   # Fallback if DB is empty
-  if @courses.empty?
+  if @courses_query.empty?
     @courses_raw = $client.get_enrollments
+    @courses = @courses_raw # for the mapping below
+  else
+    @courses = @courses_query
   end
+
+  # --- SEMESTER ANALYTICS ---
+  # We want grades for the most "active" semester (usually the one with most courses)
+  @all_semesters = @courses.map { |c| c.semester }.compact.uniq.sort
+  @current_semester = @courses.map { |c| c.semester }.compact.group_by(&:itself).values.max_by(&:size)&.first
+  
+  # Filter course list by semester if requested or persistent preference
+  @semester_filter = params[:semester] || @user_prefs.default_semester || @current_semester
+  
+  # If the user explicitly sets a filter, persist it
+  if params[:semester] && params[:semester] != @user_prefs.default_semester
+    @user_prefs.update(default_semester: params[:semester])
+  end
+
+  if @semester_filter && @semester_filter != 'all'
+    @display_courses = @courses.select { |c| c.semester == @semester_filter }
+  else
+    @display_courses = @courses
+  end
+  
+  if @current_semester
+    @semester_courses = @courses.select { |c| c.semester == @current_semester }
+    @semester_grades = []
+    
+    # Weighting GPA by Course Units (Credits)
+    total_weighted_points = 0.0
+    semester_units = 0
+    
+    @semester_courses.each do |c|
+      stats = Grade.calculate_weighted_total(c.org_unit_id)
+      if stats[:confidence] > 0
+        @semester_grades << { 
+          course: c, 
+          score: stats[:score], 
+          confidence: stats[:confidence] 
+        }
+        
+        # USM Calculation: GPA Points = (Scale Value * Units)
+        course_gpa_value = Grade.to_gpa(stats[:score])
+        course_units = c.units || 3
+        
+        total_weighted_points += (course_gpa_value * course_units)
+        semester_units += course_units
+      end
+    end
+
+    # --- HISTORIC CUMULATIVE GPA ---
+    # Merge current semester with university reported history
+    historic_gpa = @user_prefs.historic_gpa || 0.0
+    historic_units = @user_prefs.historic_units || 0
+    
+    cumulative_points = (historic_gpa * historic_units) + total_weighted_points
+    cumulative_units = historic_units + semester_units
+    
+    @overall_gpa = cumulative_units > 0 ? (cumulative_points / cumulative_units) : 0.0
+  end
+  # --------------------------
 
   @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
   
@@ -488,7 +548,8 @@ get '/course/:id/grades' do
   Thread.new { $client.sync_grades(@course_id, @grades_raw) }
   
   # Use DB for display
-  @grades = Grade.where(course_id: @course_id).order(last_modified: :desc, name: :asc)
+  # Sort by due_date ASC. Items without due dates will appear at the bottom (nulls last)
+  @grades = Grade.where(course_id: @course_id).order("due_date ASC NULLS LAST", name: :asc)
   
   # Fallback to raw if DB still empty
   @grades = @grades_raw if @grades.empty?

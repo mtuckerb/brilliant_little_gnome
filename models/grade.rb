@@ -9,59 +9,75 @@ class Grade < ActiveRecord::Base
 
   def is_graded?
     # Brightspace often returns 0/X for ungraded items or items not yet submitted.
-    # However, some items are legitimately 0 (missed assignments).
-    # A safer check for "ungraded" in the context of a student view is often 
-    # if the numerator is nil OR if the numerator is 0 and it's a 'Points' type
-    # and the displayed grade is empty or '-'
-    !numerator.nil? && !(numerator == 0 && (displayed_grade.nil? || displayed_grade.strip == "" || displayed_grade == "-"))
+    # We check if numerator is not nil and displayed_grade is not empty or a placeholder
+    !numerator.nil? && !(displayed_grade.nil? || displayed_grade.strip == "" || displayed_grade == "-")
   end
 
   def self.calculate_weighted_total(course_id)
     grades = where(course_id: course_id.to_s)
     
-    total_weight_possible = (grades.sum(:weight) || 0).to_f
+    # User Request: "Points determine weight (it is directly proportional)."
+    # In a points-based system, the denominator IS the weight.
     
-    # Filter for items that have weights and are actually graded
-    graded_items = grades.select { |g| (g.weight || 0) > 0 && g.is_graded? }
+    graded_items = grades.select { |g| g.is_graded? && (g.denominator || 0) > 0 }
     
     if graded_items.empty?
       return { 
         score: 0, 
         confidence: 0, 
-        total_weight_graded: 0, 
-        total_weight_possible: total_weight_possible
-      } 
-    end
-    
-    if total_weight_possible <= 0
-      return { 
-        score: 0, 
-        confidence: 0, 
-        total_weight_graded: 0, 
-        total_weight_possible: 0 
+        total_points_earned: 0, 
+        total_points_possible: 0,
+        all_possible_points: grades.sum(:denominator) || 0
       } 
     end
 
-    weighted_sum = 0
-    total_weight_graded = 0
-
-    graded_items.each do |g|
-      weighted_sum += (g.percentage / 100.0) * g.weight
-      total_weight_graded += g.weight
-    end
-
-    # The actual score is the sum of weighted percentages / total weight of items graded so far
-    # Or, if we want the "current grade", we normalize it to 100% of the graded portion.
-    current_score = (weighted_sum / total_weight_graded) * 100
+    total_points_earned = graded_items.sum { |g| g.numerator || 0 }
+    total_points_possible = graded_items.sum { |g| g.denominator || 0 }
     
-    # Confidence is the percentage of the syllabus (by weight) that has been graded
-    confidence = (total_weight_graded / total_weight_possible) * 100
+    # All points in the syllabus (graded or not)
+    all_possible_points = (grades.sum(:denominator) || 0).to_f
+    
+    current_score = (total_points_earned.to_f / total_points_possible.to_f) * 100
+    
+    # Confidence is what percent of the total points have been graded
+    confidence = all_possible_points > 0 ? (total_points_possible.to_f / all_possible_points) * 100 : 0
 
     {
       score: current_score.round(2),
       confidence: confidence.round(1),
-      total_weight_graded: total_weight_graded.round(2),
-      total_weight_possible: total_weight_possible.round(2)
+      total_points_earned: total_points_earned.round(2),
+      total_points_possible: total_points_possible.round(2),
+      all_possible_points: all_possible_points.round(2)
     }
+  end
+
+  def self.to_gpa(score)
+    return 0.0 if score.nil?
+    # Based on University of Maine System / USM GPA Scale
+    if score >= 93
+      4.00
+    elsif score >= 90
+      3.67
+    elsif score >= 87
+      3.33
+    elsif score >= 83
+      3.00
+    elsif score >= 80
+      2.67
+    elsif score >= 77
+      2.33
+    elsif score >= 73
+      2.00
+    elsif score >= 70
+      1.67
+    elsif score >= 67
+      1.33
+    elsif score >= 63
+      1.00
+    elsif score >= 60
+      0.67
+    else
+      0.00
+    end
   end
 end

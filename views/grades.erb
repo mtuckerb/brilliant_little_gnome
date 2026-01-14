@@ -12,11 +12,11 @@
         <div class="level-left">
           <div>
             <h4 class="title is-4 mb-0"><i class="fas fa-poll mr-2"></i> Grades</h4>
-            <p class="is-size-7 has-text-grey">Data is synced in the background.</p>
+            <p class="is-size-7 has-text-grey">Points-based grading system (weight is proportional to points).</p>
           </div>
         </div>
         <div class="level-right">
-          <% if @grade_stats && @grade_stats[:total_weight_possible] > 0 %>
+          <% if @grade_stats && @grade_stats[:all_possible_points] > 0 %>
             <div class="level-item has-text-centered px-4">
               <div>
                 <p class="heading">Current Grade</p>
@@ -35,24 +35,23 @@
 
       <%# Grade Progress Chart %>
       <% 
-         # Prepare data for trend chart
+         # Prepare data for trend chart (Points based)
          graded_in_order = @grades.is_a?(ActiveRecord::Relation) ? 
                            @grades.select(&:is_graded?).sort_by { |g| g.last_modified || Time.at(0) } : 
                            []
                            
          if graded_in_order.any?
-           running_weighted_sum = 0
-           running_weight_total = 0
+           running_earned = 0
+           running_possible = 0
            chart_data = graded_in_order.map do |g|
-             # Only include if it has a weight > 0
-             w = g.weight || 0
-             if w > 0
-               running_weighted_sum += (g.percentage / 100.0) * w
-               running_weight_total += w
+             p_pos = g.denominator || 0
+             if p_pos > 0
+               running_earned += g.numerator || 0
+               running_possible += p_pos
                {
                  name: g.name,
                  date: g.last_modified ? g.last_modified.strftime("%b %d") : "N/A",
-                 score: ((running_weighted_sum / running_weight_total) * 100).round(2)
+                 score: ((running_earned.to_f / running_possible.to_f) * 100).round(2)
                }
              end
            end.compact
@@ -61,7 +60,7 @@
 
       <% if chart_data && chart_data.size > 1 %>
         <div class="mb-6 p-4" style="background: #fafafa; border-radius: 8px; border: 1px solid #eee;">
-          <h6 class="title is-6 mb-4"><i class="fas fa-chart-line mr-2"></i> Grade Trend (Cumulative Weighted Average)</h6>
+          <h6 class="title is-6 mb-4"><i class="fas fa-chart-line mr-2"></i> Grade Trend (Cumulative Points Average)</h6>
           <canvas id="gradeTrendChart" style="max-height: 300px;"></canvas>
           <script>
             document.addEventListener('DOMContentLoaded', function() {
@@ -71,7 +70,7 @@
                 data: {
                   labels: <%= chart_data.map { |d| d[:date] }.to_json %>,
                   datasets: [{
-                    label: 'Weighted Average (%)',
+                    label: 'Running Total (%)',
                     data: <%= chart_data.map { |d| d[:score] }.to_json %>,
                     borderColor: '#739AC3',
                     backgroundColor: 'rgba(115, 154, 195, 0.1)',
@@ -97,7 +96,7 @@
                       callbacks: {
                         afterLabel: function(context) {
                           const names = <%= chart_data.map { |d| d[:name] }.to_json %>;
-                          return 'Point: ' + names[context.dataIndex];
+                          return 'Assignment: ' + names[context.dataIndex];
                         }
                       }
                     }
@@ -111,7 +110,7 @@
 
       <% if @grade_stats && @grade_stats[:confidence] < 100 %>
          <div class="notification is-light is-info py-2 px-4 is-size-7 mb-4">
-           <strong>Confidence Note:</strong> Only <%= @grade_stats[:total_weight_graded] %>% of the total <%= @grade_stats[:total_weight_possible] %>% weight for this course has been graded so far.
+           <strong>Confidence Note:</strong> Only <%= @grade_stats[:total_points_possible].to_i %> of the <%= @grade_stats[:all_possible_points].to_i %> total points for this course have been graded so far.
          </div>
       <% end %>
 
@@ -120,7 +119,8 @@
           <thead>
             <tr>
               <th>Item</th>
-              <th class="has-text-centered">Weight</th>
+              <th class="has-text-centered">Due Date</th>
+              <th class="has-text-centered">Relative Weight</th>
               <th class="has-text-centered">Points</th>
               <th class="has-text-right">Result</th>
             </tr>
@@ -128,14 +128,14 @@
           <tbody>
             <% @grades.each do |g| %>
               <% 
-                # Support both ActiveRecord objects and raw API Hashes
                 name = g.respond_to?(:name) ? g.name : g['GradeObjectName']
-                displayed = g.respond_to?(:displayed_grade) ? g.displayed_grade : g['DisplayedGrade']
+                due_date = g.respond_to?(:due_date) ? g.due_date : nil
                 numerator = g.respond_to?(:numerator) ? g.numerator : g['PointsNumerator']
                 denominator = g.respond_to?(:denominator) ? g.denominator : g['PointsDenominator']
-                weight = g.respond_to?(:weight) ? g.weight : g['Weight']
-                
                 is_graded = g.respond_to?(:is_graded?) ? g.is_graded? : (!numerator.nil? && numerator > 0)
+                
+                # Relative weight in a points system is (points / total possible)
+                rel_weight = @grade_stats[:all_possible_points] > 0 ? ((denominator.to_f / @grade_stats[:all_possible_points]) * 100).round(1) : 0
               %>
               <tr class="<%= is_graded ? '' : 'has-background-white-ter has-text-grey-light' %>">
                 <td>
@@ -145,16 +145,17 @@
                   <% end %>
                 </td>
                 <td class="has-text-centered">
-                  <% if weight %>
-                    <span class="is-size-7"><%= weight %>%</span>
-                  <% else %>
-                    <span class="has-text-grey-light">-</span>
-                  <% end %>
+                  <span class="is-size-7">
+                    <%= due_date ? due_date.strftime("%b %d") : '<span class="has-text-grey-lighter">-</span>' %>
+                  </span>
+                </td>
+                <td class="has-text-centered">
+                  <span class="is-size-7"><%= rel_weight %>%</span>
                 </td>
                 <td class="has-text-centered">
                    <div class="is-size-7" style="font-family: monospace;">
-                     <% if numerator && denominator %>
-                        <%= numerator %> / <%= denominator %>
+                     <% if denominator %>
+                        <%= numerator || '-' %> / <%= denominator %>
                      <% else %>
                         -
                      <% end %>
@@ -173,18 +174,19 @@
               </tr>
             <% end %>
           </tbody>
-          <% if @grade_stats && @grade_stats[:total_weight_possible] > 0 %>
+          <% if @grade_stats && @grade_stats[:all_possible_points] > 0 %>
             <tfoot>
               <tr class="has-background-white-bis">
                 <td class="has-text-weight-bold">
                   Course Total
-                  <span class="has-text-grey is-size-7 ml-2">(Normalized to graded portion)</span>
                 </td>
                 <td class="has-text-centered has-text-weight-bold">
-                  <%= @grade_stats[:total_weight_graded] %>% <span class="has-text-grey is-size-7">/ <%= @grade_stats[:total_weight_possible] %>%</span>
+                  100%
                 </td>
                 <td class="has-text-centered">
-                  <span class="is-size-7 has-text-grey">Weighted Total</span>
+                  <span class="is-size-7 has-text-weight-bold">
+                    <%= @grade_stats[:total_points_earned].to_i %> / <%= @grade_stats[:total_points_possible].to_i %> pts
+                  </span>
                 </td>
                 <td class="has-text-right">
                   <span class="tag <%= grade_color(@grade_stats[:score]) %> is-medium" style="font-weight: bold;">

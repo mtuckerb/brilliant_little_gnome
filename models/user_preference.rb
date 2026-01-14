@@ -6,7 +6,9 @@ class UserPreference < ActiveRecord::Base
       display_name: "User",
       time_zone: "UTC",
       brightspace_host: ENV['BS_HOST'] || "courses.maine.edu",
-      collapsed_topics: []
+      collapsed_topics: [],
+      historic_gpa: 3.778,
+      historic_units: 36
     )
   end
 

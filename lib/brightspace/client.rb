@@ -249,6 +249,26 @@ class BrightspaceClient
     all_updates
   end
 
+  def create_system_notification(data)
+    # Ensure we have a database connection in case this is called from a thread
+    ActiveRecord::Base.connection_pool.with_connection do
+      upsert_notification({
+        id: data[:id],
+        type: 'System',
+        title: data[:title],
+        body: data[:body],
+        date: Time.now.iso8601,
+        course_id: 'SYSTEM',
+        course_name: 'Brilliant System',
+        urgency: data[:urgency] || 2,
+        is_personal: true,
+        url: '/'
+      })
+    end
+  rescue => e
+    puts "[!] Failed to create system notification: #{e.message}"
+  end
+
   def upsert_notification(data)
     # Map symbols to strings for ActiveRecord
     n = Notification.find_or_initialize_by(external_id: data[:id].to_s, course_id: data[:course_id].to_s)
@@ -601,6 +621,7 @@ class BrightspaceClient
       assignment.due_date = Time.parse(a['DueDate']) rescue nil
       assignment.description = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
       assignment.is_graded = a['IsGraded'] || false
+      assignment.grade_item_id = a['GradeItemId'].to_s if a['GradeItemId']
       assignment.save!
     end
   end
@@ -694,6 +715,11 @@ class BrightspaceClient
   def sync_grades(course_id, grade_values)
     return unless grade_values.is_a?(Array)
     
+    # FETCH ASSIGNMENTS FIRST!
+    # We need assignments synced to establish the grade_item_id -> due_date mapping
+    assignments_raw = get_assignments(course_id)
+    sync_assignments(course_id, assignments_raw) if assignments_raw
+
     # Fetch Grade Object Metadata to get Weights
     # /d2l/api/le/(version)/(orgUnitId)/grades/ returns all grade objects
     metadata_path = "/d2l/api/le/#{@api_version}/#{course_id}/grades/"
@@ -717,6 +743,11 @@ class BrightspaceClient
         grade.grade_object_type = g['GradeObjectType']
         grade.last_modified = Time.parse(g['LastModified']) rescue nil
         grade.comments = g.dig('Comments', 'Html') || g.dig('Comments', 'Text')
+        
+        # Link Due Date from Assignment if possible
+        assignment = Assignment.find_by(course_id: course_id.to_s, grade_item_id: obj_id)
+        grade.due_date = assignment.due_date if assignment
+        
         grade.save!
       end
     end
@@ -929,6 +960,15 @@ class BrightspaceClient
       if response.code.start_with?('2')
         puts "[Brightspace API] POST Success: #{path}"
         true
+      elsif response.code == '401' || response.code == '403'
+        puts "[!] AUTH ERROR #{response.code} (POST): Cookie/Token likely expired."
+        create_system_notification(
+          id: "auth_error_post_#{response.code}",
+          title: "Session Expired (#{response.code})",
+          body: "A server update (POST) failed because your session expired. Please update your cookies.",
+          urgency: 3
+        )
+        false
       else
         puts "[Brightspace API] POST Error #{response.code}: #{path}"
         false
@@ -968,8 +1008,14 @@ class BrightspaceClient
         data = JSON.parse(response.body)
         write_cache(path, data)
         data
-      elsif response.code == '401'
-        puts "[!] AUTH EXPIRED: Need to re-login or refresh tokens."
+      elsif response.code == '401' || response.code == '403'
+        puts "[!] AUTH ERROR #{response.code}: Cookie/Token likely expired."
+        create_system_notification(
+          id: "auth_error_#{response.code}",
+          title: "Session Expired (#{response.code})",
+          body: "Your Brightspace session has expired or access was forbidden. Please update your cookies in config/connection.json or log in again.",
+          urgency: 3
+        )
         nil
       elsif response.code == '404'
         puts "[!] 404 NOT FOUND: #{path}" unless is_notoriously_noisy
