@@ -355,8 +355,10 @@ get '/course/:id/assignments/:assignment_id' do
   @assignment_id = params[:assignment_id]
   @assignment = $client.get_assignment(@course_id, @assignment_id)
   @feedback = $client.get_assignment_feedback(@course_id, @assignment_id)
+  @rubrics = $client.get_assignment_rubrics(@course_id, @assignment_id)
   @submission_data = $client.get_assignment_submissions(@course_id, @assignment_id)
   
+  sub_group = nil
   if @submission_data.is_a?(Array) && !@submission_data.empty?
       sub_group = @submission_data[0]
       @submissions = sub_group['Submissions']
@@ -365,8 +367,22 @@ get '/course/:id/assignments/:assignment_id' do
       end
   end
 
+  # Check for rubrics in the submission data if not found in specific endpoint
+  puts "DEBUG: Initial @rubrics: #{@rubrics.inspect}"
+  if (@rubrics.nil? || @rubrics.empty?) && sub_group && sub_group['Rubrics']
+    @rubrics = sub_group['Rubrics']
+    puts "DEBUG: Fallback to sub_group: #{@rubrics.inspect}"
+  end
+
+  # Fallback to Rubric Definition if no assessment rubric is found
+  if (@rubrics.nil? || @rubrics.empty?) && @assignment['Assessment'] && @assignment['Assessment']['Rubrics']
+    @rubrics = @assignment['Assessment']['Rubrics']
+    puts "DEBUG: Fallback to @assignment['Assessment']: #{@rubrics.inspect}"
+  end
+
   if (@feedback.nil? || (@feedback['Feedback']&.empty? rescue true))
-    grades = $client.get_grades(@course_id)
+    # Passing force_refresh: true to ensure we get the latest gradebook data if assignment feedback is missing
+    grades = $client.get_grades(@course_id, force_refresh: true)
     @grade_entry = grades.find { |g| g['GradeObjectIdentifier'] == @assignment['GradeItemId'].to_s } if grades && @assignment['GradeItemId']
   end
 
@@ -379,6 +395,7 @@ get '/course/:id/assignments/:assignment_id' do
   @feedback_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:feedback")
   @instructions_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:instructions")
   @submissions_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:submissions")
+  @rubric_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:rubric")
 
   erb :assignment_detail
 end
@@ -679,7 +696,7 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   end
 
   # Persistence + Participation
-  @instructions_collapsed = @user_prefs.topic_collapsed?(@topic_id) || participated
+  @instructions_collapsed = @user_prefs.topic_collapsed?("#{@topic_id}:instructions") || participated
   @feedback_collapsed = @user_prefs.topic_collapsed?("#{@topic_id}:feedback")
 
   # FALLBACK: If posts are empty, try fetching threads directly.
@@ -752,7 +769,7 @@ end
 post '/course/:id/discussions/toggle_collapse' do
   topic_id = params[:topic_id]
   section = params[:section]
-  key = (section && section != 'instructions') ? "#{topic_id}:#{section}" : topic_id
+  key = (section && !section.empty?) ? "#{topic_id}:#{section}" : topic_id
   
   @user_prefs.toggle_topic_collapse(key)
   
