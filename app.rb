@@ -579,8 +579,26 @@ get '/course/:id/discussions/:forum_id/topics/:topic_id' do
   all_posts = posts_data_raw.is_a?(Hash) ? (posts_data_raw['Items'] || []) : (posts_data_raw || [])
 
   # Determine if manual post exists for collapse logic
-  user_post = all_posts.find { |p| p['PostingUserDisplayName'] == $client.user_display_name }
-  @instructions_collapsed = @user_prefs.topic_collapsed?(@topic_id) || !user_post.nil?
+  target_name = @user_prefs.display_name.to_s.strip.downcase
+  
+  # Check local DB first for participation (most reliable)
+  participated = DiscussionPost.where(topic_id: @topic_id.to_s)
+                               .where("lower(author_name) = ?", target_name)
+                               .exists?
+  
+  puts "DEBUG: @@topic_id=#{@topic_id} participated=#{participated}"
+  
+  if !participated
+    user_post = all_posts.find do |p| 
+      author = p['PostingUserDisplayName'].to_s.strip.downcase
+      author == target_name
+    end
+    participated = !user_post.nil?
+    puts "DEBUG: Memo path user_post found=#{!user_post.nil?}"
+  end
+
+  # Persistence + Participation
+  @instructions_collapsed = @user_prefs.topic_collapsed?(@topic_id) || participated
 
   # FALLBACK: If posts are empty, try fetching threads directly.
   # This handles topics that exist but have no posts yet (or Synthesis fails)
