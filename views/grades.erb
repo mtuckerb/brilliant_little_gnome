@@ -1,4 +1,7 @@
 <%= erb :'partials/course_detail_header' %>
+<!-- Chart.js for Grade Analytics -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <div class="columns">
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
@@ -29,6 +32,82 @@
           <% end %>
         </div>
       </div>
+
+      <%# Grade Progress Chart %>
+      <% 
+         # Prepare data for trend chart
+         graded_in_order = @grades.is_a?(ActiveRecord::Relation) ? 
+                           @grades.select(&:is_graded?).sort_by { |g| g.last_modified || Time.at(0) } : 
+                           []
+                           
+         if graded_in_order.any?
+           running_weighted_sum = 0
+           running_weight_total = 0
+           chart_data = graded_in_order.map do |g|
+             # Only include if it has a weight > 0
+             w = g.weight || 0
+             if w > 0
+               running_weighted_sum += (g.percentage / 100.0) * w
+               running_weight_total += w
+               {
+                 name: g.name,
+                 date: g.last_modified ? g.last_modified.strftime("%b %d") : "N/A",
+                 score: ((running_weighted_sum / running_weight_total) * 100).round(2)
+               }
+             end
+           end.compact
+         end
+      %>
+
+      <% if chart_data && chart_data.size > 1 %>
+        <div class="mb-6 p-4" style="background: #fafafa; border-radius: 8px; border: 1px solid #eee;">
+          <h6 class="title is-6 mb-4"><i class="fas fa-chart-line mr-2"></i> Grade Trend (Cumulative Weighted Average)</h6>
+          <canvas id="gradeTrendChart" style="max-height: 300px;"></canvas>
+          <script>
+            document.addEventListener('DOMContentLoaded', function() {
+              const ctx = document.getElementById('gradeTrendChart').getContext('2d');
+              new Chart(ctx, {
+                type: 'line',
+                data: {
+                  labels: <%= chart_data.map { |d| d[:date] }.to_json %>,
+                  datasets: [{
+                    label: 'Weighted Average (%)',
+                    data: <%= chart_data.map { |d| d[:score] }.to_json %>,
+                    borderColor: '#739AC3',
+                    backgroundColor: 'rgba(115, 154, 195, 0.1)',
+                    borderWidth: 3,
+                    tension: 0.3,
+                    fill: true,
+                    transition: { duration: 0 }
+                  }]
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  scales: {
+                    y: {
+                      beginAtZero: false,
+                      min: Math.max(0, Math.min(...<%= chart_data.map { |d| d[:score] }.to_json %>) - 5),
+                      max: 100,
+                      ticks: { callback: function(value) { return value + '%'; } }
+                    }
+                  },
+                  plugins: {
+                    tooltip: {
+                      callbacks: {
+                        afterLabel: function(context) {
+                          const names = <%= chart_data.map { |d| d[:name] }.to_json %>;
+                          return 'Point: ' + names[context.dataIndex];
+                        }
+                      }
+                    }
+                  }
+                }
+              });
+            });
+          </script>
+        </div>
+      <% end %>
 
       <% if @grade_stats && @grade_stats[:confidence] < 100 %>
          <div class="notification is-light is-info py-2 px-4 is-size-7 mb-4">

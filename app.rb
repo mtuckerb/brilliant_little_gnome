@@ -314,6 +314,12 @@ get '/course/:id/assignments/:assignment_id' do
     { title: 'Assignments', url: "/course/#{@course_id}/assignments" },
     { title: @assignment['Name'], url: "/course/#{@course_id}/assignments/#{@assignment_id}" }
   ]
+
+  # Persistence
+  @feedback_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:feedback")
+  @instructions_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:instructions")
+  @submissions_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:submissions")
+
   erb :assignment_detail
 end
 

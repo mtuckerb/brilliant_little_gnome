@@ -31,16 +31,17 @@
       %>
       <% if has_feedback %>
         <div class="mb-5">
-          <details class="section-details" open>
-            <summary class="is-clickable p-2 has-background-success-light" style="list-style: none; outline: none; border-radius: 4px;">
-              <div class="is-flex is-justify-content-space-between is-align-items-center">
-                <h5 class="title is-5 mb-0"><i class="fas fa-comment-dots mr-2 has-text-success"></i> Official Feedback</h5>
-                <span class="icon is-small has-text-grey">
-                  <i class="fas fa-chevron-down"></i>
-                </span>
-              </div>
-            </summary>
-            <div class="p-4 has-background-white border-light">
+          <div class="box is-light is-size-6 p-0 pos-relative" style="border-radius: 4px; overflow: hidden;">
+            <div class="is-flex is-justify-content-space-between is-align-items-center p-2 has-background-success-light is-clickable" onclick="toggleSection('feedback')">
+              <h5 class="title is-5 mb-0"><i class="fas fa-comment-dots mr-2 has-text-success"></i> Official Feedback</h5>
+                <button class="button is-small is-ghost" title="Toggle section">
+                 <span class="icon is-small">
+                   <i id="feedback-chevron" class="fas fa-chevron-<%= @feedback_collapsed ? 'right' : 'down' %>"></i>
+                 </span>
+              </button>
+            </div>
+            
+            <div id="feedback-content" class="p-4 has-background-white <%= 'is-hidden' if @feedback_collapsed %>">
               <div class="box has-background-white-ter shadow-sm">
                 <div class="content">
                   <% if fb_text_content.strip.empty? %>
@@ -69,22 +70,22 @@
                 <% end %>
               </div>
             </div>
-          </details>
+          </div>
         </div>
       <% end %>
 
       <%# --- INSTRUCTIONS --- %>
       <div class="mb-5">
-        <details class="section-details">
-          <summary class="is-clickable p-2 has-background-light" style="list-style: none; outline: none; border-radius: 4px;">
-            <div class="is-flex is-justify-content-space-between is-align-items-center">
-              <h5 class="title is-5 mb-0"><i class="fas fa-info-circle mr-2 has-text-primary"></i> Instructions</h5>
-              <span class="icon is-small has-text-grey">
-                <i class="fas fa-chevron-down"></i>
+        <div class="box is-light is-size-6 p-0 pos-relative" style="border-radius: 4px; overflow: hidden;">
+          <div class="is-flex is-justify-content-space-between is-align-items-center p-2 has-background-light is-clickable" onclick="toggleSection('instructions')">
+            <h5 class="title is-5 mb-0"><i class="fas fa-info-circle mr-2 has-text-primary"></i> Instructions</h5>
+            <button class="button is-small is-ghost" title="Toggle section">
+              <span class="icon is-small">
+                <i id="instructions-chevron" class="fas fa-chevron-<%= @instructions_collapsed ? 'right' : 'down' %>"></i>
               </span>
-            </div>
-          </summary>
-          <div class="content p-4 has-background-white border-light">
+            </button>
+          </div>
+          <div id="instructions-content" class="content p-4 has-background-white <%= 'is-hidden' if @instructions_collapsed %>">
             <% 
                desc = @assignment['Instructions'] || @assignment['CustomInstructions']
                desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
@@ -140,7 +141,7 @@
               </div>
             <% end %>
           </div>
-        </details>
+        </div>
       </div>
 
       <div class="notification is-info is-light mt-4">
@@ -150,16 +151,16 @@
       <%# --- YOUR SUBMISSIONS --- %>
       <% if @submissions %>
         <div class="mb-5">
-          <details class="section-details">
-            <summary class="is-clickable p-2 has-background-light" style="list-style: none; outline: none; border-radius: 4px;">
-              <div class="is-flex is-justify-content-space-between is-align-items-center">
-                <h5 class="title is-5 mb-0"><i class="fas fa-file-upload mr-2 has-text-info"></i> Your Submissions</h5>
-                <span class="icon is-small has-text-grey">
-                  <i class="fas fa-chevron-down"></i>
+          <div class="box is-light is-size-6 p-0 pos-relative" style="border-radius: 4px; overflow: hidden;">
+            <div class="is-flex is-justify-content-space-between is-align-items-center p-2 has-background-light is-clickable" onclick="toggleSection('submissions')">
+              <h5 class="title is-5 mb-0"><i class="fas fa-file-upload mr-2 has-text-info"></i> Your Submissions</h5>
+              <button class="button is-small is-ghost" title="Toggle section">
+                <span class="icon is-small">
+                  <i id="submissions-chevron" class="fas fa-chevron-<%= @submissions_collapsed ? 'right' : 'down' %>"></i>
                 </span>
-              </div>
-            </summary>
-            <div class="p-4 has-background-white border-light">
+              </button>
+            </div>
+            <div id="submissions-content" class="p-4 has-background-white <%= 'is-hidden' if @submissions_collapsed %>">
               <% if @submissions.is_a?(Array) && !@submissions.empty? %>
                 <% @submissions.each do |sub| %>
                   <div class="mb-4 box is-light">
@@ -180,9 +181,34 @@
                  <p class="has-text-grey italic">No submission records found.</p>
               <% end %>
             </div>
-          </details>
+          </div>
         </div>
       <% end %>
+
+      <script>
+        function toggleSection(section) {
+          const content = document.getElementById(section + '-content');
+          const chevron = document.getElementById(section + '-chevron');
+          const isHidden = content.classList.contains('is-hidden');
+          
+          if (isHidden) {
+            content.classList.remove('is-hidden');
+            chevron.classList.remove('fa-chevron-right');
+            chevron.classList.add('fa-chevron-down');
+          } else {
+            content.classList.add('is-hidden');
+            chevron.classList.remove('fa-chevron-down');
+            chevron.classList.add('fa-chevron-right');
+          }
+
+          // Persistence via AJAX
+          fetch('/course/<%= @course_id %>/discussions/toggle_collapse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'topic_id=assignment:<%= @assignment_id %>&section=' + section
+          });
+        }
+      </script>
 
       <%# --- FALLBACK: GRADEBOOK COMMENTS --- %>
       <% if @grade_entry && @grade_entry['Comments'] && !(@grade_entry['Comments']['Text'] || "").strip.empty? %>
