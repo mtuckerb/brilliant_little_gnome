@@ -49,6 +49,43 @@ function createWindow() {
   mainWindow.on('closed', function () {
     mainWindow = null;
   });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.includes('/download')) {
+      return { action: 'allow' };
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url.includes('/download')) {
+      // Allow the navigation but handle as download
+    }
+  });
+
+  session.defaultSession.on('will-download', (event, item, webContents) => {
+    // Set the save path, which making Electron show the save dialog
+    // item.setSavePath(path.join(app.getPath('downloads'), item.getFilename()));
+    
+    item.on('updated', (event, state) => {
+      if (state === 'interrupted') {
+        console.log('Download is interrupted but can be resumed');
+      } else if (state === 'progressing') {
+        if (item.isPaused()) {
+          console.log('Download is paused');
+        } else {
+          console.log(`Received bytes: ${item.getReceivedBytes()}`);
+        }
+      }
+    });
+    item.once('done', (event, state) => {
+      if (state === 'completed') {
+        console.log('Download successfully');
+      } else {
+        console.log(`Download failed: ${state}`);
+      }
+    });
+  });
 }
 
 ipcMain.on('start-login', (event, host) => {

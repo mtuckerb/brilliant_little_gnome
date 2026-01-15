@@ -22,12 +22,16 @@ class Grade < ActiveRecord::Base
     graded_items = grades.select { |g| g.is_graded? && (g.denominator || 0) > 0 }
     
     if graded_items.empty?
+      all_possible_points = (grades.sum(:denominator) || 0).to_f
       return { 
         score: 0, 
         confidence: 0, 
         total_points_earned: 0, 
         total_points_possible: 0,
-        all_possible_points: grades.sum(:denominator) || 0
+        all_possible_points: all_possible_points,
+        remaining_points: all_possible_points,
+        max_potential_score: 100.0, # If nothing graded, potential is still 100
+        required_avg: nil
       } 
     end
 
@@ -45,6 +49,14 @@ class Grade < ActiveRecord::Base
     remaining_points = all_possible_points - total_points_possible
     max_potential_score = ((total_points_earned + remaining_points) / all_possible_points) * 100
 
+    # Projection Math
+    target_grade = Course.find_by(org_unit_id: course_id)&.target_grade || 93.0
+    required_points_to_hit_target = (target_grade / 100.0) * all_possible_points
+    points_needed = [required_points_to_hit_target - total_points_earned, 0].max
+    
+    required_avg = remaining_points > 0 ? (points_needed / remaining_points) * 100 : nil
+    is_impossible = required_avg && required_avg > 100
+
     {
       score: current_score.round(2),
       confidence: confidence.round(1),
@@ -52,7 +64,11 @@ class Grade < ActiveRecord::Base
       total_points_possible: total_points_possible.round(2),
       all_possible_points: all_possible_points.round(2),
       remaining_points: remaining_points.round(2),
-      max_potential_score: max_potential_score.round(2)
+      max_potential_score: max_potential_score.round(2),
+      target_grade: target_grade,
+      required_avg: required_avg ? required_avg.round(2) : nil,
+      is_impossible: is_impossible,
+      points_needed: points_needed.round(2)
     }
   end
 

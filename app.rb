@@ -46,6 +46,7 @@ require_relative 'models/grade'
 # Basic Configuration
 set :port, 4567
 set :views, File.join(File.dirname(__FILE__), 'views')
+set :public_folder, File.join(File.dirname(__FILE__), 'public')
 
 # PID Management for Electron Sidecar
 if ENV['BRILLIANT_DATA_DIR']
@@ -63,16 +64,18 @@ end
 enable :sessions
 use Rack::Flash
 
-# Global Error Handling for API Auth
-error BrightspaceClient::AuthenticationError do
-  msg = env['sinatra.error'].message
-  status_code = env['sinatra.error'].respond_to?(:status_code) ? env['sinatra.error'].status_code : 401
+# Global Error Handling for General Exceptions
+error do
+  @error = env['sinatra.error']
+  @course_id = params[:id]
   
-  # Accessing env['x-rack.flash'] directly in error blocks is safer
-  flash_obj = env['x-rack.flash'] || env['rack.flash']
-  flash_obj[:error] = "<strong>Session Error (#{status_code})</strong>: Your Brightspace session has expired. <a href='/auth/login' class='has-text-weight-bold' style='text-decoration: underline'>Click here to Magic Login</a>" if flash_obj
-  
-  redirect '/dashboard'
+  # Try to grab course name if we have an ID for the header
+  if @course_id
+    @course = Course.find_by(org_unit_id: @course_id)
+    @course_name = @course&.name || "Course #{@course_id}"
+  end
+
+  erb :error, layout: :layout
 end
 
 # Runtime Database Initialization
@@ -378,36 +381,36 @@ get '/dashboard' do
     @display_courses = @courses
   end
   
-  if @current_semester
-    @semester_courses = @courses.select { |c| (c.respond_to?(:semester) ? c.semester : nil) == @current_semester }
-    @semester_grades = []
-    
-    # Weighting GPA by Course Units (Credits)
-    total_weighted_points = 0.0
-    semester_units = 0
-    
-    @semester_courses.each do |c|
-      # Optimization: Perform calculation once
-      stats = Grade.calculate_weighted_total(c.org_unit_id) rescue nil
-      next unless stats
+    if @current_semester
+      @semester_courses = @courses.select { |c| (c.respond_to?(:semester) ? c.semester : nil) == @current_semester }
+      @semester_grades = []
+      
+      # Weighting GPA by Course Units (Credits)
+      total_weighted_points = 0.0
+      semester_units = 0
+      
+      @semester_courses.each do |c|
+        # Optimization: Perform calculation once
+        stats = Grade.calculate_weighted_total(c.org_unit_id) rescue nil
+        next unless stats
 
-      # Treat 0 confidence courses as "not yet started" and exclude from dashboard analytics 
-      # unless user specifically wants to see them
-      if stats[:confidence] > 0 || stats[:all_possible_points] > 0
-        sg_item = { 
-          course: c,
-          stats: stats
-        }
-        @semester_grades << sg_item
+        # Treat 0 points courses with 0 confidence as "not yet started" and exclude from dashboard analytics 
+        # unless user has a custom target grade set (meaning they are monitoring it)
+        if stats[:total_points_possible] > 0 || c.target_grade.present?
+          sg_item = { 
+            course: c,
+            stats: stats
+          }
+          @semester_grades << sg_item
 
-        # USM Calculation: GPA Points = (Scale Value * Units)
-        course_gpa_value = Grade.to_gpa(stats[:score])
-        course_units = c.units || 3
-        
-        total_weighted_points += (course_gpa_value * course_units)
-        semester_units += course_units
+          # USM Calculation: GPA Points = (Scale Value * Units)
+          course_gpa_value = Grade.to_gpa(stats[:score])
+          course_units = c.units || 3
+          
+          total_weighted_points += (course_gpa_value * course_units)
+          semester_units += course_units
+        end
       end
-    end
 
     # --- HISTORIC CUMULATIVE GPA ---
     # Merge current semester with university reported history
@@ -441,6 +444,12 @@ end
 get '/sync/status' do
   content_type :json
   $client.sync_status.to_json
+end
+
+post '/sync/force' do
+  UserPreference.set('force_full_sync', 'true')
+  $client.sync_all_courses_proactively
+  redirect '/dashboard'
 end
 
 # Course Overview / Syllabus
@@ -502,6 +511,48 @@ get '/course/:id/assignments/export.ics' do
   content_type 'text/calendar'
   attachment "#{@course_name.gsub(/[^0-9a-z]/i, '_')}_Assignments.ics"
   cal.to_ical
+end
+
+# Image Proxy to handle Brightspace Auth and Caching
+get '/api/proxy/banner' do
+  url = params[:url]
+  halt 400, "URL required" if url.nil? || url.empty?
+  
+  # Ensure the URL is fully decoded (it might be encoded in the param)
+  url = CGI.unescape(url) if url.include?('%')
+
+  # Create local cache directory if it doesn't exist
+  cache_dir = File.expand_path(File.join(File.dirname(__FILE__), 'public', 'banners'))
+  FileUtils.mkdir_p(cache_dir)
+  # Generate a unique filename for this URL
+  file_ext = File.extname(URI.parse(url).path) rescue ".jpg"
+  file_ext = ".jpg" if file_ext.empty? # Default to jpg for Brightspace images
+  filename = Digest::SHA1.hexdigest(url) + file_ext
+  local_path = File.join(cache_dir, filename)
+
+  # Return cached file if it exists
+  if File.exist?(local_path)
+    return send_file local_path
+  end
+
+  # Pass the URL directly to client; client now handles absolute URLs
+  response = $client.download_file(url)
+  
+  if response && response.code == '200'
+    begin
+      # Save to local cache
+      File.open(local_path, 'wb') { |f| f.write(response.body) }
+    rescue => e
+      puts "[Proxy] Cache write error: #{e.message}"
+    end
+
+    content_type response['Content-Type'] || 'image/jpeg'
+    response.body
+  else
+    # Log but don't halt if we want to potentially provide a placeholder later
+    puts "[Proxy] Download failed for #{url}: #{response ? response.code : 'NIL'}"
+    halt 404, "Image not found"
+  end
 end
 
 # Enhanced Assignment Details
@@ -570,8 +621,9 @@ get '/notifications' do
   @user = $client.get_who_am_i
 
   # Handle breadcrumb context
-  if params[:from_course]
-    @context_course = Course.find_by(org_unit_id: params[:from_course])
+  context_id = params[:from_course] || params[:course_id]
+  if context_id
+    @context_course = Course.find_by(org_unit_id: context_id)
   end
   
   # Trigger a quick background sync for news/grades when viewing notifications
@@ -636,6 +688,40 @@ get '/notifications' do
   end
 
   erb :notifications
+end
+
+get '/course/:id/notifications' do
+  @active_tab = 'notifications'
+  @course_id = params[:id]
+  @course = Course.find_by(org_unit_id: @course_id)
+  @course_name = @course&.name || "Course #{@course_id}"
+  
+  # Identify the breadcrumb trail context
+  @breadcrumb_trail = [{ title: 'Notifications', url: "/course/#{@course_id}/notifications" }]
+  @context_course = @course
+
+  # Trigger background sync for this course news specifically
+  $client.sync_notifications([{'OrgUnit' => {'Id' => @course_id, 'Name' => @course_name}}], $client.get_who_am_i)
+
+  query = Notification.where(course_id: @course_id)
+
+  # Apply standard filters
+  query = query.where(urgency: params[:urgency]) if params[:urgency] && !params[:urgency].empty?
+  query = query.where(is_personal: true) if params[:personal_only] == 'true'
+  query = query.where(is_read: false) unless params[:show_read] == 'true'
+
+  # Sort, Count, and Paginate
+  @notifications_total = query.count
+  @page = (params[:page] || 1).to_i
+  @per_page = 25
+  @total_pages = (@notifications_total.to_f / @per_page).ceil
+  
+  sort_by = params[:sort] || 'date'
+  query = (sort_by == 'urgency') ? query.unscope(:order).order(urgency: :desc, date: :desc, id: :desc) : query.unscope(:order).order(date: :desc, id: :desc)
+  
+  @notifications = query.offset((@page - 1) * @per_page).limit(@per_page)
+
+  erb :course_notifications
 end
 
 post '/notifications/:id/mark_read' do
@@ -742,6 +828,12 @@ end
 post '/course/:id/update_units' do
   @course = Course.find_by(org_unit_id: params[:id])
   @course.update(units: params[:units]) if @course
+  redirect back
+end
+
+post '/course/:id/update_target_grade' do
+  @course = Course.find_by(org_unit_id: params[:id])
+  @course.update(target_grade: params[:target_grade]) if @course
   redirect back
 end
 

@@ -39,7 +39,7 @@ class BrightspaceClient
   end
 
   def save_connection_config(host, cookies)
-    @host = host
+    @host = host.to_s.gsub(/https?:\/\//, '').split('/').first
     @cookie_string = cookies.sub(/^Cookie:\s*/i, '')
     
     FileUtils.mkdir_p('config')
@@ -55,22 +55,24 @@ class BrightspaceClient
         @sync_status = { status: "syncing", progress: 0, current_task: "Starting proactive sync..." }
         
         begin
-          courses = get_enrollments || []
+          # Check for a "full sync" request
+          full_sync = UserPreference.get('force_full_sync') == 'true'
+          
+          courses = get_enrollments(force_refresh: full_sync) || []
           user = get_who_am_i
           
+          unless user && user['Identifier']
+            raise "Could not retrieve user identity. Please relogin."
+          end
+
           total_steps = 1 + courses.size # Notifications + each course
           current_step = 0
 
-          # Check for a "full sync" request or just differential
-          full_sync = ActiveRecord::Base.connection_pool.with_connection { 
-            UserPreference.get('force_full_sync') == 'true'
-          }
+        @sync_status[:current_task] = "Syncing Notifications..."
+        sync_notifications(courses, user, full_sync: full_sync)
 
-          @sync_status[:current_task] = "Syncing Notifications..."
-          sync_notifications(courses, user, full_sync: full_sync)
-          
-          # Reset full sync flag if set
-          ActiveRecord::Base.connection_pool.with_connection { UserPreference.set('force_full_sync', 'false') } if full_sync
+        # Reset full sync flag if set
+        UserPreference.set('force_full_sync', 'false') if full_sync
 
           current_step += 1
           @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
@@ -129,12 +131,28 @@ class BrightspaceClient
     # Sync courses to normalized table
     ActiveRecord::Base.transaction do
       courses.each do |c|
+        # Intelligent merge: skip if the response for the course name/code seems degraded
+        new_name = c['OrgUnit']['Name']
+        new_code = c['OrgUnit']['Code']
+        next if new_name.nil? || new_name.empty?
+
         course = Course.find_or_initialize_by(org_unit_id: c['OrgUnit']['Id'].to_s)
         course.name = c['OrgUnit']['Name']
         course.code = c['OrgUnit']['Code']
         course.is_pinned = !c['PinDate'].nil?
         course.last_accessed_at = (Time.parse(c.dig('Access', 'LastAccessed')) rescue nil)
         course.semester = extract_semester_from_name(course.name)
+        
+        # Image/Banner URL extraction
+        # D2L LP Enrollment Object usually has an 'OrgUnit' -> 'ImageUrl' if it's there
+        # but modern versions often store it in a nested Display object
+        img_url = c.dig('OrgUnit', 'ImageUrl') || c.dig('OrgUnit', 'Image', 'ViewUrl') || c.dig('OrgUnit', 'Image', 'DisplayUrl')
+        if img_url && !img_url.empty?
+          # Ensure absolute URL for Electron UI
+          img_url = "https://#{@host}#{img_url}" if img_url.start_with?("/")
+          course.banner_url = img_url
+        end
+        
         course.save!
       end
     end
@@ -153,10 +171,21 @@ class BrightspaceClient
       
       # News/Announcements
       news_data = get_news(course_id, since: last_sync_time)
-      items = news_data.is_a?(Array) ? news_data : (news_data['Items'] || [])
+      items = if news_data.is_a?(Array)
+                news_data
+              elsif news_data.is_a?(Hash)
+                news_data['Items'] || []
+              else
+                []
+              end
       
       ActiveRecord::Base.transaction do
         items.each do |item|
+          # Don't overwrite with empty body if we already have one
+          existing = Notification.find_by(external_id: "news_#{course_id}_#{item['Id']}", course_id: course_id.to_s)
+          new_body = item.dig('Summary', 'Text') || item.dig('Body', 'Text')
+          next if existing && (new_body.nil? || new_body.empty?)
+
           upsert_notification({
             id: "news_#{course_id}_#{item['Id']}",
             type: 'News',
@@ -395,11 +424,11 @@ class BrightspaceClient
     data
   end
 
-  def get_enrollments
-    response = do_get("/d2l/api/lp/#{@api_version}/enrollments/myenrollments/")
+  def get_enrollments(force_refresh: false)
+    response = do_get("/d2l/api/lp/#{@api_version}/enrollments/myenrollments/", force_refresh: force_refresh)
     return [] unless response
     
-    items = response['Items'] || response
+    items = ensure_array(response)
     items.select do |i| 
       (i.dig('OrgUnit', 'Type', 'Code') == 'Course Offering' || 
        i.dig('OrgUnit', 'Type', 'Name') == 'Course Offering')
@@ -416,7 +445,15 @@ class BrightspaceClient
   end
 
   def get_toc(org_unit_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/content/toc")
+    data = do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/content/toc")
+    # Always normalize to a hash with 'Modules' for view/sync consistency
+    if data.is_a?(Array)
+      { 'Modules' => data }
+    elsif data.is_a?(Hash) && data['Modules']
+      data
+    else
+      { 'Modules' => [] }
+    end
   end
 
   def get_assignments(org_unit_id)
@@ -456,7 +493,7 @@ class BrightspaceClient
     all_topics = []
     forums.each do |f|
       topics_data = get_discussion_topics(org_unit_id, f['ForumId'])
-      topics = topics_data.is_a?(Hash) ? (topics_data['Items'] || []) : (topics_data || [])
+      topics = ensure_array(topics_data)
       topics.each do |t| 
         t['ForumId'] = f['ForumId']
         t['ForumName'] = f['Name']
@@ -543,7 +580,7 @@ class BrightspaceClient
         news_items.concat(items)
       end
     end
-    items.sort_by { |i| i['StartDate'] || "" }.reverse.take(10)
+    news_items.sort_by { |i| i['StartDate'] || "" }.reverse.take(10)
   end
 
   def get_news(org_unit_id, since: nil)
@@ -560,7 +597,14 @@ class BrightspaceClient
     path = "/d2l/api/lp/#{@api_version}/feed/"
     path += "?since=#{URI.encode_www_form_component(since)}" if since
     
-    feed = do_get(path) || []
+    feed_data = do_get(path)
+    feed = if feed_data.is_a?(Array)
+             feed_data
+           elsif feed_data.is_a?(Hash)
+             feed_data['Items'] || []
+           else
+             []
+           end
     
     feed.map do |item|
       cid = item.dig('Metadata', 'ApiViewUrl')&.match(/\/(\d+)\/news/)&.to_a&.at(1)
@@ -631,8 +675,7 @@ class BrightspaceClient
   end
 
   def sync_assignments(course_id, assignments)
-    items = assignments.is_a?(Hash) ? (assignments['Items'] || []) : assignments
-    return unless items.is_a?(Array)
+    items = ensure_array(assignments)
     
     items.each do |a|
       assignment = Assignment.find_or_initialize_by(brightspace_id: a['Id'].to_s, course_id: course_id.to_s)
@@ -655,7 +698,7 @@ class BrightspaceClient
       forum.save!
       
       topics_data = get_discussion_topics(course_id, f['ForumId'])
-      topics = topics_data.is_a?(Hash) ? (topics_data['Items'] || []) : (topics_data || [])
+      topics = ensure_array(topics_data)
       sync_discussion_topics(course_id, f['ForumId'].to_s, topics) if topics
     end
   end
@@ -743,7 +786,7 @@ class BrightspaceClient
     # /d2l/api/le/(version)/(orgUnitId)/grades/ returns all grade objects
     metadata_path = "/d2l/api/le/#{@api_version}/#{course_id}/grades/"
     metadata_raw = do_get(metadata_path)
-    metadata = metadata_raw.is_a?(Array) ? metadata_raw : (metadata_raw['Items'] || [])
+    metadata = ensure_array(metadata_raw)
     
     weights_map = {}
     metadata.each do |m|
@@ -776,7 +819,14 @@ class BrightspaceClient
     alerts = []
     courses.each do |c|
       course_id = c['OrgUnit']['Id']
-      grades = get_grades(course_id) || []
+      grades_raw = get_grades(course_id)
+      grades = if grades_raw.is_a?(Array)
+                 grades_raw
+               elsif grades_raw.is_a?(Hash)
+                 grades_raw['Items'] || []
+               else
+                 []
+               end
       grades.each do |g|
         next unless g['DisplayedGrade']
         
@@ -811,14 +861,14 @@ class BrightspaceClient
         threads_path = "/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/#{t['ForumId']}/topics/#{t['TopicId']}/threads/"
         threads_data = do_get(threads_path)
         
-        threads = threads_data.is_a?(Hash) ? (threads_data['Items'] || []) : (threads_data || [])
+        threads = ensure_array(threads_data)
         
         threads.each do |th|
           next if (th['UnreadReplyCount'] || 0) == 0
           
           posts_path = "/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/#{t['ForumId']}/topics/#{t['TopicId']}/threads/#{th['ThreadId']}/posts/"
           posts_data = do_get(posts_path)
-          posts = posts_data.is_a?(Hash) ? (posts_data['Items'] || []) : (posts_data || [])
+          posts = ensure_array(posts_data)
           
           user_involved = posts.any? { |p| p['PostingUserDisplayName'] == @user_display_name }
           user_post_ids = posts.select { |p| p['PostingUserDisplayName'] == @user_display_name }.map { |p| p['PostId'].to_s }
@@ -862,8 +912,15 @@ class BrightspaceClient
 
   def download_file(path)
     return nil unless authenticated?
+    
+    # Handle absolute URLs gracefully
+    if path.start_with?('http')
+      uri = URI.parse(path)
+    else
+      path = "/#{path}" unless path.start_with?('/')
+      uri = URI("https://#{@host}#{path}")
+    end
 
-    uri = URI("https://#{@host}#{path}")
     request = Net::HTTP::Get.new(uri)
     
     if @token
@@ -901,6 +958,16 @@ class BrightspaceClient
       "#{base_url}/lms/discussions/admin/forum_topics_list.d2l?ou=#{course_id}&tid=#{id}"
     else
       "#{base_url}/home/#{course_id}"
+    end
+  end
+
+  def ensure_array(data)
+    if data.is_a?(Array)
+      data
+    elsif data.is_a?(Hash)
+      data['Items'] || []
+    else
+      []
     end
   end
 

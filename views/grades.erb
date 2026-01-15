@@ -24,6 +24,17 @@
                 </div>
               </div>
             </form>
+            <form action="/course/<%= @course_id %>/update_target_grade" method="post" class="mt-2 is-flex is-align-items-center">
+              <label class="is-size-7 mr-2">Target Grade (%):</label>
+              <div class="field has-addons">
+                <div class="control">
+                  <input class="input is-small" type="number" step="0.1" name="target_grade" value="<%= @course.target_grade || 93.0 %>" style="width: 60px;">
+                </div>
+                <div class="control">
+                  <button type="submit" class="button is-small is-info is-light">Set Goal</button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
         <div class="level-right">
@@ -123,6 +134,33 @@
          <div class="notification is-light is-info py-2 px-4 is-size-7 mb-4">
            <strong>Confidence Note:</strong> Only <%= @grade_stats[:total_points_possible].to_i %> of the <%= @grade_stats[:all_possible_points].to_i %> total points for this course have been graded so far.
          </div>
+
+         <% if @grade_stats[:remaining_points] > 0 %>
+            <div class="box has-background-info-light p-3 mb-4">
+              <div class="columns is-vcentered is-mobile">
+                <div class="column is-narrow">
+                  <div class="icon is-large has-text-info">
+                    <i class="fas fa-bullseye fa-2x"></i>
+                  </div>
+                </div>
+                <div class="column">
+                  <p class="is-size-7 uppercase has-text-weight-bold has-text-info mb-1" style="text-transform: uppercase; letter-spacing: 0.5px;">Goal Projection</p>
+                  <p class="is-size-6">
+                    To reach your <strong><%= @grade_stats[:target_grade] %>%</strong> target, 
+                    <% if @grade_stats[:is_impossible] %>
+                      <span class="has-text-danger">it is unfortunately mathematically impossible (requires >100% average).</span>
+                    <% else %>
+                      you need to average 
+                      <span class="tag is-info is-medium" style="font-weight: bold; margin: 0 5px;">
+                        <%= @grade_stats[:required_avg] %>%
+                      </span> 
+                      on the remaining <%= @grade_stats[:remaining_points].to_i %> points.
+                    <% end %>
+                  </p>
+                </div>
+              </div>
+            </div>
+         <% end %>
       <% end %>
 
       <% if @grades && !@grades.empty? %>

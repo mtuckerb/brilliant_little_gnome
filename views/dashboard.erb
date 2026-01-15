@@ -44,32 +44,41 @@
            <% @semester_grades.each do |sg| %>
              <% info = extract_course_info(sg[:course].name) %>
              <div class="column is-4">
-               <div class="box is-clickable p-3 has-background-white" 
+               <div class="box is-clickable p-0 has-background-white overflow-hidden" 
                     onclick="window.location='/course/<%= sg[:course].org_unit_id %>/grades'"
-                    style="border: 1px solid #eee; transition: all 0.2s; height: 100%;">
-                 <div class="level is-mobile mb-1">
-                   <div class="level-left">
-                     <p class="is-size-7 has-text-grey-light"><%= sg[:course].code %></p>
+                    style="border: 1px solid #eee; transition: all 0.2s; height: 100%; border-radius: 8px; overflow: hidden;">
+                 
+                 <% if sg[:course].banner_url %>
+                   <div style="height: 100px; width: 100%; background: url('/api/proxy/banner?url=<%= ERB::Util.url_encode(sg[:course].banner_url) %>') center center; background-size: cover; border-bottom: 1px solid #eee;"></div>
+                 <% else %>
+                   <div style="height: 100px; width: 100%; background: linear-gradient(135deg, #739AC3 0%, #3273dc 100%); border-bottom: 1px solid #eee; opacity: 0.1;"></div>
+                 <% end %>
+
+                 <div class="p-3">
+                   <div class="level is-mobile mb-1">
+                     <div class="level-left">
+                       <p class="is-size-7 has-text-grey-light"><%= sg[:course].code %></p>
+                     </div>
+                     <div class="level-right">
+                       <span class="tag is-white is-paddingless has-text-grey-light" title="Confidence: <%= sg[:stats][:confidence] %>%">
+                         <i class="fas fa-shield-halved mr-1 <%= confidence_color(sg[:stats][:confidence]) %>"></i> <%= sg[:stats][:confidence].to_i %>%
+                       </span>
+                     </div>
                    </div>
-                   <div class="level-right">
-                     <span class="tag is-white is-paddingless has-text-grey-light" title="Confidence: <%= sg[:stats][:confidence] %>%">
-                       <i class="fas fa-shield-halved mr-1 <%= confidence_color(sg[:stats][:confidence]) %>"></i> <%= sg[:stats][:confidence].to_i %>%
-                     </span>
+                   <p class="has-text-weight-bold is-size-6 mb-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="<%= info[:course_display] %>"><%= info[:course_display] %></p>
+                   <div class="level is-mobile">
+                     <div class="level-left">
+                        <span class="tag <%= grade_color(sg[:stats][:score]) %> is-light has-text-weight-bold">
+                          <%= sg[:stats][:score] %>%
+                        </span>
+                     </div>
                    </div>
-                 </div>
-                 <p class="has-text-weight-bold is-size-6 mb-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="<%= info[:course_display] %>"><%= info[:course_display] %></p>
-                 <div class="level is-mobile">
-                   <div class="level-left">
-                      <span class="tag <%= grade_color(sg[:stats][:score]) %> is-light has-text-weight-bold">
-                        <%= sg[:stats][:score] %>%
-                      </span>
+                   <div class="mt-2 pt-2" style="border-top: 1px dashed #eee;">
+                     <p class="is-size-7 has-text-grey">
+                       <span class="has-text-weight-bold has-text-grey-dark"><%= sg[:stats][:remaining_points].to_i %></span> pts remaining
+                       <span class="is-pulled-right">Max: <%= sg[:stats][:max_potential_score].to_i %>%</span>
+                     </p>
                    </div>
-                 </div>
-                 <div class="mt-2 pt-2" style="border-top: 1px dashed #eee;">
-                   <p class="is-size-7 has-text-grey">
-                     <span class="has-text-weight-bold has-text-grey-dark"><%= sg[:stats][:remaining_points].to_i %></span> pts remaining
-                     <span class="is-pulled-right">Max: <%= sg[:stats][:max_potential_score].to_i %>%</span>
-                   </p>
                  </div>
                </div>
              </div>
@@ -106,57 +115,48 @@
     <% if @display_courses.empty? %>
       <div class="notification is-warning">No courses found matching this filter.</div>
     <% else %>
-      <div class="box p-0">
-        <table class="table is-fullwidth is-hoverable">
-          <thead>
-            <tr>
-              <th>Course Name</th>
-              <th class="has-text-right">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% @display_courses.each do |c| %>
-              <%
-                 id   = c.is_a?(Hash) ? c['OrgUnit']['Id'] : c.org_unit_id
-                 name = c.is_a?(Hash) ? c['OrgUnit']['Name'] : c.name
-                 code = c.is_a?(Hash) ? c['OrgUnit']['Code'] : c.code
-                 loc  = c.is_a?(Hash) ? c['OrgUnit']['Location'] : nil
-              %>
-              <tr class="course-row" onclick="window.location='/course/<%= id %>'">
-                <td class="py-4">
-                  <% info = extract_course_info(name) %>
-                  <div class="has-text-weight-bold is-size-5 mb-1">
-                    <%= info[:course_display] %>
+      <div class="columns is-multiline">
+        <% @display_courses.each do |c| %>
+          <%
+             id   = c.is_a?(Hash) ? c['OrgUnit']['Id'] : c.org_unit_id
+             name = c.is_a?(Hash) ? c['OrgUnit']['Name'] : c.name
+             code = c.is_a?(Hash) ? c['OrgUnit']['Code'] : c.code
+             banner = c.respond_to?(:banner_url) ? c.banner_url : nil
+             info = extract_course_info(name)
+          %>
+          <div class="column is-6">
+            <div class="box p-0 course-card-wide is-clickable" 
+                 onclick="window.location='/course/<%= id %>'"
+                 style="overflow: hidden; border: 1px solid #eee; transition: all 0.2s; height: 100%;">
+              <div class="is-flex" style="height: 100%;">
+                <div style="width: 140px; min-width: 140px; transition: width 0.3s; background-color: #f5f5f5;">
+                  <% if banner %>
+                    <div style="height: 100%; width: 100%; background: url('/api/proxy/banner?url=<%= ERB::Util.url_encode(banner) %>') center center; background-size: cover; box-shadow: inset -10px 0 15px rgba(0,0,0,0.1);"></div>
+                  <% else %>
+                    <div style="height: 100%; width: 100%; background: linear-gradient(135deg, #739AC3 0%, #3273dc 100%); opacity: 0.1;"></div>
+                  <% end %>
+                </div>
+                <div class="p-4" style="flex-grow: 1;">
+                  <div class="tags mb-1">
+                    <% if info[:semester] %>
+                      <span class="tag is-info is-light is-small"><%= info[:semester] %></span>
+                    <% end %>
+                    <% if info[:is_online] %>
+                      <span class="tag is-success is-light is-small">Online</span>
+                    <% end %>
                   </div>
                   
-                  <div class="tags mb-2">
-                    <% if info[:semester] %>
-                      <span class="tag is-info is-light"><%= info[:semester] %></span>
-                    <% end %>
-                    
-                    <% if info[:is_online] %>
-                      <span class="tag is-success is-light">Online</span>
-                    <% end %>
-                    
-                    <%# Online or Location Tag %>
-                    <% if loc %>
-                      <span class="tag is-warning is-light"><%= loc %></span>
-                    <% end %>
+                  <h3 class="title is-5 mb-1"><%= info[:course_display] %></h3>
+                  <p class="is-size-7 has-text-grey-light mb-3"><%= code %></p>
+                  
+                  <div class="has-text-right">
+                    <span class="is-size-7 has-text-link">Open Course <i class="fas fa-chevron-right ml-1"></i></span>
                   </div>
-
-                  <div class="is-size-7 has-text-grey-light has-text-weight-normal">
-                    <%= code %>
-                  </div>
-                </td>
-                <td class="has-text-right is-vcentered">
-                  <a href="/course/<%= id %>" class="button is-small is-primary is-light">
-                    View <i class="fas fa-arrow-right ml-2"></i>
-                  </a>
-                </td>
-              </tr>
-            <% end %>
-          </tbody>
-        </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% end %>
       </div>
     <% end %>
   </div>

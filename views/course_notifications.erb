@@ -1,0 +1,23 @@
+<%= erb :'partials/course_detail_header' %>
+<div class="columns">
+  <div class="column is-3">
+    <%= erb :'partials/sidebar' %>
+  </div>
+  <div class="column is-9">
+    <div class="box">
+      <div class="level mb-5">
+        <div class="level-left">
+          <h2 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Announcements</h2>
+        </div>
+        <div class="level-right">
+          <form action="/notifications/mark_all_read" method="post" class="mr-2">
+            <button type="submit" class="button is-link is-light is-small">
+              <i class="fas fa-check-double mr-2"></i> Mark All Read
+            </button>
+          </form>
+        </div>
+      </div>
+      <%= erb :'partials/notifications_list' %>
+    </div>
+  </div>
+</div>

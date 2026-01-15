@@ -98,6 +98,40 @@
               </div>
             </div>
 
+            <hr>
+            <h3 class="title is-4">Refresh & Sync</h3>
+            <div class="field is-grouped is-grouped-multiline">
+              <div class="control">
+                <form action="/notifications/refresh_cache" method="POST">
+                  <button type="submit" class="button is-danger is-light" onclick="return confirm('This will clear the API cache and rebuild the notification database. Continue?')">
+                    <span class="icon"><i class="fas fa-trash-alt"></i></span>
+                    <span>Reset & Sync Notifications</span>
+                  </button>
+                </form>
+              </div>
+              <div class="control">
+                <form action="/sync/force" method="POST">
+                  <button type="submit" class="button is-info is-light">
+                    <span class="icon"><i class="fas fa-sync-alt"></i></span>
+                    <span>Re-Sync All Courses (Metadata)</span>
+                  </button>
+                </form>
+              </div>
+            </div>
+            
+            <div class="message is-info is-light">
+              <div class="message-body is-size-7">
+                <div class="columns is-vcentered">
+                  <div class="column is-narrow">
+                    <span class="icon is-large has-text-info"><i class="fas fa-info-circle fa-2x"></i></span>
+                  </div>
+                  <div class="column">
+                    <strong>Intelligent Syncing enabled:</strong> Course metadata updates will prioritize existing robust data. Historical data (like archived content or grades) is protected even if omitted from current Brightspace responses.
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="field mt-5">
               <div class="control">
                 <button type="submit" class="button is-primary">
