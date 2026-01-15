@@ -1,17 +1,29 @@
 # Brilliant
 
-A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard.
+A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard. Designed specifically for University of Southern Maine students, Brilliant simplifies the complex Brightspace interface into a fast, desktop-priority experience.
 
 ## Features
 
+- **Visual Dashboard**: Integrated course banners and normalized semestrial layouts.
 - **Unified Notification Feed**: Newest items first, across all your courses.
+- **Hero-Style Course Headers**: Clean, high-impact headers with integrated banner images for every course.
+- **Local Asset Caching**: Persistent local storage for banners and resources to maintain speed and reliability.
 - **Magic Login**: Connect to Brightspace instantly without manually hunting for cookies.
-- **Analytics & GPA**: Real-time GPA calculation (USM-weighted) based on current semester grades and historical units.
-- **Smart Filtering**: Filter by semester (e.g., "Spring 2026"), course, or urgency.
-- **Read/Unread Status**: Mark items as read to focus on what's new. Syncs back to Brightspace (dismisses news items).
-- **Interactive Course View**: Collapsible sections for instructions, feedback, and rubrics to keep your workspace clean.
-- **Resource Download**: Download syllabus, module files, or entire course modules as ZIP archives.
-- **Calendar Export**: Export assignment due dates to ICS/iCal format.
+- **Advanced Analytics & GPA**: 
+  - Real-time GPA calculation (USM-weighted).
+  - "Max Potential" cumulative GPA tracking.
+  - "Confidence Shields" (metric-driven data reliability scores).
+- **Intelligent Synchronization**: Protecting historical data (archived courses/grades) even when instructor data on Brightspace thins.
+- **Interactive Course View**: 
+  - Collapsible instructions, feedback, and rubrics.
+  - Consolidated Announcements & Notifications within the course sidebar.
+- **Resource Export**: Download syllabus, module files, or entire course modules as ZIP archives.
+- **Calendar Support**: Export assignment due dates to ICS/iCal format.
+
+## Portability & Multi-platform
+Brilliant is built to be portable. 
+- **macOS (M-series)**: Fully vendored and optimized for Apple Silicon.
+- **Windows**: Support for portable ruby distributions (x64) and packaged as a standalone Electron application (`nsis`).
 
 ## Setup
 
@@ -43,21 +55,18 @@ Brilliant offers two ways to connect:
 #### Option 2: Manual Cookie Entry
 If you prefer not to use the automated tool:
 1. Open DevTools (F12) in your browser on any Brightspace page.
-2. Copy the `Cookie` request header value.
+2. Copy the `Cookie` request header value (or the full host URL).
 3. Paste it into the "Manual Setup" field in Brilliant.
 
-## Advanced Usage
+## Maintenance
 
-### GPA & Analytics
-Brilliant calculates your GPA by weighting current grades against course units. You can update your **Historic GPA** and **Historic Units** in the **Settings** menu to see your overall cumulative performance alongside your current semester stats.
+### Refresh & Sync
+The **Settings** menu now contains a dedicated maintenance section:
+- **Reset & Sync Notifications**: Rebuilds your entire notification history and clears the API cache.
+- **Re-Sync Courses**: Pulls fresh metadata (names, banners, codes) for all courses while intelligently protecting existing local data from degradation.
 
-### Persistence
-The app remembers your preferences!
-- **Collapse States**: Sections like assignment feedback or discussion instructions stay collapsed (or expanded) based on your last interaction.
-- **Semester Filtering**: The dashboard will default to your most active semester.
-
-### Database Management
-If your notifications feel out of sync, use the **"Reset & Sync All"** button on the Notifications page. This clears the local cache/tables and triggers a fresh background sync.
+### Caching
+Banners and assets are cached locally in the `public/banners` folder after the first successful authenticated fetch. This reduces network dependency and ensures your dashboard remains beautiful even in low-bandwidth situations.
 
 ## Design
-Built with **Sinatra**, **ActiveRecord**, and **Bulma**. Designed for students who want to skip the heavy Brightspace UI and get straight to their data.
+Built with **Sinatra**, **ActiveRecord**, and **Bulma**. Managed as a high-performance sidecar for an **Electron** frontend.

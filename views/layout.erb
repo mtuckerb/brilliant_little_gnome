@@ -12,6 +12,14 @@
     .navbar { box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     /* Primary Color Overrides */
     .has-text-primary { color: #739AC3 !important; }
+    
+    /* Disable hover transitions for branding */
+    .navbar-brand .navbar-item:hover, 
+    .navbar-brand .navbar-item:focus {
+      background-color: transparent !important;
+      color: #739AC3 !important;
+    }
+
     .is-primary { background-color: #739AC3 !important; color: #fff !important; }
     .button.is-primary { background-color: #739AC3 !important; border-color: transparent !important; color: #fff !important; }
     .button.is-primary.is-light { background-color: #f0f4f8 !important; color: #739AC3 !important; }
@@ -54,7 +62,7 @@
   <nav class="navbar is-white">
     <div class="navbar-brand">
        <a class="navbar-item is-size-4 has-text-weight-bold has-text-primary" href="/dashboard">
-         <img src="/logo.png" alt="Brilliant Logo" style="max-height: 40px;" class="mr-2"> Brilliant
+         <img src="/logo.png" alt="Brilliant Logo" style="max-height: 50px;" class="mr-2"> Brilliant
        </a>
     </div>
     <div class="navbar-end">

@@ -629,7 +629,9 @@ class BrightspaceClient
     toc.each_with_index do |mod, index|
       m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
       m.title = mod['Title']
-      m.description = mod.dig('Description', 'Text')
+      # Intelligent protection: don't overwrite description with nil/empty if we have one
+      new_desc = mod.dig('Description', 'Text')
+      m.description = new_desc if new_desc && !new_desc.empty?
       m.sort_order = index
       m.save!
       
@@ -655,7 +657,8 @@ class BrightspaceClient
     sub_modules.each_with_index do |mod, index|
       m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
       m.title = mod['Title']
-      m.description = mod.dig('Description', 'Text')
+      new_desc = mod.dig('Description', 'Text')
+      m.description = new_desc if new_desc && !new_desc.empty?
       m.sort_order = index
       m.parent_id = parent_id
       m.save!
@@ -680,8 +683,11 @@ class BrightspaceClient
     items.each do |a|
       assignment = Assignment.find_or_initialize_by(brightspace_id: a['Id'].to_s, course_id: course_id.to_s)
       assignment.name = a['Name']
-      assignment.due_date = (Time.parse(a['DueDate']) rescue nil)
-      assignment.description = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
+      
+      new_due = (Time.parse(a['DueDate']) rescue nil)
+      assignment.due_date = new_due if new_due
+      new_desc = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
+      assignment.description = new_desc if new_desc && !new_desc.empty?
       assignment.is_graded = a['IsGraded'] || false
       assignment.grade_item_id = a['GradeItemId'].to_s if a['GradeItemId']
       assignment.save!
@@ -693,8 +699,9 @@ class BrightspaceClient
     
     forums.each do |f|
       forum = DiscussionForum.find_or_initialize_by(brightspace_id: f['ForumId'].to_s, course_id: course_id.to_s)
-      forum.name = f['Name']
-      forum.description = f.dig('Description', 'Text')
+      forum.name = f['Name'] if f['Name']
+      new_desc = f.dig('Description', 'Text')
+      forum.description = new_desc if new_desc && !new_desc.empty?
       forum.save!
       
       topics_data = get_discussion_topics(course_id, f['ForumId'])
@@ -710,7 +717,8 @@ class BrightspaceClient
       topic = DiscussionTopic.find_or_initialize_by(brightspace_id: t['TopicId'].to_s, forum_id: forum_id.to_s)
       topic.course_id = course_id.to_s
       topic.name = t['Name']
-      topic.description = t.dig('Description', 'Html') || t.dig('Description', 'Text')
+      new_desc = t.dig('Description', 'Html') || t.dig('Description', 'Text')
+      topic.description = new_desc if new_desc && !new_desc.empty?
       topic.sort_order = index
       
       # D2L API can be inconsistent with count keys
@@ -739,11 +747,13 @@ class BrightspaceClient
         )
         post.parent_post_id = p['ParentPostId'].to_s if p['ParentPostId']
         post.subject = p['Subject']
-        # RichText handling
-        post.body = p.dig('Body', 'Html') || p.dig('Body', 'Text') || p['Body']
-        post.author_name = p['PostingUserDisplayName']
-        post.posted_at = (Time.parse(p['DatePosted']) rescue nil)
         
+        new_body = p.dig('Body', 'Html') || p.dig('Body', 'Text') || p['Body']
+        post.body = new_body if new_body && !new_body.empty?
+        
+        post.author_name = p['PostingUserDisplayName']
+        new_posted = (Time.parse(p['DatePosted']) rescue nil)
+        post.posted_at = new_posted if new_posted
         # Check for instructor role
         post.is_instructor = p.dig('Author', 'IsInstructor') == true || p.dig('Author', 'RoleName') =~ /Instructor/i rescue false
         
@@ -766,9 +776,13 @@ class BrightspaceClient
     t = DiscussionThread.find_or_initialize_by(brightspace_id: thread['ThreadId'].to_s, topic_id: topic_id.to_s)
     t.course_id = course_id.to_s
     t.subject = thread['Subject'] || thread['Title']
-    t.body = thread.dig('Description', 'Text') || thread.dig('Body', 'Text')
+    
+    new_body = thread.dig('Description', 'Text') || thread.dig('Body', 'Text')
+    t.body = new_body if new_body && !new_body.empty?
+    
     t.author_name = thread['PostingUserDisplayName'] || thread.dig('LastPost', 'UserDisplayName')
-    t.posted_at = (Time.parse(thread['DatePosted'] || thread['LastModified']) rescue nil)
+    new_posted = (Time.parse(thread['DatePosted'] || thread['LastModified']) rescue nil)
+    t.posted_at = new_posted if new_posted
     t.is_pinned = thread['IsPinned'] || false
     t.unread_count = thread['UnreadReplyCount'] || 0
     t.save!
@@ -798,12 +812,14 @@ class BrightspaceClient
         obj_id = g['GradeObjectIdentifier'].to_s
         grade = Grade.find_or_initialize_by(brightspace_id: obj_id, course_id: course_id.to_s)
         grade.name = g['GradeObjectName']
-        grade.displayed_grade = g['DisplayedGrade']
-        grade.numerator = g.dig('PointsNumerator')
-        grade.denominator = g.dig('PointsDenominator')
-        grade.weight = weights_map[obj_id] || g.dig('Weight')
+        grade.displayed_grade = g['DisplayedGrade'] if g['DisplayedGrade']
+        grade.numerator = g.dig('PointsNumerator') if g.dig('PointsNumerator')
+        grade.denominator = g.dig('PointsDenominator') if g.dig('PointsDenominator')
+        new_weight = weights_map[obj_id] || g.dig('Weight')
+        grade.weight = new_weight if new_weight
         grade.grade_object_type = g['GradeObjectType']
-        grade.last_modified = (Time.parse(g['LastModified']) rescue nil)
+        new_mod = (Time.parse(g['LastModified']) rescue nil)
+        grade.last_modified = new_mod if new_mod
         grade.comments = g.dig('Comments', 'Html') || g.dig('Comments', 'Text')
         
         # Link Due Date from Assignment if possible

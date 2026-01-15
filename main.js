@@ -103,6 +103,12 @@ ipcMain.on('start-login', (event, host) => {
 
   loginWindow.loadURL(`https://${host}/d2l/lp/auth/login/login.d2l`);
 
+  // Suppress Brightspace's annoying alerts - injected at start and when DOM is ready
+  loginWindow.webContents.on('dom-ready', () => {
+    const script = "window.alert = function(){}; window.confirm = function(){return true;}; window.prompt = function(){return null;};";
+    loginWindow.webContents.executeJavaScript(script);
+  });
+
   loginWindow.webContents.on('did-navigate', (event, url) => {
     if (url.includes("/d2l/home") || url.includes("/d2l/lp/homepage")) {
       // Extract cookies
