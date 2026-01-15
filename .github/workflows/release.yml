@@ -17,16 +17,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: 'npm'
 
       - name: Setup Native Dependencies (macOS)
         if: matrix.os == 'macos-latest'
@@ -52,7 +52,7 @@ jobs:
           bin/ruby_dist/win-x64/bin/ruby bin/ruby_dist/win-x64/bin/bundle install --deployment
 
       - name: Install Dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build Electron App
         run: npm run build
