@@ -5,9 +5,11 @@ A lightweight, high-performance Brightspace companion that aggregates notificati
 ## Features
 
 - **Unified Notification Feed**: Newest items first, across all your courses.
+- **Magic Login**: Connect to Brightspace instantly without manually hunting for cookies.
+- **Analytics & GPA**: Real-time GPA calculation (USM-weighted) based on current semester grades and historical units.
 - **Smart Filtering**: Filter by semester (e.g., "Spring 2026"), course, or urgency.
 - **Read/Unread Status**: Mark items as read to focus on what's new. Syncs back to Brightspace (dismisses news items).
-- **Dashboard Widget**: Quick view of unread updates.
+- **Interactive Course View**: Collapsible sections for instructions, feedback, and rubrics to keep your workspace clean.
 - **Resource Download**: Download syllabus, module files, or entire course modules as ZIP archives.
 - **Calendar Export**: Export assignment due dates to ICS/iCal format.
 
@@ -16,47 +18,46 @@ A lightweight, high-performance Brightspace companion that aggregates notificati
 ### 1. Prerequisites
 - Ruby 2.6+
 - SQLite3
+- Chrome or Chromium (required for Magic Login)
 - Bundler
 
-### 2. Configuration
-The easiest way to authenticate is by using your browser's session cookies.
-
-#### How to get `cookies.txt`:
-1. Log in to your Brightspace instance in Chrome or Firefox.
-2. Open the **Developer Tools** (F12) -> **Network** tab.
-3. Refresh the page or click a link to a course.
-4. Locate any request to your school's host (e.g., `courses.maine.edu`).
-5. Look at the **Headers** -> **Request Headers**.
-6. Find the `Cookie:` header. It will be a long string starting with something like `d2lt=...; d2l_referrer=...`.
-7. Copy the **entire value** of the `Cookie:` header (everything after the word `Cookie: `).
-8. Create a file named `cookies.txt` in the root of this project and paste the string inside.
-
-Alternatively, if you have a developer token (Access Token), you can paste the raw token directly into `cookies.txt`.
-
-### 3. Running the App
+### 2. Running the App
 1. Install dependencies:
    ```bash
    bundle install
    ```
-2. Initialize the database:
-   ```bash
-   bundle exec rake db:migrate
-   ```
-3. Set your host environment variable:
-   ```bash
-   export BS_HOST="your-school.brightspace.com"
-   ```
-4. Start the server:
+2. Start the server (Migrations will run automatically):
    ```bash
    ruby app.rb
    ```
-5. Visit `http://localhost:4567` in your browser.
+3. Visit `http://localhost:4567` in your browser.
 
-## Database Management
-If your notifications feel out of sync or you want a fresh start, use the **"Reset & Sync All"** button on the Notifications page. This will:
-- Clear the local API cache.
-- Wipe the local notifications table.
-- Trigger a fresh background sync from the Brightspace API.
+### 3. Authentication
+Brilliant offers two ways to connect:
+
+#### Option 1: Magic Login (Recommended)
+1. On the setup screen, click **"Launch Magic Login"**.
+2. A browser window will open. Log in to your school's Brightspace portal normally (MFA/SSO supported).
+3. Once you reach the Brightspace home page, the window will close and Brilliant will automatically capture and securely store your session.
+
+#### Option 2: Manual Cookie Entry
+If you prefer not to use the automated tool:
+1. Open DevTools (F12) in your browser on any Brightspace page.
+2. Copy the `Cookie` request header value.
+3. Paste it into the "Manual Setup" field in Brilliant.
+
+## Advanced Usage
+
+### GPA & Analytics
+Brilliant calculates your GPA by weighting current grades against course units. You can update your **Historic GPA** and **Historic Units** in the **Settings** menu to see your overall cumulative performance alongside your current semester stats.
+
+### Persistence
+The app remembers your preferences!
+- **Collapse States**: Sections like assignment feedback or discussion instructions stay collapsed (or expanded) based on your last interaction.
+- **Semester Filtering**: The dashboard will default to your most active semester.
+
+### Database Management
+If your notifications feel out of sync, use the **"Reset & Sync All"** button on the Notifications page. This clears the local cache/tables and triggers a fresh background sync.
 
 ## Design
 Built with **Sinatra**, **ActiveRecord**, and **Bulma**. Designed for students who want to skip the heavy Brightspace UI and get straight to their data.

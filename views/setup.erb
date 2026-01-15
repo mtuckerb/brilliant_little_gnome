@@ -6,6 +6,20 @@
           <h1 class="title has-text-centered">Setup Brilliant</h1>
           <p class="subtitle has-text-centered">Connect to your Brightspace instance</p>
           
+          <div class="notification is-info is-light">
+            <h4 class="title is-5">Option 1: Magic Login (Recommended)</h4>
+            <p>Click the button below to open a login window. Once you sign in and see your Brightspace home page, Brilliant will automatically capture your session.</p>
+            <div class="field mt-4">
+              <a href="/auth/login" class="button is-info is-fullwidth">
+                <span class="icon"><i class="fas fa-magic"></i></span>
+                <span><strong>Launch Magic Login</strong></span>
+              </a>
+            </div>
+          </div>
+
+          <div class="is-divider" data-content="OR"></div>
+
+          <h4 class="title is-5">Option 2: Manual Setup</h4>
           <% if @error %>
             <div class="notification is-danger">
               <%= @error %>

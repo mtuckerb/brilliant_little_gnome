@@ -7,6 +7,7 @@ require 'tempfile'
 require 'icalendar'
 
 require_relative 'lib/brightspace/client'
+require_relative 'lib/brightspace/auth_helper'
 require_relative 'helpers/course_helpers'
 require_relative 'models/notification'
 require_relative 'models/api_cache'
@@ -92,7 +93,7 @@ end
 
 before do
   # Allow access to setup and public files without being "configured"
-  return if ['/setup', '/favicon.ico'].include?(request.path_info) || request.path_info.start_with?('/public')
+  return if ['/setup', '/favicon.ico', '/auth/login'].include?(request.path_info) || request.path_info.start_with?('/public')
   
   if !configured?
     redirect '/setup'
@@ -151,6 +152,20 @@ post '/setup' do
     redirect '/dashboard'
   else
     @error = "Could not authenticate with Brightspace. Please check your host and cookies."
+    @host = host
+    erb :setup
+  end
+end
+
+get '/auth/login' do
+  host = params[:host] || $client.host
+  cookies = BrightspaceAuthHelper.fetch_cookies(host)
+  
+  if cookies
+    $client.save_connection_config(host, cookies)
+    redirect '/dashboard'
+  else
+    @error = "Login failed or timed out. Please try again."
     @host = host
     erb :setup
   end
