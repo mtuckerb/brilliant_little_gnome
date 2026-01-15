@@ -17,11 +17,39 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: 'npm'
+
+      - name: Setup Native Dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p bin/ruby_dist/macos-arm64
+          # Provision portable ruby
+          curl -L https://github.com/ruby/ruby-builder/releases/download/3.4.1/ruby-3.4.1-macos-arm64.tar.gz | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
+          bundle config set --local path 'vendor/bundle'
+          # Use the portable ruby to install native gems for compatibility
+          bin/ruby_dist/macos-arm64/bin/ruby bin/ruby_dist/macos-arm64/bin/bundle install --deployment
+
+      - name: Setup Native Dependencies (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p bin/ruby_dist/win-x64
+          # Provision portable ruby
+          curl -L https://github.com/oneclick/rubyinstaller2/releases/download/RubyInstaller-3.4.1-1/rubyinstaller-portable-3.4.1-1-x64.7z -o ruby.7z
+          7z x ruby.7z -obin/ruby_dist/win-x64
+          # Re-root the portable folder
+          mv bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64/* bin/ruby_dist/win-x64/ || true
+          # Use the portable ruby to install native gems
+          bin/ruby_dist/win-x64/bin/ruby bin/ruby_dist/win-x64/bin/bundle install --deployment
 
       - name: Install Dependencies
         run: npm install
