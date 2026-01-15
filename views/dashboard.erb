@@ -18,15 +18,25 @@
     <% if @current_semester && @overall_gpa %>
       <div class="box has-background-primary-light mb-6 p-5" style="border-radius: 12px; border: 1px solid #739AC3;">
          <div class="is-flex is-justify-content-space-between is-align-items-center is-flex-wrap-wrap">
-           <div class="mb-2">
+           <div class="mb-2" style="flex-grow: 1;">
               <h2 class="title is-3 mb-1" style="margin-bottom: 0.5rem !important;"><i class="fas fa-graduation-cap mr-2"></i> Semester Overview</h2>
               <div class="has-text-grey-dark is-uppercase has-text-weight-bold" style="letter-spacing: 1px; font-size: 0.9rem;">
                 <%= @current_semester %>
               </div>
            </div>
            <div class="has-text-centered py-2 px-4" style="border-left: 2px solid rgba(115, 154, 195, 0.2); min-width: 140px;">
+              <p class="heading mb-1" style="letter-spacing: 1px; color: #666;">Points Earned</p>
+              <p class="title is-4 has-text-grey-darker" style="margin-bottom: 0;">
+                <%= @semester_grades.sum { |sg| sg[:stats][:total_points_earned] }.round(1) %> 
+                <span class="is-size-6 has-text-weight-normal has-text-grey">/ <%= @semester_grades.sum { |sg| sg[:stats][:total_points_possible] }.round(1) %></span>
+              </p>
+           </div>
+           <div class="has-text-centered py-2 px-4" style="border-left: 2px solid rgba(115, 154, 195, 0.2); min-width: 140px;">
               <p class="heading mb-1" style="letter-spacing: 1px;">Overall GPA</p>
               <p class="title is-1 has-text-primary" style="margin-bottom: 0; line-height: 1;"><%= '%.2f' % @overall_gpa %></p>
+              <% if @max_potential_gpa && @max_potential_gpa > @overall_gpa %>
+                <p class="is-size-7 has-text-grey mt-1">Max Potential: <span class="has-text-weight-bold"><%= '%.2f' % @max_potential_gpa %></span></p>
+              <% end %>
            </div>
          </div>
          
@@ -37,21 +47,29 @@
                <div class="box is-clickable p-3 has-background-white" 
                     onclick="window.location='/course/<%= sg[:course].org_unit_id %>/grades'"
                     style="border: 1px solid #eee; transition: all 0.2s; height: 100%;">
-                 <p class="is-size-7 has-text-grey-light mb-1"><%= sg[:course].code %></p>
-                 <p class="has-text-weight-bold is-size-6 mb-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="<%= info[:course_display] %>">
-                   <%= info[:course_display] %>
-                 </p>
-                 <div class="level is-mobile">
+                 <div class="level is-mobile mb-1">
                    <div class="level-left">
-                      <span class="tag <%= grade_color(sg[:score]) %> is-light has-text-weight-bold">
-                        <%= sg[:score] %>%
-                      </span>
+                     <p class="is-size-7 has-text-grey-light"><%= sg[:course].code %></p>
                    </div>
                    <div class="level-right">
-                      <span class="is-size-7 has-text-grey" title="Confidence: <%= sg[:confidence] %>%">
-                        <i class="fas fa-shield-alt mr-1 <%= confidence_color(sg[:confidence]) %>"></i> <%= sg[:confidence].to_i %>%
+                     <span class="tag is-white is-paddingless has-text-grey-light" title="Confidence: <%= sg[:stats][:confidence] %>%">
+                       <i class="fas fa-shield-halved mr-1 <%= confidence_color(sg[:stats][:confidence]) %>"></i> <%= sg[:stats][:confidence].to_i %>%
+                     </span>
+                   </div>
+                 </div>
+                 <p class="has-text-weight-bold is-size-6 mb-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="<%= info[:course_display] %>"><%= info[:course_display] %></p>
+                 <div class="level is-mobile">
+                   <div class="level-left">
+                      <span class="tag <%= grade_color(sg[:stats][:score]) %> is-light has-text-weight-bold">
+                        <%= sg[:stats][:score] %>%
                       </span>
                    </div>
+                 </div>
+                 <div class="mt-2 pt-2" style="border-top: 1px dashed #eee;">
+                   <p class="is-size-7 has-text-grey">
+                     <span class="has-text-weight-bold has-text-grey-dark"><%= sg[:stats][:remaining_points].to_i %></span> pts remaining
+                     <span class="is-pulled-right">Max: <%= sg[:stats][:max_potential_score].to_i %>%</span>
+                   </p>
                  </div>
                </div>
              </div>

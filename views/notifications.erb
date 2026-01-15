@@ -93,6 +93,15 @@
   </div>
 
   <div class="column is-9">
+    <nav class="breadcrumb mr-2" aria-label="breadcrumbs">
+      <ul>
+        <li><a href="/dashboard"><span class="icon is-small"><i class="fas fa-home"></i></span> Dashboard</a></li>
+        <% if @context_course %>
+          <li><a href="/course/<%= @context_course.org_unit_id %>"><%= @context_course.name %></a></li>
+        <% end %>
+        <li class="is-active"><a href="#" aria-current="page">Notifications</a></li>
+      </ul>
+    </nav>
     <div class="level mb-5">
       <div class="level-left">
         <h1 class="title">Notifications</h1>

@@ -7,6 +7,8 @@ require 'fileutils'
 require 'time'
 
 class BrightspaceClient
+  class AuthenticationError < StandardError; attr_reader :status_code; def initialize(msg, code); super(msg); @status_code = code; end; end
+  
   attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status
 
   def initialize
@@ -131,7 +133,7 @@ class BrightspaceClient
         course.name = c['OrgUnit']['Name']
         course.code = c['OrgUnit']['Code']
         course.is_pinned = !c['PinDate'].nil?
-        course.last_accessed_at = Time.parse(c.dig('Access', 'LastAccessed')) rescue nil
+        course.last_accessed_at = (Time.parse(c.dig('Access', 'LastAccessed')) rescue nil)
         course.semester = extract_semester_from_name(course.name)
         course.save!
       end
@@ -280,7 +282,11 @@ class BrightspaceClient
     raw_date = data[:date]
     begin
       if raw_date
-        parsed_date = raw_date.is_a?(Time) ? raw_date : Time.parse(raw_date.to_s)
+        parsed_date = if raw_date.is_a?(Time)
+                        raw_date
+                      else
+                        Time.parse(raw_date.to_s)
+                      end
         
         # Only update date if it's a new record OR if the date is significantly different
         # (to avoid constant timestamp shifting for items without stable API dates)
@@ -379,6 +385,10 @@ class BrightspaceClient
     !@token.nil? || !@cookie_string.nil?
   end
 
+  def get_org_unit(org_unit_id)
+    do_get("/d2l/api/lp/#{@api_version}/orgstructure/#{org_unit_id}")
+  end
+
   def get_who_am_i
     data = do_get("/d2l/api/lp/#{@api_version}/users/whoami")
     @user_display_name = data['DisplayName'] if data
@@ -395,8 +405,13 @@ class BrightspaceClient
        i.dig('OrgUnit', 'Type', 'Name') == 'Course Offering')
     end.sort_by do |i|
       pin_score = i['PinDate'] ? 0 : 1
-      access_date = i.dig('Access', 'LastAccessed') || "0000-00-00"
-      [pin_score, -Time.parse(access_date).to_i]
+      raw_access = i.dig('Access', 'LastAccessed')
+      begin
+        access_time = raw_access ? Time.parse(raw_access) : Time.at(0)
+      rescue ArgumentError
+        access_time = Time.at(0)
+      end
+      [pin_score, -access_time.to_i]
     end
   end
 
@@ -622,7 +637,7 @@ class BrightspaceClient
     items.each do |a|
       assignment = Assignment.find_or_initialize_by(brightspace_id: a['Id'].to_s, course_id: course_id.to_s)
       assignment.name = a['Name']
-      assignment.due_date = Time.parse(a['DueDate']) rescue nil
+      assignment.due_date = (Time.parse(a['DueDate']) rescue nil)
       assignment.description = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
       assignment.is_graded = a['IsGraded'] || false
       assignment.grade_item_id = a['GradeItemId'].to_s if a['GradeItemId']
@@ -660,7 +675,7 @@ class BrightspaceClient
       topic.post_count = t['PostCount'] || t['TotalPosts'] || t['Posts'] || 0
       
       lpd = t['LastPostDate'] || t['LastPost']&.fetch('DatePosted', nil)
-      topic.last_post_date = Time.parse(lpd.to_s) rescue nil if lpd
+      topic.last_post_date = (Time.parse(lpd.to_s) rescue nil) if lpd
       
       topic.save!
       
@@ -684,7 +699,7 @@ class BrightspaceClient
         # RichText handling
         post.body = p.dig('Body', 'Html') || p.dig('Body', 'Text') || p['Body']
         post.author_name = p['PostingUserDisplayName']
-        post.posted_at = Time.parse(p['DatePosted']) rescue nil
+        post.posted_at = (Time.parse(p['DatePosted']) rescue nil)
         
         # Check for instructor role
         post.is_instructor = p.dig('Author', 'IsInstructor') == true || p.dig('Author', 'RoleName') =~ /Instructor/i rescue false
@@ -710,7 +725,7 @@ class BrightspaceClient
     t.subject = thread['Subject'] || thread['Title']
     t.body = thread.dig('Description', 'Text') || thread.dig('Body', 'Text')
     t.author_name = thread['PostingUserDisplayName'] || thread.dig('LastPost', 'UserDisplayName')
-    t.posted_at = Time.parse(thread['DatePosted'] || thread['LastModified']) rescue nil
+    t.posted_at = (Time.parse(thread['DatePosted'] || thread['LastModified']) rescue nil)
     t.is_pinned = thread['IsPinned'] || false
     t.unread_count = thread['UnreadReplyCount'] || 0
     t.save!
@@ -745,7 +760,7 @@ class BrightspaceClient
         grade.denominator = g.dig('PointsDenominator')
         grade.weight = weights_map[obj_id] || g.dig('Weight')
         grade.grade_object_type = g['GradeObjectType']
-        grade.last_modified = Time.parse(g['LastModified']) rescue nil
+        grade.last_modified = (Time.parse(g['LastModified']) rescue nil)
         grade.comments = g.dig('Comments', 'Html') || g.dig('Comments', 'Text')
         
         # Link Due Date from Assignment if possible
@@ -966,12 +981,7 @@ class BrightspaceClient
         true
       elsif response.code == '401' || response.code == '403'
         puts "[!] AUTH ERROR #{response.code} (POST): Cookie/Token likely expired."
-        create_system_notification(
-          id: "auth_error_post_#{response.code}",
-          title: "Session Expired (#{response.code})",
-          body: "A server update (POST) failed because your session expired. Please update your cookies.",
-          urgency: 3
-        )
+        raise AuthenticationError.new("Brightspace session expired", response.code.to_i)
         false
       else
         puts "[Brightspace API] POST Error #{response.code}: #{path}"
@@ -1014,12 +1024,7 @@ class BrightspaceClient
         data
       elsif response.code == '401' || response.code == '403'
         puts "[!] AUTH ERROR #{response.code}: Cookie/Token likely expired."
-        create_system_notification(
-          id: "auth_error_#{response.code}",
-          title: "Session Expired (#{response.code})",
-          body: "Your Brightspace session has expired or access was forbidden. Please update your cookies in config/connection.json or log in again.",
-          urgency: 3
-        )
+        raise AuthenticationError.new("Brightspace session expired", response.code.to_i)
         nil
       elsif response.code == '404'
         puts "[!] 404 NOT FOUND: #{path}" unless is_notoriously_noisy

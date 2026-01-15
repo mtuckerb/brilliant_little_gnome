@@ -9,6 +9,14 @@
         <div class="level-left">
           <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> Discussion Topics</h4>
         </div>
+        <div class="level-right">
+           <div id="sync-indicator" class="is-hidden">
+             <span class="tag is-info is-light">
+               <span class="icon is-small mr-1"><i class="fas fa-sync fa-spin"></i></span>
+               <span id="sync-text">Syncing...</span>
+             </span>
+           </div>
+        </div>
       </div>
       
       <% if @topics && @topics.any? %>

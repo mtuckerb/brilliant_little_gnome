@@ -1,3 +1,22 @@
+require 'bundler/setup'
+require 'fileutils'
+require 'uri'
+require 'cgi'
+
+# Speed up boot using bootsnap
+require 'bootsnap'
+cache_dir = ENV['BOOTSNAP_CACHE_DIR'] || 'tmp/bootsnap'
+FileUtils.mkdir_p(cache_dir)
+Bootsnap.setup(
+  cache_dir:            cache_dir, 
+  development_mode:     ENV['RACK_ENV'] == 'development' || ENV['BRILLIANT_ENV'] == 'electron',
+  load_path_cache:      true,
+  compile_cache_iseq:   true,
+  compile_cache_yaml:   true
+)
+
+Bundler.require(:default)
+
 require 'sinatra'
 require 'sinatra/activerecord'
 require 'active_support/time'
@@ -5,6 +24,7 @@ require 'time'
 require 'zip'
 require 'tempfile'
 require 'icalendar'
+require 'rack-flash'
 
 require_relative 'lib/brightspace/client'
 require_relative 'lib/brightspace/auth_helper'
@@ -27,12 +47,67 @@ require_relative 'models/grade'
 set :port, 4567
 set :views, File.join(File.dirname(__FILE__), 'views')
 
+# PID Management for Electron Sidecar
+if ENV['BRILLIANT_DATA_DIR']
+  pid_path = File.join(ENV['BRILLIANT_DATA_DIR'], 'ruby_sidecar.pid')
+  File.write(pid_path, Process.pid.to_s)
+  at_exit { File.delete(pid_path) if File.exist?(pid_path) }
+end
+
+# Reduce logging noise in production/Electron context
+if ENV['RACK_ENV'] == 'production' || defined?(Electron)
+  ActiveRecord::Base.logger.level = Logger::INFO
+end
+
+# Session and Middleware Setup (Must be before routes and error blocks)
+enable :sessions
+use Rack::Flash
+
+# Global Error Handling for API Auth
+error BrightspaceClient::AuthenticationError do
+  msg = env['sinatra.error'].message
+  status_code = env['sinatra.error'].respond_to?(:status_code) ? env['sinatra.error'].status_code : 401
+  
+  # Accessing env['x-rack.flash'] directly in error blocks is safer
+  flash_obj = env['x-rack.flash'] || env['rack.flash']
+  flash_obj[:error] = "<strong>Session Error (#{status_code})</strong>: Your Brightspace session has expired. <a href='/auth/login' class='has-text-weight-bold' style='text-decoration: underline'>Click here to Magic Login</a>" if flash_obj
+  
+  redirect '/dashboard'
+end
+
 # Runtime Database Initialization
 configure :development, :production do
   begin
     puts "Verifying database schema..."
-    # Ensure the directory exists
-    FileUtils.mkdir_p("db")
+    
+    # Increase connection pool size to handle background sync threads
+    db_config = {}
+    
+    # If using absolute path in DATABASE_URL, ensure parent directory exists
+    if ENV['DATABASE_URL'] && ENV['DATABASE_URL'].start_with?('sqlite3://')
+      # Correctly parse URI and handle %20 specifically
+      uri = URI.parse(ENV['DATABASE_URL'])
+      db_real_path = CGI.unescape(uri.path)
+      FileUtils.mkdir_p(File.dirname(db_real_path))
+      
+      db_config = {
+        adapter: "sqlite3",
+        database: db_real_path,
+        pool: 20,
+        timeout: 5000
+      }
+    else
+      # Ensure the local directory exists
+      FileUtils.mkdir_p("db")
+      db_config = {
+        adapter: "sqlite3",
+        database: "db/development.sqlite3",
+        pool: 20,
+        timeout: 5000
+      }
+    end
+
+    ActiveRecord::Base.establish_connection(db_config)
 
     # Optimization: Enable WAL mode for SQLite to handle concurrency
     ActiveRecord::Base.connection.execute("PRAGMA journal_mode=WAL;")
@@ -54,19 +129,24 @@ end
 
 # Initialize Client
 $client = BrightspaceClient.new
-
 # Helpers
 helpers CourseHelpers
 
 helpers do
   def configured?
-    # Check if we have at least a cookie or token
     $client.authenticated?
+  end
+
+  def flash
+    f = env['x-rack.flash'] || env['rack.flash']
+    f ||= {}
+    f
   end
 
   def format_date(date, format = "%b %d, %Y %I:%M %p")
     return "Recently" if date.nil?
-    d = date.is_a?(String) ? Time.parse(date) : date
+    d = date.is_a?(String) ? (Time.parse(date) rescue nil) : date
+    return date.to_s if d.nil?
     
     tz_name = @user_prefs&.time_zone || "UTC"
     d.in_time_zone(tz_name).strftime(format)
@@ -93,7 +173,7 @@ end
 
 before do
   # Allow access to setup and public files without being "configured"
-  return if ['/setup', '/favicon.ico', '/auth/login'].include?(request.path_info) || request.path_info.start_with?('/public')
+  return if ['/setup', '/favicon.ico', '/logo.png', '/auth/login'].include?(request.path_info) || request.path_info.start_with?('/public')
   
   if !configured?
     redirect '/setup'
@@ -119,7 +199,9 @@ end
 post '/settings' do
   @user_prefs.update(
     display_name: params[:display_name],
-    time_zone: params[:time_zone]
+    time_zone: params[:time_zone],
+    historic_gpa: params[:historic_gpa],
+    historic_units: params[:historic_units]
   )
 
   if params[:host] && params[:cookies] && !params[:cookies].empty?
@@ -179,7 +261,29 @@ before '/course/:id*' do
 
   # Try to load course from normalized table
   @course = Course.find_by(org_unit_id: @course_id)
-  @course_name = @course ? @course.name : "Course #{@course_id}"
+  
+  # If not in DB, try to fetch info from API to populate name
+  if @course.nil? || @course.name.to_s.match?(/^\d+$/)
+    course_info = $client.get_org_unit(@course_id)
+    if course_info
+      @course_name = course_info['Name']
+      # Proactively create the course record so we have it next time
+      @course = Course.create(
+        org_unit_id: @course_id,
+        name: @course_name,
+        code: course_info['Code']
+      ) rescue nil
+    else
+      @course_name = "Course #{@course_id}"
+    end
+
+    # If course exists but had a numeric name, update it
+    if @course && @course_name != @course.name && !@course_name.match?(/^\d+$/)
+      @course.update(name: @course_name)
+    end
+  else
+    @course_name = @course.name
+  end
   
   # Fetch TOC from database first
   @toc = build_toc_tree(@course_id)
@@ -225,18 +329,40 @@ get '/dashboard' do
   # Load courses from normalized table for speed
   @courses_query = Course.all.unscope(:order).order(is_pinned: :desc, last_accessed_at: :desc)
   
+  # Fix numeric names on the fly for the dashboard
+  @courses_query.each do |c|
+    if c.name.to_s.match?(/^\d+$/)
+      Thread.new(c.org_unit_id) do |oid|
+        ActiveRecord::Base.connection_pool.with_connection do
+          info = $client.get_org_unit(oid)
+          Course.find_by(org_unit_id: oid)&.update(name: info['Name']) if info && info['Name']
+        end
+      end
+    end
+  end
+
   # Fallback if DB is empty
   if @courses_query.empty?
-    @courses_raw = $client.get_enrollments
-    @courses = @courses_raw # for the mapping below
+    @courses_raw = $client.get_enrollments || []
+    @courses = @courses_raw.map do |c|
+      # Defensive mapping to ensure we always have Course-like objects
+      Course.new(
+        org_unit_id: (c.dig('OrgUnit', 'Id') || 0).to_s,
+        name: c.dig('OrgUnit', 'Name') || "Unknown Course",
+        code: c.dig('OrgUnit', 'Code'),
+        is_pinned: !c['PinDate'].nil?,
+        last_accessed_at: (Time.parse(c.dig('Access', 'LastAccessed')) rescue nil),
+        semester: $client.extract_semester_from_name(c.dig('OrgUnit', 'Name'))
+      )
+    end
   else
     @courses = @courses_query
   end
 
   # --- SEMESTER ANALYTICS ---
-  # We want grades for the most "active" semester (usually the one with most courses)
-  @all_semesters = @courses.map { |c| c.semester }.compact.uniq.sort
-  @current_semester = @courses.map { |c| c.semester }.compact.group_by(&:itself).values.max_by(&:size)&.first
+  # Defensive mapping: use try(:semester) to handle potential mixed collection/missing columns
+  @all_semesters = @courses.map { |c| c.respond_to?(:semester) ? c.semester : nil }.compact.uniq.sort
+  @current_semester = @courses.map { |c| c.respond_to?(:semester) ? c.semester : nil }.compact.group_by(&:itself).values.max_by(&:size)&.first
   
   # Filter course list by semester if requested or persistent preference
   @semester_filter = params[:semester] || @user_prefs.default_semester || @current_semester
@@ -247,13 +373,13 @@ get '/dashboard' do
   end
 
   if @semester_filter && @semester_filter != 'all'
-    @display_courses = @courses.select { |c| c.semester == @semester_filter }
+    @display_courses = @courses.select { |c| (c.respond_to?(:semester) ? c.semester : nil) == @semester_filter }
   else
     @display_courses = @courses
   end
   
   if @current_semester
-    @semester_courses = @courses.select { |c| c.semester == @current_semester }
+    @semester_courses = @courses.select { |c| (c.respond_to?(:semester) ? c.semester : nil) == @current_semester }
     @semester_grades = []
     
     # Weighting GPA by Course Units (Credits)
@@ -261,14 +387,19 @@ get '/dashboard' do
     semester_units = 0
     
     @semester_courses.each do |c|
-      stats = Grade.calculate_weighted_total(c.org_unit_id)
-      if stats[:confidence] > 0
-        @semester_grades << { 
-          course: c, 
-          score: stats[:score], 
-          confidence: stats[:confidence] 
+      # Optimization: Perform calculation once
+      stats = Grade.calculate_weighted_total(c.org_unit_id) rescue nil
+      next unless stats
+
+      # Treat 0 confidence courses as "not yet started" and exclude from dashboard analytics 
+      # unless user specifically wants to see them
+      if stats[:confidence] > 0 || stats[:all_possible_points] > 0
+        sg_item = { 
+          course: c,
+          stats: stats
         }
-        
+        @semester_grades << sg_item
+
         # USM Calculation: GPA Points = (Scale Value * Units)
         course_gpa_value = Grade.to_gpa(stats[:score])
         course_units = c.units || 3
@@ -287,6 +418,15 @@ get '/dashboard' do
     cumulative_units = historic_units + semester_units
     
     @overall_gpa = cumulative_units > 0 ? (cumulative_points / cumulative_units) : 0.0
+
+    # --- MAX POTENTIAL SEMESTER GPA ---
+    total_max_weighted_points = (historic_gpa * historic_units)
+    @semester_grades.each do |sg|
+        course_units = sg[:course].units || 3
+        max_course_gpa = Grade.to_gpa(sg[:stats][:max_potential_score])
+        total_max_weighted_points += (max_course_gpa * course_units)
+    end
+    @max_potential_gpa = cumulative_units > 0 ? (total_max_weighted_points / cumulative_units) : 0.0
   end
   # --------------------------
 
@@ -348,8 +488,8 @@ get '/course/:id/assignments/export.ics' do
   cal = Icalendar::Calendar.new
   assignments.each do |a|
     next unless a['DueDate']
-    
-      event_start = Time.parse(a['DueDate'])
+
+      event_start = (Time.parse(a['DueDate']) rescue Time.now)
       cal.event do |e|
         e.dtstart     = Icalendar::Values::DateTime.new(event_start.utc, tzid: 'UTC')
         e.dtend       = Icalendar::Values::DateTime.new((event_start + 60*60).utc, tzid: 'UTC')
@@ -428,6 +568,11 @@ get '/notifications' do
   @active_tab = 'notifications'
   @courses = $client.get_enrollments
   @user = $client.get_who_am_i
+
+  # Handle breadcrumb context
+  if params[:from_course]
+    @context_course = Course.find_by(org_unit_id: params[:from_course])
+  end
   
   # Trigger a quick background sync for news/grades when viewing notifications
   Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_notifications(@courses, @user) } }
@@ -482,9 +627,11 @@ get '/notifications' do
 
   # Background check: If any semesters are missing, try to fill them
   Thread.new do
-    Notification.where(semester: [nil, ""]).where.not(course_name: nil).find_each do |n|
-      sem = $client.extract_semester_from_name(n.course_name)
-      n.update_column(:semester, sem) if sem
+    ActiveRecord::Base.connection_pool.with_connection do
+      Notification.where(semester: [nil, ""]).where.not(course_name: nil).find_each do |n|
+        sem = $client.extract_semester_from_name(n.course_name)
+        n.update_column(:semester, sem) if sem
+      end
     end
   end
 
@@ -581,7 +728,7 @@ get '/course/:id/grades' do
   
   # Use DB for display
   # Sort by due_date ASC. Items without due dates will appear at the bottom (nulls last)
-  @grades = Grade.where(course_id: @course_id).order("due_date ASC NULLS LAST", name: :asc)
+  @grades = Grade.where(course_id: @course_id).order(Arel.sql("due_date ASC NULLS LAST"), name: :asc)
   
   # Fallback to raw if DB still empty
   @grades = @grades_raw if @grades.empty?
@@ -590,6 +737,12 @@ get '/course/:id/grades' do
   @grade_stats = calculate_grade_stats(@course_id)
   
   erb :grades
+end
+
+post '/course/:id/update_units' do
+  @course = Course.find_by(org_unit_id: params[:id])
+  @course.update(units: params[:units]) if @course
+  redirect back
 end
 
 # Discussions
@@ -618,9 +771,20 @@ get '/course/:id/discussions' do
   if @topics.empty? || params[:force_refresh] == 'true'
     # Immediate fallback to raw data if DB is empty to avoid blank screen
     @forums_raw = $client.get_discussions(@course_id) || []
-    @topics = @forums_raw.map do |f| 
-      $client.get_discussion_topics(@course_id, f['ForumId'], force_refresh: params[:force_refresh] == 'true').tap { |res| (res['Items'] || res).each { |t| t['ForumId'] = f['ForumId'] } }
-    end.flatten.map { |t| t['Items'] || t }.flatten
+    @topics = @forums_raw.flat_map do |f| 
+      topics_data = $client.get_discussion_topics(@course_id, f['ForumId'], force_refresh: params[:force_refresh] == 'true')
+      # Defensive check: ensure topics_data is a hash/array before mapping
+      items = if topics_data.is_a?(Hash)
+                topics_data['Items'] || []
+              elsif topics_data.is_a?(Array)
+                topics_data
+              else
+                []
+              end
+      
+      items.each { |t| t['ForumId'] = f['ForumId'] if t.is_a?(Hash) }
+      items
+    end
   end
   
   @breadcrumb_trail = [{ title: 'Discussions', url: "/course/#{@course_id}/discussions" }]
@@ -950,3 +1114,6 @@ get '/job/:id/download' do
     "Not ready."
   end
 end
+
+# Start Server
+Sinatra::Application.run! if __FILE__ == $0

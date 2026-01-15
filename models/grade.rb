@@ -42,12 +42,17 @@ class Grade < ActiveRecord::Base
     # Confidence is what percent of the total points have been graded
     confidence = all_possible_points > 0 ? (total_points_possible.to_f / all_possible_points) * 100 : 0
 
+    remaining_points = all_possible_points - total_points_possible
+    max_potential_score = ((total_points_earned + remaining_points) / all_possible_points) * 100
+
     {
       score: current_score.round(2),
       confidence: confidence.round(1),
       total_points_earned: total_points_earned.round(2),
       total_points_possible: total_points_possible.round(2),
-      all_possible_points: all_possible_points.round(2)
+      all_possible_points: all_possible_points.round(2),
+      remaining_points: remaining_points.round(2),
+      max_potential_score: max_potential_score.round(2)
     }
   end
 

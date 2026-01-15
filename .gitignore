@@ -1,5 +1,10 @@
+dist
+bin/ruby_dist
+vendor/bundle
+vendor/cache
 config/connection.json
 cookies.txt
 .cache
 debugging
-db
+db/production.sqlite3
+db/development.sqlite3

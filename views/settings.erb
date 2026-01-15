@@ -40,6 +40,29 @@
             </div>
 
             <hr>
+            <h3 class="title is-4">GPA Calculation (USM Scale)</h3>
+            <div class="columns">
+              <div class="column">
+                <div class="field">
+                  <label class="label">Historic GPA (Transfer/Previous)</label>
+                  <div class="control has-icons-left">
+                    <input class="input" type="number" step="0.001" name="historic_gpa" value="<%= @user_prefs.historic_gpa %>">
+                    <span class="icon is-small is-left"><i class="fas fa-graduation-cap"></i></span>
+                  </div>
+                </div>
+              </div>
+              <div class="column">
+                <div class="field">
+                  <label class="label">Historic Units (Credits)</label>
+                  <div class="control has-icons-left">
+                    <input class="input" type="number" name="historic_units" value="<%= @user_prefs.historic_units %>">
+                    <span class="icon is-small is-left"><i class="fas fa-calculator"></i></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <hr>
             <h3 class="title is-4">Brightspace Connection</h3>
             <div class="field">
               <label class="label">Brightspace Host</label>
@@ -67,10 +90,10 @@
                   </div>
                 </div>
                 <div class="level-right">
-                  <a href="/auth/login" class="button is-info">
+                  <button type="button" onclick="startAppLogin()" class="button is-info">
                     <span class="icon"><i class="fas fa-magic"></i></span>
                     <span><strong>Launch</strong></span>
-                  </a>
+                  </button>
                 </div>
               </div>
             </div>
@@ -88,3 +111,32 @@
     </div>
   </div>
 </section>
+
+<script>
+  function startAppLogin() {
+    const hostInput = document.querySelector('input[name="host"]');
+    const host = (hostInput && hostInput.value) ? hostInput.value : "<%= @host %>";
+    
+    if (window.electron) {
+      window.electron.startLogin(host);
+    } else {
+      // Fallback for non-electron debug
+      window.location.href = `/auth/login?host=${host}`;
+    }
+  }
+
+  if (window.electron) {
+    window.electron.onLoginComplete((data) => {
+      // Fill the manual form and submit it automatically
+      const hostInput = document.querySelector('input[name="host"]');
+      const cookieInput = document.querySelector('textarea[name="cookies"]');
+      
+      if (hostInput && cookieInput) {
+        hostInput.value = data.host;
+        cookieInput.value = data.cookies;
+        // Auto submit the form
+        document.querySelector('form[action="/settings"]').submit();
+      }
+    });
+  }
+</script>

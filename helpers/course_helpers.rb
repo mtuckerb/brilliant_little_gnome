@@ -364,14 +364,14 @@ module CourseHelpers
   def confidence_color(confidence)
     return "has-text-grey-light" if confidence.nil?
     return "has-text-danger" if confidence < 30
-    return "has-text-warning" if confidence < 70
-    "has-text-success"
+    return "has-text-warning-dark" if confidence < 70
+    "has-text-primary"
   end
 
   def grade_color(score)
-    return "has-text-grey-light" if score.nil?
-    return "has-text-danger" if score < 60
-    return "has-text-warning" if score < 80
-    "has-text-success"
+    return "is-light" if score.nil?
+    return "is-danger" if score < 70
+    return "is-warning" if score < 90
+    "is-primary"
   end
 end

@@ -31,18 +31,35 @@
       word-wrap: break-word;
       overflow-wrap: break-word;
     }
+
+    /* Flash Notifications */
+    #flash-container {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+      width: 350px;
+    }
+    .notification.is-flash {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      border-left: 5px solid;
+      transition: opacity 0.5s ease-out;
+    }
+    .notification.is-flash.is-danger {
+      border-left-color: #f14668;
+    }
   </style>
 </head>
 <body>
   <nav class="navbar is-white">
     <div class="navbar-brand">
        <a class="navbar-item is-size-4 has-text-weight-bold has-text-primary" href="/dashboard">
-         <img src="/logo.png" alt="Brilliant Logo" style="max-height: 40px;" class="mr-2"> Brilliant
+         <img src="/public/logo.png" alt="Brilliant Logo" style="max-height: 40px;" class="mr-2"> Brilliant
        </a>
     </div>
     <div class="navbar-end">
        <div class="navbar-item">
-          <a href="/notifications" class="button is-white <%= 'has-text-primary' if @active_tab == 'notifications' %>">
+          <a href="/notifications<%= "?from_course=#{@course_id}" if @course_id %>" class="button is-white <%= 'has-text-primary' if @active_tab == 'notifications' %>">
             <span class="icon"><i class="fas fa-bell"></i></span>
             <span>Notifications</span>
           </a>
@@ -58,7 +75,57 @@
   </nav>
 
   <div class="main-content container">
+    <div id="flash-container">
+      <% if flash[:error] %>
+        <div class="notification is-danger is-flash" id="flash-message">
+          <button class="delete" onclick="this.parentElement.remove()"></button>
+          <%= flash[:error] %>
+        </div>
+      <% end %>
+      <% if flash[:success] %>
+        <div class="notification is-success is-flash" id="flash-message">
+          <button class="delete" onclick="this.parentElement.remove()"></button>
+          <%= flash[:success] %>
+        </div>
+      <% end %>
+    </div>
+
     <%= yield %>
   </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const flashes = document.querySelectorAll('.is-flash');
+      flashes.forEach(flash => {
+        setTimeout(() => {
+          flash.style.opacity = '0';
+          setTimeout(() => flash.remove(), 500);
+        }, 5000);
+      });
+
+      // Global Sync Status Polling
+      function pollSyncStatus() {
+        fetch('/sync/status')
+          .then(res => res.json())
+          .then(data => {
+            const indicator = document.getElementById('sync-indicator');
+            const text = document.getElementById('sync-text');
+            
+            if (indicator && text) {
+              if (data.status === 'syncing') {
+                indicator.classList.remove('is-hidden');
+                text.innerText = data.current_task || 'Syncing...';
+              } else {
+                indicator.classList.add('is-hidden');
+              }
+            }
+          })
+          .catch(err => console.error('Sync Status Error:', err));
+      }
+      
+      setInterval(pollSyncStatus, 2000);
+      pollSyncStatus(); // Initial call
+    });
+  </script>
 </body>
 </html>
