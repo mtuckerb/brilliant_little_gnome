@@ -34,9 +34,17 @@ jobs:
           mkdir -p bin/ruby_dist/macos-arm64
           # Provision portable ruby
           curl -L https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
+          
+          # Fix rpath for portability
+          BINARY="bin/ruby_dist/macos-arm64/bin/ruby"
+          CURRENT_LIB=$(otool -L "$BINARY" | grep libruby | awk '{print $1}')
+          if [ ! -z "$CURRENT_LIB" ]; then
+            install_name_tool -change "$CURRENT_LIB" "@executable_path/../lib/libruby.3.4.dylib" "$BINARY"
+          fi
+
+          export DYLD_LIBRARY_PATH="$PWD/bin/ruby_dist/macos-arm64/lib"
           bundle config set --local path 'vendor/bundle'
-          # Use the portable ruby to install native gems for compatibility
-          bin/ruby_dist/macos-arm64/bin/ruby bin/ruby_dist/macos-arm64/bin/bundle install --deployment
+          bin/ruby_dist/macos-arm64/bin/ruby bin/ruby_dist/macos-arm64/bin/bundle install
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -49,7 +57,7 @@ jobs:
           # Re-root the portable folder
           mv bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64/* bin/ruby_dist/win-x64/ || true
           # Use the portable ruby to install native gems
-          bin/ruby_dist/win-x64/bin/ruby bin/ruby_dist/win-x64/bin/bundle.bat install --deployment
+          bin/ruby_dist/win-x64/bin/ruby bin/ruby_dist/win-x64/bin/bundle.bat install
 
       - name: Install Dependencies
         run: npm ci
