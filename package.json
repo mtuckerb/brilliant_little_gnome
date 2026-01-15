@@ -63,7 +63,9 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^39.2.7",
-    "electron-builder": "^26.4.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^26.4.0",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.2"
   }
 }
