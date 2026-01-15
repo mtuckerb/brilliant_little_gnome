@@ -1,0 +1,62 @@
+#!/bin/sh
+
+# Brilliant CLI Wrapper
+# Isolates the portable Ruby environment from system Ruby pollution
+
+BASE_DIR=$(cd "$(dirname "$0")" && pwd)
+PLATFORM_DIR="macos-arm64"
+PORTABLE_ROOT="$BASE_DIR/bin/ruby_dist/$PLATFORM_DIR"
+PORTABLE_RUBY="$PORTABLE_ROOT/bin/ruby"
+BUNDLE_BIN="$PORTABLE_ROOT/bin/bundle"
+
+if [ ! -f "$PORTABLE_RUBY" ]; then
+    echo "Error: Portable Ruby not found at $PORTABLE_RUBY"
+    exit 1
+fi
+
+# 1. Clear out system Ruby variables to prevent leaks
+unset GEM_HOME
+unset GEM_PATH
+unset RUBYLIB
+unset RUBYOPT
+
+# 2. Configure Bundler environment
+export BUNDLE_GEMFILE="$BASE_DIR/Gemfile"
+export BUNDLE_PATH="$BASE_DIR/vendor/bundle"
+export BUNDLE_DEPLOYMENT="true"
+
+# 3. Force Ruby to only look at our portable dist and vendor bundle
+# Standard internal paths for Ruby 3.4.x
+INTERNAL_GEMS="$PORTABLE_ROOT/lib/ruby/gems/3.4.0"
+VENDOR_GEMS="$BASE_DIR/vendor/bundle/ruby/3.4.0"
+
+export GEM_PATH="$VENDOR_GEMS:$INTERNAL_GEMS"
+export GEM_HOME="$VENDOR_GEMS"
+
+# 4. Update PATH so the portable 'ruby' is found first if any gems spawn sub-processes
+export PATH="$PORTABLE_ROOT/bin:$PATH"
+
+# If no command is provided, show help
+if [ $# -eq 0 ]; then
+    echo "Brilliant Portable CLI (Ruby 3.4.5)"
+    echo "Usage: ./brilliant [command] [args...]"
+    exit 0
+fi
+
+COMMAND=$1
+shift
+
+case "$COMMAND" in
+    rake)
+        exec "$PORTABLE_RUBY" "$BUNDLE_BIN" exec rake "$@"
+        ;;
+    bundle)
+        exec "$PORTABLE_RUBY" "$BUNDLE_BIN" "$@"
+        ;;
+    ruby)
+        exec "$PORTABLE_RUBY" "$@"
+        ;;
+    *)
+        exec "$PORTABLE_RUBY" "$BUNDLE_BIN" exec "$COMMAND" "$@"
+        ;;
+esac
