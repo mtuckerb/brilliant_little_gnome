@@ -303,9 +303,14 @@ class BrightspaceClient
   def upsert_notification(data)
     # Map symbols to strings for ActiveRecord
     n = Notification.find_or_initialize_by(external_id: data[:id].to_s, course_id: data[:course_id].to_s)
+    
+    # Intelligent protection: don't overwrite existing title/body with thinner data
+    new_title = data[:title]
+    new_body = data[:body]
+
     n.notification_type = data[:type]
-    n.title = data[:title]
-    n.body = data[:body]
+    n.title = new_title if new_title.present?
+    n.body = new_body if new_body.present?
 
     # Improved date handling: handle strings, Time objects, and nil
     raw_date = data[:date]
