@@ -1,21 +1,23 @@
 openapi: 3.0.0
 info:
-  title: Brilliant REST API
-  description: >
-    REST API for the Brilliant student companion. Enables fetching course data, grades, assignments,
-    and updating user settings. Supports internal intelligent sync and automatic fallback to 
-    local data if Brightspace authentication is lost.
+  title: Brilliant Sidecar API
   version: 1.1.0
+  description: |
+    REST API for interacting with cached LMS data and Model Context Protocol (MCP) server integration.
+    
+    All `/api/v1/*` endpoints require an `X-API-KEY` header unless otherwise specified.
+
 servers:
-  - url: http://localhost:4567/api/v1
-    description: Local Brilliant Instance
+  - url: /api/v1
+    description: Local API server
 
 components:
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
       in: header
-      name: X-API-Key
+      name: X-API-KEY
+
   schemas:
     Course:
       type: object
@@ -24,10 +26,26 @@ components:
         org_unit_id: { type: string }
         name: { type: string }
         code: { type: string }
+        semester: { type: string }
         is_pinned: { type: boolean }
         last_accessed_at: { type: string, format: date-time }
-        semester: { type: string }
         banner_url: { type: string }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: integer }
+        external_id: { type: string }
+        title: { type: string }
+        body: { type: string }
+        date: { type: string, format: date-time }
+        course_id: { type: string }
+        course_name: { type: string }
+        semester: { type: string }
+        urgency: { type: integer, description: "1 (Low) to 5 (High)" }
+        is_personal: { type: boolean }
+        is_read: { type: boolean }
+        url: { type: string }
 
     Grade:
       type: object
@@ -74,7 +92,7 @@ paths:
   /courses:
     get:
       summary: List all courses
-      description: Returns localized course data and triggers a background sync to Brightspace.
+      description: Returns localized course data. MCP tool `list_courses` provides additional property-level filtering.
       responses:
         '200':
           description: List of courses
@@ -103,6 +121,39 @@ paths:
                 items:
                   $ref: '#/components/schemas/Grade'
 
+  /notifications:
+    get:
+      summary: Retrieve notifications with filtering
+      parameters:
+        - name: course_id
+          in: query
+          schema: { type: string }
+        - name: semester
+          in: query
+          schema: { type: string }
+        - name: urgency
+          in: query
+          schema: { type: integer }
+        - name: is_personal
+          in: query
+          schema: { type: boolean }
+        - name: show_read
+          in: query
+          description: Include read notifications (default false)
+          schema: { type: boolean }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+
   /preferences:
     get:
       summary: Retrieve current preferences
@@ -130,3 +181,38 @@ paths:
                 $ref: '#/components/schemas/Preferences'
         '422':
           description: Validation error
+
+  /mcp/sse:
+    get:
+      summary: MCP SSE Connection Endpoint
+      description: Establishes a Server-Sent Events stream for Model Context Protocol.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: SSE Stream established
+
+  /mcp/messages:
+    post:
+      summary: MCP JSON-RPC Message Handler
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                jsonrpc: { type: string, example: "2.0" }
+                id: { type: string }
+                method: { type: string }
+                params: { type: object }
+      responses:
+        '202':
+          description: Message accepted for processing
+        '200':
+          description: Direct synchronous response

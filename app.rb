@@ -1281,10 +1281,18 @@ end
 # --- Notifications ---
 get '/api/v1/notifications' do
   query = Notification.all
-  query = query.where(course_id: params[:course_id]) if params[:course_id].present?
-  query = query.where(is_read: false) unless params[:include_read] == 'true'
   
-  query.order(date: :desc).limit(50).to_json
+  query = query.where(course_id: params[:course_id]) if params[:course_id].present?
+  query = query.where(semester: params[:semester]) if params[:semester].present?
+  query = query.where(urgency: params[:urgency]) if params[:urgency].present?
+  query = query.where(is_personal: true) if params[:is_personal] == 'true'
+  
+  unless params[:include_read] == 'true' || params[:show_read] == 'true'
+    query = query.where(is_read: false)
+  end
+  
+  limit = (params[:limit] || 50).to_i
+  query.order(date: :desc).limit(limit).to_json
 end
 
 # --- Settings ---
@@ -1383,10 +1391,58 @@ helpers do
       { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.1.0" } } }
     when 'tools/list'
       { jsonrpc: "2.0", id: id, result: { tools: [
-        { name: "list_courses", description: "List all enrolled courses with IDs and names", inputSchema: { type: "object", properties: {} } },
-        { name: "get_course_grades", description: "Get grade entries for a specific course", inputSchema: { type: "object", properties: { course_id: { type: "string", description: "Course OrgUnitId" } }, required: ["course_id"] } },
-        { name: "get_notifications", description: "Get unread notifications across all courses", inputSchema: { type: "object", properties: { limit: { type: "integer", default: 10 } } } },
-        { name: "get_course_assignments", description: "Get assignments and due dates for a course", inputSchema: { type: "object", properties: { course_id: { type: "string" } }, required: ["course_id"] } }
+        { 
+          name: "list_courses", 
+          description: "List enrolled courses with advanced filtering", 
+          inputSchema: { 
+            type: "object", 
+            properties: { 
+              year: { type: "string", description: "Filter by year (e.g. 2026)" },
+              season: { type: "string", description: "Filter by season (e.g. Spring, Fall, Summer)" },
+              department_prefix: { type: "string", description: "Filter by department code (e.g. SWO, ECO)" },
+              title: { type: "string", description: "Fuzzy match on course title" },
+              is_pinned: { type: "boolean", description: "Filter by pinned/favorite status" },
+              semester: { type: "string", description: "Exact match for semester string (e.g. '2026 Spring')" }
+            } 
+          } 
+        },
+        { 
+          name: "get_course_grades", 
+          description: "Get grade entries for a specific course", 
+          inputSchema: { 
+            type: "object", 
+            properties: { 
+              course_id: { type: "string", description: "Course OrgUnitId" } 
+            }, 
+            required: ["course_id"] 
+          } 
+        },
+        { 
+          name: "get_notifications", 
+          description: "Get notifications across all courses with UI-consistent filtering", 
+          inputSchema: { 
+            type: "object", 
+            properties: { 
+              course_id: { type: "string", description: "Filter by Course OrgUnitId" },
+              semester: { type: "string", description: "Filter by semester (e.g. '2026 Spring')" },
+              urgency: { type: "integer", description: "Filter by urgency level (1-5)" },
+              is_personal: { type: "boolean", description: "Filter for personal/direct notifications" },
+              show_read: { type: "boolean", description: "Set to true to include read notifications (default: false)" },
+              limit: { type: "integer", default: 10, description: "Maximum number of notifications to return" }
+            } 
+          } 
+        },
+        { 
+          name: "get_course_assignments", 
+          description: "Get assignments and due dates for a course", 
+          inputSchema: { 
+            type: "object", 
+            properties: { 
+              course_id: { type: "string" } 
+            }, 
+            required: ["course_id"] 
+          } 
+        }
       ] } }
     when 'tools/call'
       result = call_mcp_tool(params['name'], params['arguments'] || {})
@@ -1401,15 +1457,38 @@ helpers do
   def call_mcp_tool(name, args)
     case name
     when 'list_courses'
-      courses = Course.all.order(is_pinned: :desc, last_accessed_at: :desc)
+      query = Course.all
+      
+      query = query.where("semester LIKE ?", "%#{args['year']}%") if args['year']
+      query = query.where("semester LIKE ?", "%#{args['season']}%") if args['season']
+      query = query.where(semester: args['semester']) if args['semester']
+      query = query.where("name LIKE ?", "%#{args['department_prefix']} %") if args['department_prefix']
+      query = query.where("name LIKE ?", "%#{args['title']}%") if args['title']
+      query = query.where(is_pinned: (args['is_pinned'] == true)) if args.has_key?('is_pinned')
+
+      courses = query.order(is_pinned: :desc, last_accessed_at: :desc)
       { content: [{ type: "text", text: courses.to_json }] }
+
     when 'get_course_grades'
       grades = Grade.where(course_id: args['course_id']).order(Arel.sql("due_date ASC NULLS LAST"))
       { content: [{ type: "text", text: grades.to_json }] }
+
     when 'get_notifications'
+      query = Notification.all
+      
+      query = query.where(course_id: args['course_id']) if args['course_id']
+      query = query.where(semester: args['semester']) if args['semester']
+      query = query.where(urgency: args['urgency']) if args['urgency']
+      query = query.where(is_personal: true) if args['is_personal']
+      
+      if args['show_read'] != true
+        query = query.where(is_read: false)
+      end
+
       limit = args['limit'] || 10
-      items = Notification.where(is_read: false).order(date: :desc).limit(limit)
+      items = query.order(date: :desc).limit(limit)
       { content: [{ type: "text", text: items.to_json }] }
+
     when 'get_course_assignments'
       assignments = Assignment.where(course_id: args['course_id']).order(due_date: :asc)
       { content: [{ type: "text", text: assignments.to_json }] }
