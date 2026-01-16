@@ -34,6 +34,18 @@ jobs:
           mkdir -p bin/ruby_dist/macos-arm64
           # Provision portable ruby
           curl -L https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
+          
+          # Fix rpath for portability
+          RB_BIN="bin/ruby_dist/macos-arm64/bin/ruby"
+          RB_LIB="bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib"
+          
+          # Make library and binary relocatable
+          install_name_tool -id "@rpath/libruby.3.4.dylib" "$RB_LIB" || true
+          OLD_LIB=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1)
+          install_name_tool -change "$OLD_LIB" "@rpath/libruby.3.4.dylib" "$RB_BIN" || true
+          install_name_tool -add_rpath "@executable_path/../lib" "$RB_BIN" || true
+
+          # Re-sign for ARM64 macOS
           codesign -s - -f "$RB_LIB" || true
           codesign -s - -f "$RB_BIN" || true
 
@@ -45,6 +57,7 @@ jobs:
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
+        run: |
           mkdir -p bin/ruby_dist/win-x64
           # Provision portable ruby
           curl -L https://github.com/oneclick/rubyinstaller2/releases/download/RubyInstaller-3.4.1-1/rubyinstaller-3.4.1-1-x64.7z -o ruby.7z
