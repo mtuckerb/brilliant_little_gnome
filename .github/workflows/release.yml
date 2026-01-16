@@ -96,7 +96,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}
-          path: dist/*.{dmg,exe,zip}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.zip
+            dist/*.blockmap
+          if-no-files-found: error
 
   release:
     needs: build
