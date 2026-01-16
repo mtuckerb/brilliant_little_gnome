@@ -5,6 +5,9 @@ on:
     branches:
       - release
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -96,27 +99,25 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download macos artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: build-macos-latest
-          path: artifacts/macos
+          path: artifacts
 
-      - name: Download windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-windows-latest
-          path: artifacts/windows
+      - name: Display structure of downloaded artifacts
+        run: ls -R artifacts
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/macos/*.{dmg,zip}
-            artifacts/windows/*.{exe,zip}
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
+            artifacts/**/*.zip
           tag_name: v${{ github.run_number }}
           name: Release v${{ github.run_number }}
           draft: false
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
