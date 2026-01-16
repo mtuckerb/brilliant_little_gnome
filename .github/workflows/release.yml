@@ -10,6 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
 
@@ -23,7 +24,7 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Setup Ruby
+      - name: Setup Ruby (System)
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'
@@ -39,9 +40,14 @@ jobs:
           RB_BIN="bin/ruby_dist/macos-arm64/bin/ruby"
           RB_LIB="bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib"
           
+          # Check files exist
+          ls -l "$RB_BIN" || exit 1
+          ls -l "$RB_LIB" || exit 1
+          
           # Make library and binary relocatable
           install_name_tool -id "@rpath/libruby.3.4.dylib" "$RB_LIB" || true
           OLD_LIB=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1)
+          echo "Old Lib Path: $OLD_LIB"
           install_name_tool -change "$OLD_LIB" "@rpath/libruby.3.4.dylib" "$RB_BIN" || true
           install_name_tool -add_rpath "@executable_path/../lib" "$RB_BIN" || true
 
@@ -49,11 +55,15 @@ jobs:
           codesign -s - -f "$RB_LIB" || true
           codesign -s - -f "$RB_BIN" || true
 
+          # Set environment for portable ruby
           export PATH="$PWD/bin/ruby_dist/macos-arm64/bin:$PATH"
           export GEM_HOME="$PWD/vendor/bundle"
           export GEM_PATH="$PWD/vendor/bundle"
           
-          bin/ruby_dist/macos-arm64/bin/ruby bin/ruby_dist/macos-arm64/bin/bundle install --path vendor/bundle
+          # Install bundler inside our portable ruby
+          "$RB_BIN" -S gem install bundler --no-document
+          # Install dependencies
+          "$RB_BIN" -S bundle install --path vendor/bundle
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -64,12 +74,18 @@ jobs:
           7z x ruby.7z -obin/ruby_dist/win-x64
           # Re-root the portable folder
           mv bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64/* bin/ruby_dist/win-x64/ || true
-          # Use the portable ruby to install native gems
-          export PATH="$PWD/bin/ruby_dist/win-x64/bin:$PATH"
-          export GEM_HOME="$PWD/vendor/bundle"
-          export GEM_PATH="$PWD/vendor/bundle"
           
-          bin/ruby_dist/win-x64/bin/ruby bin/ruby_dist/win-x64/bin/bundle.bat install --path vendor/bundle
+          # Set environment for portable ruby
+          $env:PATH = "$PWD\bin\ruby_dist\win-x64\bin;$env:PATH"
+          $env:GEM_HOME = "$PWD\vendor\bundle"
+          $env:GEM_PATH = "$PWD\vendor\bundle"
+          
+          # Use binary path explicitly
+          $RB_BIN = "bin/ruby_dist/win-x64/bin/ruby.exe"
+          
+          # Install dependencies
+          & $RB_BIN -S gem install bundler --no-document
+          & $RB_BIN -S bundle install --path vendor/bundle
 
       - name: Install Dependencies
         run: npm ci
