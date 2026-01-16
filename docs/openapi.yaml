@@ -1,0 +1,132 @@
+openapi: 3.0.0
+info:
+  title: Brilliant REST API
+  description: >
+    REST API for the Brilliant student companion. Enables fetching course data, grades, assignments,
+    and updating user settings. Supports internal intelligent sync and automatic fallback to 
+    local data if Brightspace authentication is lost.
+  version: 1.1.0
+servers:
+  - url: http://localhost:4567/api/v1
+    description: Local Brilliant Instance
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    Course:
+      type: object
+      properties:
+        id: { type: integer }
+        org_unit_id: { type: string }
+        name: { type: string }
+        code: { type: string }
+        is_pinned: { type: boolean }
+        last_accessed_at: { type: string, format: date-time }
+        semester: { type: string }
+        banner_url: { type: string }
+
+    Grade:
+      type: object
+      properties:
+        id: { type: integer }
+        brightspace_id: { type: string }
+        name: { type: string }
+        displayed_grade: { type: string }
+        numerator: { type: number }
+        denominator: { type: number }
+        weight: { type: number }
+        due_date: { type: string, format: date-time }
+        comments: { type: string }
+
+    Preferences:
+      type: object
+      properties:
+        display_name: { type: string }
+        time_zone: { type: string }
+        historic_gpa: { type: number }
+        historic_units: { type: integer }
+        default_semester: { type: string }
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /status:
+    get:
+      summary: Check system and authentication status
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated: { type: boolean }
+                  degraded_mode: { type: boolean }
+                  host: { type: string }
+                  sync_status: { type: object }
+
+  /courses:
+    get:
+      summary: List all courses
+      description: Returns localized course data and triggers a background sync to Brightspace.
+      responses:
+        '200':
+          description: List of courses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Course'
+
+  /courses/{id}/grades:
+    get:
+      summary: Get course grades
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: List of grade entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Grade'
+
+  /preferences:
+    get:
+      summary: Retrieve current preferences
+      responses:
+        '200':
+          description: User settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Preferences'
+    patch:
+      summary: Update user settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Preferences'
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Preferences'
+        '422':
+          description: Validation error

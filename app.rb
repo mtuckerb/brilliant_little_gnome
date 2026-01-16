@@ -55,6 +55,16 @@ if ENV['BRILLIANT_DATA_DIR']
   at_exit { File.delete(pid_path) if File.exist?(pid_path) }
 end
 
+# API Listening Configuration
+configure do
+  prefs = UserPreference.current
+  if prefs.api_listen_all
+    set :bind, '0.0.0.0'
+  else
+    set :bind, '127.0.0.1'
+  end
+end
+
 # Reduce logging noise in production/Electron context
 if ENV['RACK_ENV'] == 'production' || defined?(Electron)
   ActiveRecord::Base.logger.level = Logger::INFO
@@ -168,6 +178,19 @@ helpers do
     query_string = Rack::Utils.build_query(new_params)
     "#{request.path_info}?#{query_string}"
   end
+
+  def validate_api_access!
+    unless @user_prefs.api_enabled
+      halt 403, { error: "REST API is disabled in settings" }.to_json
+    end
+
+    return if @user_prefs.api_key.blank?
+
+    key = request.env['HTTP_X_API_KEY'] || request.env['HTTP_AUTHORIZATION']&.split(' ')&.last
+    if key != @user_prefs.api_key
+      halt 401, { error: "Invalid or missing API Key" }.to_json
+    end
+  end
 end
 
 # ==========================================
@@ -204,7 +227,10 @@ post '/settings' do
     display_name: params[:display_name],
     time_zone: params[:time_zone],
     historic_gpa: params[:historic_gpa],
-    historic_units: params[:historic_units]
+    historic_units: params[:historic_units],
+    api_enabled: params[:api_enabled] == 'true',
+    api_listen_all: params[:api_listen_all] == 'true',
+    api_key: params[:api_key]
   )
 
   if params[:host] && params[:cookies] && !params[:cookies].empty?
@@ -1207,5 +1233,96 @@ get '/job/:id/download' do
   end
 end
 
-# Start Server
+# ==========================================
+# External REST API Routes
+# ==========================================
+
+namespace '/api/v1' do
+  before do
+    content_type :json
+    validate_api_access!
+  end
+
+  # --- Course Discovery ---
+  get '/courses' do
+    # Trigger intelligent background sync
+    $client.sync_all_courses_proactively
+    
+    courses = Course.all.order(is_pinned: :desc, last_accessed_at: :desc)
+    courses.to_json
+  end
+
+  get '/courses/:id' do
+    course = Course.find_by(org_unit_id: params[:id])
+    halt 404, { error: "Course not found" }.to_json unless course
+    course.to_json
+  end
+
+  # --- Content ---
+  get '/courses/:id/modules' do
+    modules = ContentModule.where(course_id: params[:id]).order(sort_order: :asc)
+    modules.to_json
+  end
+
+  get '/courses/:id/assignments' do
+    assignments = Assignment.where(course_id: params[:id]).order(due_date: :asc)
+    assignments.to_json
+  end
+
+  # --- Progress & Performance ---
+  get '/courses/:id/grades' do
+    # Only fetch from OA if not in degraded mode
+    unless $client.degraded_mode
+      grades_raw = $client.get_grades(params[:id])
+      $client.sync_grades(params[:id], grades_raw) if grades_raw.is_a?(Array)
+    end
+    
+    grades = Grade.where(course_id: params[:id]).order(arel_table[:due_date].asc.nulls_last)
+    grades.to_json
+  end
+
+  get '/courses/:id/stats' do
+    stats = calculate_grade_stats(params[:id])
+    stats.to_json
+  end
+
+  # --- Notifications ---
+  get '/notifications' do
+    query = Notification.all
+    query = query.where(course_id: params[:course_id]) if params[:course_id].present?
+    query = query.where(is_read: false) unless params[:include_read] == 'true'
+    
+    query.order(date: :desc).limit(50).to_json
+  end
+
+  # --- Settings ---
+  get '/preferences' do
+    @user_prefs.to_json(except: [:api_key, :brightspace_cookie])
+  end
+
+  patch '/preferences' do
+    payload = JSON.parse(request.body.read) rescue {}
+    
+    # Whitelist updatable fields
+    updatable = payload.slice('display_name', 'time_zone', 'historic_gpa', 'historic_units', 'default_semester')
+    
+    if @user_prefs.update(updatable)
+      @user_prefs.to_json(except: [:api_key, :brightspace_cookie])
+    else
+      halt 422, { errors: @user_prefs.errors.full_messages }.to_json
+    end
+  end
+
+  # --- System & Auth State ---
+  get '/status' do
+    {
+      authenticated: $client.authenticated?,
+      degraded_mode: $client.degraded_mode,
+      host: $client.host,
+      sync_status: $client.sync_status
+    }.to_json
+  end
+end
+
+# Transition to Start Server
 Sinatra::Application.run! if __FILE__ == $0

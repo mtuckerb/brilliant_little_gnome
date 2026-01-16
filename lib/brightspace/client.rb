@@ -9,7 +9,7 @@ require 'time'
 class BrightspaceClient
   class AuthenticationError < StandardError; attr_reader :status_code; def initialize(msg, code); super(msg); @status_code = code; end; end
   
-  attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status
+  attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status, :degraded_mode
 
   def initialize
     @config_path = 'config/connection.json'
@@ -19,6 +19,7 @@ class BrightspaceClient
     @sync_lock = Mutex.new
     @syncing = false
     @sync_status = { status: "idle", progress: 0, current_task: nil }
+    @degraded_mode = false
     
     # Legacy/Fallback: Try loading from cookies.txt
     load_cookies_from_file if !authenticated? && File.exist?('cookies.txt')
@@ -41,6 +42,7 @@ class BrightspaceClient
   def save_connection_config(host, cookies)
     @host = host.to_s.gsub(/https?:\/\//, '').split('/').first
     @cookie_string = cookies.sub(/^Cookie:\s*/i, '')
+    @degraded_mode = false # Reset degraded mode on new config
     
     FileUtils.mkdir_p('config')
     File.write(@config_path, { host: @host, cookies: @cookie_string }.to_json)
@@ -1099,6 +1101,7 @@ class BrightspaceClient
 
   def fetch_and_cache(path)
     return nil unless authenticated?
+    return read_cache(path) if @degraded_mode
     
     # Optional: silence noisy expected 404s for discussions
     is_notoriously_noisy = path.include?('/discussions/') && path.include?('/threads/')
@@ -1127,9 +1130,9 @@ class BrightspaceClient
         write_cache(path, data)
         data
       elsif response.code == '401' || response.code == '403'
-        puts "[!] AUTH ERROR #{response.code}: Cookie/Token likely expired."
-        raise AuthenticationError.new("Brightspace session expired", response.code.to_i)
-        nil
+        puts "[!] AUTH ERROR #{response.code}: Cookie/Token likely expired. Entering Degraded Mode."
+        @degraded_mode = true
+        read_cache(path)
       elsif response.code == '404'
         puts "[!] 404 NOT FOUND: #{path}" unless is_notoriously_noisy
         nil
