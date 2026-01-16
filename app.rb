@@ -3,17 +3,7 @@ require 'fileutils'
 require 'uri'
 require 'cgi'
 
-# Speed up boot using bootsnap
-require 'bootsnap'
-cache_dir = ENV['BOOTSNAP_CACHE_DIR'] || 'tmp/bootsnap'
-FileUtils.mkdir_p(cache_dir)
-Bootsnap.setup(
-  cache_dir:            cache_dir, 
-  development_mode:     ENV['RACK_ENV'] == 'development' || ENV['BRILLIANT_ENV'] == 'electron',
-  load_path_cache:      true,
-  compile_cache_iseq:   true,
-  compile_cache_yaml:   true
-)
+require 'securerandom'
 
 Bundler.require(:default)
 
@@ -43,6 +33,62 @@ require_relative 'models/discussion_thread'
 require_relative 'models/discussion_post'
 require_relative 'models/grade'
 
+# --- Runtime Database Initialization ---
+# Move this early so models can be used in configure blocks
+begin
+  puts "[Brilliant] Starting Database Initialization..."
+  
+  # Increase connection pool size to handle background sync threads
+  db_config = {}
+  
+  # If using absolute path in DATABASE_URL, ensure parent directory exists
+  if ENV['DATABASE_URL'] && ENV['DATABASE_URL'].start_with?('sqlite3://')
+    # Correctly parse URI and handle %20 specifically
+    uri = URI.parse(ENV['DATABASE_URL'])
+    db_real_path = CGI.unescape(uri.path)
+    puts "[Brilliant] Using DATABASE_URL: #{db_real_path}"
+    FileUtils.mkdir_p(File.dirname(db_real_path))
+    
+    db_config = {
+      adapter: "sqlite3",
+      database: db_real_path,
+      pool: 20,
+      timeout: 5000
+    }
+  else
+    # Ensure the local directory exists
+    puts "[Brilliant] Using default development database"
+    FileUtils.mkdir_p("db")
+    db_config = {
+      adapter: "sqlite3",
+      database: "db/development.sqlite3",
+      pool: 20,
+      timeout: 5000
+    }
+  end
+
+  ActiveRecord::Base.establish_connection(db_config)
+  puts "[Brilliant] Connection established"
+
+  # Optimization: Enable WAL mode for SQLite to handle concurrency
+  ActiveRecord::Base.connection.execute("PRAGMA journal_mode=WAL;")
+  ActiveRecord::Base.connection.execute("PRAGMA synchronous=NORMAL;")
+  ActiveRecord::Base.connection.execute("PRAGMA busy_timeout=5000;")
+  
+  # Run migrations if pending
+  # In AR 5.2 MigrationContext takes only the migrations path
+  context = ActiveRecord::MigrationContext.new("db/migrate")
+  if context.needs_migration?
+    puts "[Brilliant] Pending migrations detected. Automating migration..."
+    context.migrate
+    puts "[Brilliant] Database schema is now up to date."
+  end
+  puts "[Brilliant] Database Initialization Complete"
+rescue => e
+  puts "[Brilliant] Database initialization warning: #{e.message}"
+  puts e.backtrace.first(5).join("\n")
+end
+
 # Basic Configuration
 set :port, 4567
 set :views, File.join(File.dirname(__FILE__), 'views')
@@ -57,86 +103,16 @@ end
 
 # API Listening Configuration
 configure do
-  prefs = UserPreference.current
-  if prefs.api_listen_all
-    set :bind, '0.0.0.0'
-  else
-    set :bind, '127.0.0.1'
-  end
-end
-
-# Reduce logging noise in production/Electron context
-if ENV['RACK_ENV'] == 'production' || defined?(Electron)
-  ActiveRecord::Base.logger.level = Logger::INFO
-end
-
-# Session and Middleware Setup (Must be before routes and error blocks)
-enable :sessions
-use Rack::Flash
-
-# Global Error Handling for General Exceptions
-error do
-  @error = env['sinatra.error']
-  @course_id = params[:id]
-  
-  # Try to grab course name if we have an ID for the header
-  if @course_id
-    @course = Course.find_by(org_unit_id: @course_id)
-    @course_name = @course&.name || "Course #{@course_id}"
-  end
-
-  erb :error, layout: :layout
-end
-
-# Runtime Database Initialization
-configure :development, :production do
   begin
-    puts "Verifying database schema..."
-    
-    # Increase connection pool size to handle background sync threads
-    db_config = {}
-    
-    # If using absolute path in DATABASE_URL, ensure parent directory exists
-    if ENV['DATABASE_URL'] && ENV['DATABASE_URL'].start_with?('sqlite3://')
-      # Correctly parse URI and handle %20 specifically
-      uri = URI.parse(ENV['DATABASE_URL'])
-      db_real_path = CGI.unescape(uri.path)
-      FileUtils.mkdir_p(File.dirname(db_real_path))
-      
-      db_config = {
-        adapter: "sqlite3",
-        database: db_real_path,
-        pool: 20,
-        timeout: 5000
-      }
+    prefs = UserPreference.current
+    if prefs.api_listen_all
+      set :bind, '0.0.0.0'
     else
-      # Ensure the local directory exists
-      FileUtils.mkdir_p("db")
-      db_config = {
-        adapter: "sqlite3",
-        database: "db/development.sqlite3",
-        pool: 20,
-        timeout: 5000
-      }
-    end
-
-    ActiveRecord::Base.establish_connection(db_config)
-
-    # Optimization: Enable WAL mode for SQLite to handle concurrency
-    ActiveRecord::Base.connection.execute("PRAGMA journal_mode=WAL;")
-    ActiveRecord::Base.connection.execute("PRAGMA synchronous=NORMAL;")
-    ActiveRecord::Base.connection.execute("PRAGMA busy_timeout=5000;")
-    
-    # Run migrations if pending
-    # In AR 5.2 MigrationContext takes only the migrations path
-    context = ActiveRecord::MigrationContext.new("db/migrate")
-    if context.needs_migration?
-      puts "Pending migrations detected. Automating migration..."
-      context.migrate
-      puts "Database schema is now up to date."
+      set :bind, '127.0.0.1'
     end
   rescue => e
-    puts "Database initialization warning: #{e.message}"
+    puts "Warning: Could not load API preferences during boot: #{e.message}"
+    set :bind, '127.0.0.1'
   end
 end
 
@@ -193,13 +169,28 @@ helpers do
   end
 end
 
+# Serve API Documentation
+get '/docs' do
+  redirect '/docs/'
+end
+
+get '/docs/' do
+  send_file File.join(settings.root, 'docs', 'index.html')
+end
+
+get '/docs/:filename' do |filename|
+  # Basic security to prevent path traversal
+  filename = File.basename(filename)
+  send_file File.join(settings.root, 'docs', filename)
+end
+
 # ==========================================
 # Routes
 # ==========================================
 
 before do
   # Allow access to setup and public files without being "configured"
-  return if ['/setup', '/favicon.ico', '/logo.png', '/auth/login'].include?(request.path_info) || request.path_info.start_with?('/public')
+  return if ['/setup', '/favicon.ico', '/logo.png', '/auth/login', '/docs'].include?(request.path_info) || request.path_info.start_with?('/public') || request.path_info.start_with?('/api/') || request.path_info.start_with?('/docs/')
   
   if !configured?
     redirect '/setup'
@@ -1237,90 +1228,194 @@ end
 # External REST API Routes
 # ==========================================
 
-namespace '/api/v1' do
-  before do
-    content_type :json
-    validate_api_access!
-  end
+# Use a before filter for all API routes to handle auth and content-type
+before '/api/v1/*' do
+  content_type :json
+  @user_prefs = UserPreference.current
+  validate_api_access!
+end
 
-  # --- Course Discovery ---
-  get '/courses' do
-    # Trigger intelligent background sync
-    $client.sync_all_courses_proactively
-    
-    courses = Course.all.order(is_pinned: :desc, last_accessed_at: :desc)
-    courses.to_json
-  end
+# --- Course Discovery ---
+get '/api/v1/courses' do
+  # Trigger intelligent background sync
+  $client.sync_all_courses_proactively
+  
+  courses = Course.all.order(is_pinned: :desc, last_accessed_at: :desc)
+  courses.to_json
+end
 
-  get '/courses/:id' do
-    course = Course.find_by(org_unit_id: params[:id])
-    halt 404, { error: "Course not found" }.to_json unless course
-    course.to_json
-  end
+get '/api/v1/courses/:id' do
+  course = Course.find_by(org_unit_id: params[:id])
+  halt 404, { error: "Course not found" }.to_json unless course
+  course.to_json
+end
 
-  # --- Content ---
-  get '/courses/:id/modules' do
-    modules = ContentModule.where(course_id: params[:id]).order(sort_order: :asc)
-    modules.to_json
-  end
+# --- Content ---
+get '/api/v1/courses/:id/modules' do
+  modules = ContentModule.where(course_id: params[:id]).order(sort_order: :asc)
+  modules.to_json
+end
 
-  get '/courses/:id/assignments' do
-    assignments = Assignment.where(course_id: params[:id]).order(due_date: :asc)
-    assignments.to_json
-  end
+get '/api/v1/courses/:id/assignments' do
+  assignments = Assignment.where(course_id: params[:id]).order(due_date: :asc)
+  assignments.to_json
+end
 
-  # --- Progress & Performance ---
-  get '/courses/:id/grades' do
-    # Only fetch from OA if not in degraded mode
-    unless $client.degraded_mode
-      grades_raw = $client.get_grades(params[:id])
-      $client.sync_grades(params[:id], grades_raw) if grades_raw.is_a?(Array)
-    end
-    
-    grades = Grade.where(course_id: params[:id]).order(arel_table[:due_date].asc.nulls_last)
-    grades.to_json
+# --- Progress & Performance ---
+get '/api/v1/courses/:id/grades' do
+  # Only fetch from OA if not in degraded mode
+  unless $client.degraded_mode
+    grades_raw = $client.get_grades(params[:id])
+    $client.sync_grades(params[:id], grades_raw) if grades_raw.is_a?(Array)
   end
+  
+  grades = Grade.where(course_id: params[:id]).order(Arel.sql("due_date ASC NULLS LAST"))
+  grades.to_json
+end
 
-  get '/courses/:id/stats' do
-    stats = calculate_grade_stats(params[:id])
-    stats.to_json
-  end
+get '/api/v1/courses/:id/stats' do
+  stats = calculate_grade_stats(params[:id])
+  stats.to_json
+end
 
-  # --- Notifications ---
-  get '/notifications' do
-    query = Notification.all
-    query = query.where(course_id: params[:course_id]) if params[:course_id].present?
-    query = query.where(is_read: false) unless params[:include_read] == 'true'
-    
-    query.order(date: :desc).limit(50).to_json
-  end
+# --- Notifications ---
+get '/api/v1/notifications' do
+  query = Notification.all
+  query = query.where(course_id: params[:course_id]) if params[:course_id].present?
+  query = query.where(is_read: false) unless params[:include_read] == 'true'
+  
+  query.order(date: :desc).limit(50).to_json
+end
 
-  # --- Settings ---
-  get '/preferences' do
+# --- Settings ---
+get '/api/v1/preferences' do
+  @user_prefs.to_json(except: [:api_key, :brightspace_cookie])
+end
+
+patch '/api/v1/preferences' do
+  payload = JSON.parse(request.body.read) rescue {}
+  
+  # Whitelist updatable fields
+  updatable = payload.slice('display_name', 'time_zone', 'historic_gpa', 'historic_units', 'default_semester')
+  
+  if @user_prefs.update(updatable)
     @user_prefs.to_json(except: [:api_key, :brightspace_cookie])
+  else
+    halt 422, { errors: @user_prefs.errors.full_messages }.to_json
   end
+end
 
-  patch '/preferences' do
-    payload = JSON.parse(request.body.read) rescue {}
+# --- System & Auth State ---
+get '/api/v1/status' do
+  {
+    authenticated: $client.authenticated?,
+    degraded_mode: $client.degraded_mode,
+    host: $client.host,
+    sync_status: $client.sync_status
+  }.to_json
+end
+
+# ==========================================
+# Model Context Protocol (MCP) Implementation
+# ==========================================
+
+set :mcp_connections, {}
+
+get '/api/v1/mcp/sse' do
+  validate_api_access!
+  
+  content_type 'text/event-stream'
+  cache_control :no_cache
+  headers(
+    'Connection' => 'keep-alive',
+    'X-Accel-Buffering' => 'no'
+  )
+  
+  stream(:keep_open) do |out|
+    session_id = SecureRandom.uuid
+    settings.mcp_connections[session_id] = out
     
-    # Whitelist updatable fields
-    updatable = payload.slice('display_name', 'time_zone', 'historic_gpa', 'historic_units', 'default_semester')
+    # Metadata for the client to know where to POST messages
+    out << "event: endpoint\n"
+    out << "data: /api/v1/mcp/messages?session_id=#{session_id}\n\n"
     
-    if @user_prefs.update(updatable)
-      @user_prefs.to_json(except: [:api_key, :brightspace_cookie])
+    out.callback do
+      settings.mcp_connections.delete(session_id)
+    end
+  end
+end
+
+post '/api/v1/mcp/messages' do
+  validate_api_access!
+  
+  session_id = params[:session_id]
+  out = settings.mcp_connections[session_id]
+  
+  # Just respond with 200 if it's a direct POST without a session (unlikely for MCP SSE)
+  # but if session exists, we use it.
+  
+  request_payload = JSON.parse(request.body.read) rescue nil
+  halt 400, { error: "Invalid JSON-RPC request" }.to_json unless request_payload
+  
+  response_payload = handle_mcp_request(request_payload)
+  
+  if response_payload && out
+    out << "event: message\n"
+    out << "data: #{response_payload.to_json}\n\n"
+    status 202
+  elsif response_payload
+    # Fallback to direct response if no SSE stream (standard HTTP)
+    content_type :json
+    response_payload.to_json
+  else
+    status 204
+  end
+end
+
+helpers do
+  def handle_mcp_request(json)
+    id = json['id']
+    method = json['method']
+    params = json['params'] || {}
+
+    case method
+    when 'initialize'
+      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.1.0" } } }
+    when 'tools/list'
+      { jsonrpc: "2.0", id: id, result: { tools: [
+        { name: "list_courses", description: "List all enrolled courses with IDs and names", inputSchema: { type: "object", properties: {} } },
+        { name: "get_course_grades", description: "Get grade entries for a specific course", inputSchema: { type: "object", properties: { course_id: { type: "string", description: "Course OrgUnitId" } }, required: ["course_id"] } },
+        { name: "get_notifications", description: "Get unread notifications across all courses", inputSchema: { type: "object", properties: { limit: { type: "integer", default: 10 } } } },
+        { name: "get_course_assignments", description: "Get assignments and due dates for a course", inputSchema: { type: "object", properties: { course_id: { type: "string" } }, required: ["course_id"] } }
+      ] } }
+    when 'tools/call'
+      result = call_mcp_tool(params['name'], params['arguments'] || {})
+      { jsonrpc: "2.0", id: id, result: result }
+    when 'notifications/initialized'
+      nil
     else
-      halt 422, { errors: @user_prefs.errors.full_messages }.to_json
+      { jsonrpc: "2.0", id: id, error: { code: -32601, message: "Method not found: #{method}" } }
     end
   end
 
-  # --- System & Auth State ---
-  get '/status' do
-    {
-      authenticated: $client.authenticated?,
-      degraded_mode: $client.degraded_mode,
-      host: $client.host,
-      sync_status: $client.sync_status
-    }.to_json
+  def call_mcp_tool(name, args)
+    case name
+    when 'list_courses'
+      courses = Course.all.order(is_pinned: :desc, last_accessed_at: :desc)
+      { content: [{ type: "text", text: courses.to_json }] }
+    when 'get_course_grades'
+      grades = Grade.where(course_id: args['course_id']).order(Arel.sql("due_date ASC NULLS LAST"))
+      { content: [{ type: "text", text: grades.to_json }] }
+    when 'get_notifications'
+      limit = args['limit'] || 10
+      items = Notification.where(is_read: false).order(date: :desc).limit(limit)
+      { content: [{ type: "text", text: items.to_json }] }
+    when 'get_course_assignments'
+      assignments = Assignment.where(course_id: args['course_id']).order(due_date: :asc)
+      { content: [{ type: "text", text: assignments.to_json }] }
+    else
+      { isError: true, content: [{ type: "text", text: "Tool not found: #{name}" }] }
+    end
   end
 end
 

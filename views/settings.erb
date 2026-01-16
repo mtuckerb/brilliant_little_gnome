@@ -39,7 +39,7 @@
               </div>
             </div>
 
-    <hr>
+            <hr>
             <h3 class="title is-4">External REST API</h3>
             <div class="field">
               <label class="checkbox">
@@ -125,27 +125,6 @@
               </div>
             </div>
 
-            <hr>
-            <h3 class="title is-4">Refresh & Sync</h3>
-            <div class="field is-grouped is-grouped-multiline">
-              <div class="control">
-                <form action="/notifications/refresh_cache" method="POST">
-                  <button type="submit" class="button is-danger is-light" onclick="return confirm('This will clear the API cache and rebuild the notification database. Continue?')">
-                    <span class="icon"><i class="fas fa-trash-alt"></i></span>
-                    <span>Reset & Sync Notifications</span>
-                  </button>
-                </form>
-              </div>
-              <div class="control">
-                <form action="/sync/force" method="POST">
-                  <button type="submit" class="button is-info is-light">
-                    <span class="icon"><i class="fas fa-sync-alt"></i></span>
-                    <span>Re-Sync All Courses (Metadata)</span>
-                  </button>
-                </form>
-              </div>
-            </div>
-            
             <div class="message is-info is-light">
               <div class="message-body is-size-7">
                 <div class="columns is-vcentered">
@@ -167,6 +146,40 @@
               </div>
             </div>
           </form>
+
+          <hr>
+          <h3 class="title is-4">Maintenance Tasks</h3>
+          <div class="field is-grouped is-grouped-multiline">
+            <div class="control">
+              <form action="/notifications/refresh_cache" method="POST">
+                <button type="submit" class="button is-danger is-light" onclick="return confirm('This will clear the API cache and rebuild the notification database. Continue?')">
+                  <span class="icon"><i class="fas fa-trash-alt"></i></span>
+                  <span>Reset & Sync Notifications</span>
+                </button>
+              </form>
+            </div>
+            <div class="control">
+              <form action="/sync/force" method="POST">
+                <button type="submit" class="button is-info is-light">
+                  <span class="icon"><i class="fas fa-sync-alt"></i></span>
+                  <span>Re-Sync All Courses (Metadata)</span>
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <div class="message is-info is-light mt-4">
+            <div class="message-body is-size-7">
+              <div class="columns is-vcentered">
+                <div class="column is-narrow">
+                  <span class="icon is-large has-text-info"><i class="fas fa-tools fa-2x"></i></span>
+                </div>
+                <div class="column">
+                   Use these tools to force a full re-sync if data appears stale or inconsistent between local view and Brightspace.
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

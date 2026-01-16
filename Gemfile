@@ -16,4 +16,3 @@ gem 'bigdecimal'
 gem 'rack-flash3'
 
 gem "rack-cache", "~> 1.17"
-gem 'bootsnap'
