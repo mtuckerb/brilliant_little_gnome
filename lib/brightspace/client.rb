@@ -687,12 +687,17 @@ class BrightspaceClient
     
     items.each do |a|
       assignment = Assignment.find_or_initialize_by(brightspace_id: a['Id'].to_s, course_id: course_id.to_s)
-      assignment.name = a['Name']
+      
+      # Protection: Don't overwrite robust name with thin data (archived courses sometimes return numeric IDs as names)
+      new_name = a['Name']
+      assignment.name = new_name if new_name.present? && !new_name.match?(/^\d+$/)
       
       new_due = (Time.parse(a['DueDate']) rescue nil)
       assignment.due_date = new_due if new_due
+      
       new_desc = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
-      assignment.description = new_desc if new_desc && !new_desc.empty?
+      assignment.description = new_desc if new_desc.present?
+      
       assignment.is_graded = a['IsGraded'] || false
       assignment.grade_item_id = a['GradeItemId'].to_s if a['GradeItemId']
       assignment.save!
@@ -816,16 +821,27 @@ class BrightspaceClient
       grade_values.each do |g|
         obj_id = g['GradeObjectIdentifier'].to_s
         grade = Grade.find_or_initialize_by(brightspace_id: obj_id, course_id: course_id.to_s)
-        grade.name = g['GradeObjectName']
-        grade.displayed_grade = g['DisplayedGrade'] if g['DisplayedGrade']
+        
+        # Protection: archived courses often return numeric names
+        new_name = g['GradeObjectName']
+        grade.name = new_name if new_name.present? && !new_name.match?(/^\d+$/)
+        
+        # Use .present? to avoid wiping robust grades or comments with empty strings/nil
+        new_displayed = g['DisplayedGrade']
+        grade.displayed_grade = new_displayed if new_displayed.present?
+        
         grade.numerator = g.dig('PointsNumerator') if g.dig('PointsNumerator')
         grade.denominator = g.dig('PointsDenominator') if g.dig('PointsDenominator')
+        
         new_weight = weights_map[obj_id] || g.dig('Weight')
         grade.weight = new_weight if new_weight
+        
         grade.grade_object_type = g['GradeObjectType']
         new_mod = (Time.parse(g['LastModified']) rescue nil)
         grade.last_modified = new_mod if new_mod
-        grade.comments = g.dig('Comments', 'Html') || g.dig('Comments', 'Text')
+        
+        new_comments = g.dig('Comments', 'Html') || g.dig('Comments', 'Text')
+        grade.comments = new_comments if new_comments.present?
         
         # Link Due Date from Assignment if possible
         assignment = Assignment.find_by(course_id: course_id.to_s, grade_item_id: obj_id)
