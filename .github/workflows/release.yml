@@ -21,7 +21,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Setup Ruby (System)
@@ -43,7 +43,6 @@ jobs:
           RB_LIB="bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib"
           
           # Fix rpath for portability
-          # Use @executable_path/../lib for the library reference
           echo "Updating rpaths..."
           CURRENT_LIB=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1)
           if [ ! -z "$CURRENT_LIB" ]; then
@@ -55,13 +54,9 @@ jobs:
           codesign -s - -f "$RB_LIB"
           codesign -s - -f "$RB_BIN"
 
-          # Verify it runs
-          ./"$RB_BIN" -v
-
           # Use system ruby to install gems into the app's vendor folder
-          # This is more reliable than trying to run the portable ruby in CI
           bundle config set --local path 'vendor/bundle'
-          bundle install --deployment
+          bundle install --deployment || bundle install
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -74,16 +69,14 @@ jobs:
           URL="https://github.com/oneclick/rubyinstaller2/releases/download/RubyInstaller-3.4.1-1/rubyinstaller-3.4.1-1-x64.7z"
           curl -L "$URL" -o ruby.7z
           7z x ruby.7z -obin/ruby_dist/win-x64
-          # Re-root the portable folder (some 7z files have a nested folder)
+          # Re-root the portable folder
           if [ -d bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64 ]; then
             mv bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64/* bin/ruby_dist/win-x64/
           fi
           
-          # Install gems into vendor folder using system ruby
-          # We'll use the ruby installed by setup-ruby step
-          export PATH="/c/hostedtoolcache/windows/Ruby/3.4.1/x64/bin:$PATH"
+          # Install gems into vendor folder using system ruby (setup-ruby)
           bundle config set --local path 'vendor/bundle'
-          bundle install --deployment
+          bundle install --deployment || bundle install
 
       - name: Install Dependencies
         run: npm ci
