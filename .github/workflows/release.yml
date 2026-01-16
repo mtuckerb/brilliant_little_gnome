@@ -32,6 +32,8 @@ jobs:
       - name: Setup Native Dependencies (macOS)
         if: matrix.os == 'macos-latest'
         run: |
+          set -e
+          set -x
           mkdir -p bin/ruby_dist/macos-arm64
           # Provision portable ruby
           curl -L https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
@@ -41,14 +43,18 @@ jobs:
           RB_LIB="bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib"
           
           # Check files exist
-          ls -l "$RB_BIN" || exit 1
-          ls -l "$RB_LIB" || exit 1
+          ls -l "$RB_BIN"
+          ls -l "$RB_LIB"
+          
+          # Debug otool output
+          otool -L "$RB_BIN"
           
           # Make library and binary relocatable
           install_name_tool -id "@rpath/libruby.3.4.dylib" "$RB_LIB" || true
-          OLD_LIB=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1)
-          echo "Old Lib Path: $OLD_LIB"
-          install_name_tool -change "$OLD_LIB" "@rpath/libruby.3.4.dylib" "$RB_BIN" || true
+          OLD_LIB=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1) || true
+          if [ ! -z "$OLD_LIB" ]; then
+            install_name_tool -change "$OLD_LIB" "@rpath/libruby.3.4.dylib" "$RB_BIN" || true
+          fi
           install_name_tool -add_rpath "@executable_path/../lib" "$RB_BIN" || true
 
           # Re-sign for ARM64 macOS
@@ -60,10 +66,15 @@ jobs:
           export GEM_HOME="$PWD/vendor/bundle"
           export GEM_PATH="$PWD/vendor/bundle"
           
+          # Verify portable ruby works
+          ./"$RB_BIN" -v
+          
           # Install bundler inside our portable ruby
-          "$RB_BIN" -S gem install bundler --no-document
+          ./"$RB_BIN" -S gem install bundler --no-document
+          
           # Install dependencies
-          "$RB_BIN" -S bundle install --path vendor/bundle
+          # We need to make sure native extensions find the sqlite3 provided by macOS
+          ./"$RB_BIN" -S bundle install --path vendor/bundle
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -106,8 +117,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/upload-artifact@v4
         with:
+          name: build-${{ matrix.os }}
           path: artifacts
 
       - name: Create Release
