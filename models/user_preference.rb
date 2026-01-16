@@ -8,7 +8,9 @@ class UserPreference < ActiveRecord::Base
       brightspace_host: ENV['BS_HOST'] || "courses.maine.edu",
       collapsed_topics: [],
       historic_gpa: 3.778,
-      historic_units: 36
+      historic_units: 36,
+      api_enabled: false,
+      api_listen_all: false
     )
   end
 

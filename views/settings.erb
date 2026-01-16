@@ -39,6 +39,33 @@
               </div>
             </div>
 
+    <hr>
+            <h3 class="title is-4">External REST API</h3>
+            <div class="field">
+              <label class="checkbox">
+                <input type="checkbox" name="api_enabled" value="true" <%= 'checked' if @user_prefs.api_enabled %>>
+                Enable REST API
+              </label>
+            </div>
+
+            <div class="field">
+              <label class="checkbox">
+                <input type="checkbox" name="api_listen_all" value="true" <%= 'checked' if @user_prefs.api_listen_all %>>
+                Listen on all interfaces (0.0.0.0) - <i>Required for external access</i>
+              </label>
+            </div>
+
+            <div class="field">
+              <label class="label">API Key (Optional Authentication)</label>
+              <div class="control has-icons-left">
+                <input class="input" type="text" name="api_key" value="<%= @user_prefs.api_key %>" placeholder="Enter a secure key or leave blank">
+                <span class="icon is-small is-left">
+                  <i class="fas fa-key"></i>
+                </span>
+              </div>
+              <p class="help">If set, clients must provide this in the 'X-API-Key' or 'Authorization' header.</p>
+            </div>
+
             <hr>
             <h3 class="title is-4">GPA Calculation (USM Scale)</h3>
             <div class="columns">

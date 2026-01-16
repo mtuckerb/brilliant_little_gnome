@@ -5,11 +5,15 @@ on:
     branches:
       - release
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
 
@@ -20,10 +24,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
-      - name: Setup Ruby
+      - name: Setup Ruby (System)
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'
@@ -31,33 +35,52 @@ jobs:
       - name: Setup Native Dependencies (macOS)
         if: matrix.os == 'macos-latest'
         run: |
+          set -e
+          set -x
           mkdir -p bin/ruby_dist/macos-arm64
           # Provision portable ruby
-          curl -L https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
+          URL="https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz"
+          curl -L "$URL" | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
+          
+          RB_BIN="bin/ruby_dist/macos-arm64/bin/ruby"
+          RB_LIB="bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib"
           
           # Fix rpath for portability
-          BINARY="bin/ruby_dist/macos-arm64/bin/ruby"
-          CURRENT_LIB=$(otool -L "$BINARY" | grep libruby | awk '{print $1}')
+          echo "Updating rpaths..."
+          CURRENT_LIB=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1)
           if [ ! -z "$CURRENT_LIB" ]; then
-            install_name_tool -change "$CURRENT_LIB" "@executable_path/../lib/libruby.3.4.dylib" "$BINARY"
+            install_name_tool -change "$CURRENT_LIB" "@executable_path/../lib/libruby.3.4.dylib" "$RB_BIN"
           fi
+          install_name_tool -add_rpath "@executable_path/../lib" "$RB_BIN" || true
 
-          export DYLD_LIBRARY_PATH="$PWD/bin/ruby_dist/macos-arm64/lib"
+          # Re-sign for ARM64 macOS
+          codesign -s - -f "$RB_LIB"
+          codesign -s - -f "$RB_BIN"
+
+          # Use system ruby to install gems into the app's vendor folder
           bundle config set --local path 'vendor/bundle'
-          bin/ruby_dist/macos-arm64/bin/ruby bin/ruby_dist/macos-arm64/bin/bundle install
+          bundle install --deployment || bundle install
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
+          set -e
+          set -x
           mkdir -p bin/ruby_dist/win-x64
           # Provision portable ruby
-          curl -L https://github.com/oneclick/rubyinstaller2/releases/download/RubyInstaller-3.4.1-1/rubyinstaller-3.4.1-1-x64.7z -o ruby.7z
+          URL="https://github.com/oneclick/rubyinstaller2/releases/download/RubyInstaller-3.4.1-1/rubyinstaller-3.4.1-1-x64.7z"
+          curl -L "$URL" -o ruby.7z
           7z x ruby.7z -obin/ruby_dist/win-x64
           # Re-root the portable folder
-          mv bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64/* bin/ruby_dist/win-x64/ || true
-          # Use the portable ruby to install native gems
-          bin/ruby_dist/win-x64/bin/ruby bin/ruby_dist/win-x64/bin/bundle.bat install
+
+          if [ -d bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64 ]; then
+            mv bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64/* bin/ruby_dist/win-x64/
+          fi
+          
+          # Install gems into vendor folder using system ruby (setup-ruby)
+          bundle config set --local path 'vendor/bundle'
+          bundle install --deployment || bundle install
 
       - name: Install Dependencies
         run: npm ci
@@ -67,32 +90,46 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: List Build Output
+        run: ls -R dist/
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}
-          path: dist/*.{dmg,exe,zip}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.zip
+            dist/*.blockmap
+          if-no-files-found: error
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Download Artifacts
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
+
+      - name: Display structure of downloaded artifacts
+        run: ls -R artifacts
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/build-macos-latest/*.dmg
-            artifacts/build-macos-latest/*.zip
-            artifacts/build-windows-latest/*.exe
-            artifacts/build-windows-latest/*.zip
+          files: artifacts/*
           tag_name: v${{ github.run_number }}
           name: Release v${{ github.run_number }}
           draft: false
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

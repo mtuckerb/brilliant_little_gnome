@@ -9,7 +9,7 @@ require 'time'
 class BrightspaceClient
   class AuthenticationError < StandardError; attr_reader :status_code; def initialize(msg, code); super(msg); @status_code = code; end; end
   
-  attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status
+  attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status, :degraded_mode
 
   def initialize
     @config_path = 'config/connection.json'
@@ -19,6 +19,7 @@ class BrightspaceClient
     @sync_lock = Mutex.new
     @syncing = false
     @sync_status = { status: "idle", progress: 0, current_task: nil }
+    @degraded_mode = false
     
     # Legacy/Fallback: Try loading from cookies.txt
     load_cookies_from_file if !authenticated? && File.exist?('cookies.txt')
@@ -41,6 +42,7 @@ class BrightspaceClient
   def save_connection_config(host, cookies)
     @host = host.to_s.gsub(/https?:\/\//, '').split('/').first
     @cookie_string = cookies.sub(/^Cookie:\s*/i, '')
+    @degraded_mode = false # Reset degraded mode on new config
     
     FileUtils.mkdir_p('config')
     File.write(@config_path, { host: @host, cookies: @cookie_string }.to_json)
@@ -303,9 +305,14 @@ class BrightspaceClient
   def upsert_notification(data)
     # Map symbols to strings for ActiveRecord
     n = Notification.find_or_initialize_by(external_id: data[:id].to_s, course_id: data[:course_id].to_s)
+    
+    # Intelligent protection: don't overwrite existing title/body with thinner data
+    new_title = data[:title]
+    new_body = data[:body]
+
     n.notification_type = data[:type]
-    n.title = data[:title]
-    n.body = data[:body]
+    n.title = new_title if new_title.present?
+    n.body = new_body if new_body.present?
 
     # Improved date handling: handle strings, Time objects, and nil
     raw_date = data[:date]
@@ -682,12 +689,17 @@ class BrightspaceClient
     
     items.each do |a|
       assignment = Assignment.find_or_initialize_by(brightspace_id: a['Id'].to_s, course_id: course_id.to_s)
-      assignment.name = a['Name']
+      
+      # Protection: Don't overwrite robust name with thin data (archived courses sometimes return numeric IDs as names)
+      new_name = a['Name']
+      assignment.name = new_name if new_name.present? && !new_name.match?(/^\d+$/)
       
       new_due = (Time.parse(a['DueDate']) rescue nil)
       assignment.due_date = new_due if new_due
+      
       new_desc = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
-      assignment.description = new_desc if new_desc && !new_desc.empty?
+      assignment.description = new_desc if new_desc.present?
+      
       assignment.is_graded = a['IsGraded'] || false
       assignment.grade_item_id = a['GradeItemId'].to_s if a['GradeItemId']
       assignment.save!
@@ -811,16 +823,27 @@ class BrightspaceClient
       grade_values.each do |g|
         obj_id = g['GradeObjectIdentifier'].to_s
         grade = Grade.find_or_initialize_by(brightspace_id: obj_id, course_id: course_id.to_s)
-        grade.name = g['GradeObjectName']
-        grade.displayed_grade = g['DisplayedGrade'] if g['DisplayedGrade']
+        
+        # Protection: archived courses often return numeric names
+        new_name = g['GradeObjectName']
+        grade.name = new_name if new_name.present? && !new_name.match?(/^\d+$/)
+        
+        # Use .present? to avoid wiping robust grades or comments with empty strings/nil
+        new_displayed = g['DisplayedGrade']
+        grade.displayed_grade = new_displayed if new_displayed.present?
+        
         grade.numerator = g.dig('PointsNumerator') if g.dig('PointsNumerator')
         grade.denominator = g.dig('PointsDenominator') if g.dig('PointsDenominator')
+        
         new_weight = weights_map[obj_id] || g.dig('Weight')
         grade.weight = new_weight if new_weight
+        
         grade.grade_object_type = g['GradeObjectType']
         new_mod = (Time.parse(g['LastModified']) rescue nil)
         grade.last_modified = new_mod if new_mod
-        grade.comments = g.dig('Comments', 'Html') || g.dig('Comments', 'Text')
+        
+        new_comments = g.dig('Comments', 'Html') || g.dig('Comments', 'Text')
+        grade.comments = new_comments if new_comments.present?
         
         # Link Due Date from Assignment if possible
         assignment = Assignment.find_by(course_id: course_id.to_s, grade_item_id: obj_id)
@@ -1078,6 +1101,7 @@ class BrightspaceClient
 
   def fetch_and_cache(path)
     return nil unless authenticated?
+    return read_cache(path) if @degraded_mode
     
     # Optional: silence noisy expected 404s for discussions
     is_notoriously_noisy = path.include?('/discussions/') && path.include?('/threads/')
@@ -1106,9 +1130,9 @@ class BrightspaceClient
         write_cache(path, data)
         data
       elsif response.code == '401' || response.code == '403'
-        puts "[!] AUTH ERROR #{response.code}: Cookie/Token likely expired."
-        raise AuthenticationError.new("Brightspace session expired", response.code.to_i)
-        nil
+        puts "[!] AUTH ERROR #{response.code}: Cookie/Token likely expired. Entering Degraded Mode."
+        @degraded_mode = true
+        read_cache(path)
       elsif response.code == '404'
         puts "[!] 404 NOT FOUND: #{path}" unless is_notoriously_noisy
         nil
