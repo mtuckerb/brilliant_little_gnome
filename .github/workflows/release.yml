@@ -29,14 +29,29 @@ jobs:
           K_PASS: "buildpassword123"
         run: |
           # Decode secret into p12 file
-          printf "%s" "$CERTIFICATE_P12" | base64 --decode > certificate.p12
+          echo "$CERTIFICATE_P12" | base64 --decode > certificate.p12
+          if [ ! -s certificate.p12 ]; then
+            echo "Error: certificate.p12 is empty or does not exist"
+            exit 1
+          fi
+
           security create-keychain -p "$K_PASS" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$K_PASS" build.keychain
-          security import certificate.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          
+          # Import with -A to allow all apps, and -f pkcs12 to be explicit
+          security import certificate.p12 -k build.keychain -P "$P12_PASSWORD" -A -f pkcs12
+          
+          # Add to search list
           security list-keychains -d user -s build.keychain $(security list-keychains -d user | xargs)
+          
+          # Make default
           security default-keychain -s build.keychain
+          
+          # Setup partition list for non-interactive signing
+          # This is critical for macOS 10.12+
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$K_PASS" build.keychain
+          
           rm -f certificate.p12
 
       - name: Setup Node.js
