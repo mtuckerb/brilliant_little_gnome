@@ -389,6 +389,13 @@ get '/dashboard' do
   # Selection for the Overview box
   @overview_semester = params[:overview_semester] || @user_prefs.default_semester || @latest_semester
   
+  # Initialize analytics variables to avoid nil errors in view
+  @overall_gpa = 0.0
+  @max_potential_gpa = 0.0
+  @cumulative_points_earned = 0.0
+  @cumulative_points_possible = 0.0
+  @semester_grades = []
+
   # Persistent choice if they select from dropdown
   if params[:overview_semester] && params[:overview_semester] != @user_prefs.default_semester
     @user_prefs.update(default_semester: params[:overview_semester])

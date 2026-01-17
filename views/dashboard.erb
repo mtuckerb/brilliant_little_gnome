@@ -15,7 +15,7 @@
       <progress id="sync-progress" class="progress is-small is-primary" value="<%= @sync_status[:progress] %>" max="100"><%= @sync_status[:progress] %>%</progress>
     </div>
 
-    <% if @overview_semester && @overall_gpa %>
+    <% if @overview_semester %>
       <div class="box has-background-primary-light mb-6 p-5" style="border-radius: 12px; border: 1px solid #739AC3;">
          <div class="is-flex is-justify-content-space-between is-align-items-center is-flex-wrap-wrap">
            <div class="mb-2" style="flex-grow: 1;">
