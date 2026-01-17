@@ -15,20 +15,30 @@
       <progress id="sync-progress" class="progress is-small is-primary" value="<%= @sync_status[:progress] %>" max="100"><%= @sync_status[:progress] %>%</progress>
     </div>
 
-    <% if @current_semester && @overall_gpa %>
+    <% if @overview_semester && @overall_gpa %>
       <div class="box has-background-primary-light mb-6 p-5" style="border-radius: 12px; border: 1px solid #739AC3;">
          <div class="is-flex is-justify-content-space-between is-align-items-center is-flex-wrap-wrap">
            <div class="mb-2" style="flex-grow: 1;">
               <h2 class="title is-3 mb-1" style="margin-bottom: 0.5rem !important;"><i class="fas fa-graduation-cap mr-2"></i> Semester Overview</h2>
-              <div class="has-text-grey-dark is-uppercase has-text-weight-bold" style="letter-spacing: 1px; font-size: 0.9rem;">
-                <%= @current_semester %>
+              <div class="control has-icons-left">
+                <div class="select is-small is-ghost no-border-select">
+                  <form action="/dashboard" method="get" id="overview-form">
+                    <!-- Preserve existing filters -->
+                    <input type="hidden" name="semester" value="<%= params[:semester] %>">
+                    <select name="overview_semester" onchange="this.form.submit()" style="background: transparent; border: none; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #4a4a4a; padding-left: 0;">
+                      <% @all_semesters.reverse.each do |sem| %>
+                        <option value="<%= sem %>" <%= 'selected' if sem == @overview_semester %>><%= sem %></option>
+                      <% end %>
+                    </select>
+                  </form>
+                </div>
               </div>
            </div>
            <div class="has-text-centered py-2 px-4" style="border-left: 2px solid rgba(115, 154, 195, 0.2); min-width: 140px;">
               <p class="heading mb-1" style="letter-spacing: 1px; color: #666;">Points Earned</p>
               <p class="title is-4 has-text-grey-darker" style="margin-bottom: 0;">
-                <%= @semester_grades.sum { |sg| sg[:stats][:total_points_earned] }.round(1) %> 
-                <span class="is-size-6 has-text-weight-normal has-text-grey">/ <%= @semester_grades.sum { |sg| sg[:stats][:total_points_possible] }.round(1) %></span>
+                <%= @cumulative_points_earned.round(1) %> 
+                <span class="is-size-6 has-text-weight-normal has-text-grey">/ <%= @cumulative_points_possible.round(1) %></span>
               </p>
            </div>
            <div class="has-text-centered py-2 px-4" style="border-left: 2px solid rgba(115, 154, 195, 0.2); min-width: 140px;">

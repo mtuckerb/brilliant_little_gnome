@@ -381,70 +381,85 @@ get '/dashboard' do
 
   # --- SEMESTER ANALYTICS ---
   # Defensive mapping: use try(:semester) to handle potential mixed collection/missing columns
-  @all_semesters = @courses.map { |c| c.respond_to?(:semester) ? c.semester : nil }.compact.uniq.sort
-  @current_semester = @courses.map { |c| c.respond_to?(:semester) ? c.semester : nil }.compact.group_by(&:itself).values.max_by(&:size)&.first
+  @all_semesters = @courses.map { |c| c.respond_to?(:semester) ? c.semester : nil }.compact.uniq
+  @all_semesters = @all_semesters.sort_by { |s| semester_weight(s) }
   
-  # Filter course list by semester if requested or persistent preference
-  @semester_filter = params[:semester] || @user_prefs.default_semester || @current_semester
+  @latest_semester = @all_semesters.last
   
-  # If the user explicitly sets a filter, persist it
-  if params[:semester] && params[:semester] != @user_prefs.default_semester
-    @user_prefs.update(default_semester: params[:semester])
+  # Selection for the Overview box
+  @overview_semester = params[:overview_semester] || @user_prefs.default_semester || @latest_semester
+  
+  # Persistent choice if they select from dropdown
+  if params[:overview_semester] && params[:overview_semester] != @user_prefs.default_semester
+    @user_prefs.update(default_semester: params[:overview_semester])
   end
 
+  # Filter course list for the "My Course List" section (Existing functionality)
+  @semester_filter = params[:semester] || @overview_semester
+  
   if @semester_filter && @semester_filter != 'all'
     @display_courses = @courses.select { |c| (c.respond_to?(:semester) ? c.semester : nil) == @semester_filter }
   else
     @display_courses = @courses
   end
   
-    if @current_semester
-      @semester_courses = @courses.select { |c| (c.respond_to?(:semester) ? c.semester : nil) == @current_semester }
-      @semester_grades = []
+  # --- CALCULATE ANALYTICS FOR OVERVIEW ---
+  if @overview_semester
+    @semester_courses = @courses.select { |c| (c.respond_to?(:semester) ? c.semester : nil) == @overview_semester }
+    @semester_grades = []
+    
+    # Target weight for current overview semester
+    overview_weight = semester_weight(@overview_semester)
+    
+    # GPA tracking
+    total_weighted_points = 0.0
+    total_units_count = 0
+    @cumulative_points_earned = 0.0
+    @cumulative_points_possible = 0.0
+    
+    # We include EVERY course up to and including the overview_semester for Cumulative GPA
+    @courses.each do |c|
+      next unless c.respond_to?(:semester) && c.semester
+      c_weight = semester_weight(c.semester)
+      next if c_weight > overview_weight
       
-      # Weighting GPA by Course Units (Credits)
-      total_weighted_points = 0.0
-      semester_units = 0
+      stats = Grade.calculate_weighted_total(c.org_unit_id) rescue nil
+      next unless stats
       
-      @semester_courses.each do |c|
-        # Optimization: Perform calculation once
-        stats = Grade.calculate_weighted_total(c.org_unit_id) rescue nil
-        next unless stats
-
-        # Treat 0 points courses with 0 confidence as "not yet started" and exclude from dashboard analytics 
-        # unless user has a custom target grade set (meaning they are monitoring it)
+      # For the dashboard course cards (only show selected semester)
+      if c.semester == @overview_semester
         if stats[:total_points_possible] > 0 || c.target_grade.present?
-          sg_item = { 
-            course: c,
-            stats: stats
-          }
-          @semester_grades << sg_item
-
-          # USM Calculation: GPA Points = (Scale Value * Units)
-          course_gpa_value = Grade.to_gpa(stats[:score])
-          course_units = c.units || 3
-          
-          total_weighted_points += (course_gpa_value * course_units)
-          semester_units += course_units
+          @semester_grades << { course: c, stats: stats }
         end
       end
 
-    # --- HISTORIC CUMULATIVE GPA ---
-    # Merge current semester with university reported history
+      # For GPA and Cumulative Points calculation
+      if stats[:total_points_possible] > 0 || c.target_grade.present?
+        @cumulative_points_earned += stats[:total_points_earned]
+        @cumulative_points_possible += stats[:total_points_possible]
+
+        course_gpa_value = Grade.to_gpa(stats[:score])
+        course_units = c.units || 3
+        total_weighted_points += (course_gpa_value * course_units)
+        total_units_count += course_units
+      end
+    end
+
+    # Historic baseline from preferences
     historic_gpa = @user_prefs.historic_gpa || 0.0
     historic_units = @user_prefs.historic_units || 0
     
     cumulative_points = (historic_gpa * historic_units) + total_weighted_points
-    cumulative_units = historic_units + semester_units
+    cumulative_units = historic_units + total_units_count
     
     @overall_gpa = cumulative_units > 0 ? (cumulative_points / cumulative_units) : 0.0
 
-    # --- MAX POTENTIAL SEMESTER GPA ---
-    total_max_weighted_points = (historic_gpa * historic_units)
+    # Max potential (only focusing on the selected overview semester courses)
+    total_max_weighted_points = (historic_gpa * historic_units) + total_weighted_points - (@semester_grades.sum { |sg| Grade.to_gpa(sg[:stats][:score]) * (sg[:course].units || 3) })
     @semester_grades.each do |sg|
-        course_units = sg[:course].units || 3
-        max_course_gpa = Grade.to_gpa(sg[:stats][:max_potential_score])
-        total_max_weighted_points += (max_course_gpa * course_units)
+      course_units = sg[:course].units || 3
+      max_course_gpa = Grade.to_gpa(sg[:stats][:max_potential_score])
+      total_max_weighted_points += (max_course_gpa * course_units)
     end
     @max_potential_gpa = cumulative_units > 0 ? (total_max_weighted_points / cumulative_units) : 0.0
   end
@@ -1388,7 +1403,7 @@ helpers do
 
     case method
     when 'initialize'
-      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.2.0" } } }
+      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.3.0" } } }
     when 'tools/list'
       { jsonrpc: "2.0", id: id, result: { tools: [
         { 

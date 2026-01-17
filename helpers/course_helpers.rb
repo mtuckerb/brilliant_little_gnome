@@ -374,4 +374,24 @@ module CourseHelpers
     return "is-warning" if score < 90
     "is-primary"
   end
+
+  def semester_weight(sem)
+    return 0 unless sem
+    year_match = sem.match(/\d{4}/)
+    return 0 unless year_match
+    year = year_match[0].to_i
+    
+    season_weight = 0
+    if sem =~ /Winter/i
+      season_weight = 1
+    elsif sem =~ /Spring/i
+      season_weight = 2
+    elsif sem =~ /Summer/i
+      season_weight = 3
+    elsif sem =~ /Fall/i
+      season_weight = 4
+    end
+    
+    (year * 10) + season_weight
+  end
 end
