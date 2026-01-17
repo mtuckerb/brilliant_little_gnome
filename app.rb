@@ -410,7 +410,7 @@ get '/dashboard' do
     @display_courses = @courses
   end
   
-  # --- CALCULATE ANALYTICS FOR OVERVIEW ---
+      # --- CALCULATE ANALYTICS FOR OVERVIEW ---
   if @overview_semester
     @semester_courses = @courses.select { |c| (c.respond_to?(:semester) ? c.semester : nil) == @overview_semester }
     @semester_grades = []
@@ -434,6 +434,7 @@ get '/dashboard' do
       next unless stats
       
       # For the dashboard course cards (only show selected semester)
+      # We show the card if there are points or even just a target (for projection)
       if c.semester == @overview_semester
         if stats[:total_points_possible] > 0 || c.target_grade.present?
           @semester_grades << { course: c, stats: stats }
@@ -441,15 +442,44 @@ get '/dashboard' do
       end
 
       # For GPA and Cumulative Points calculation
-      if stats[:total_points_possible] > 0 || c.target_grade.present?
-        @cumulative_points_earned += stats[:total_points_earned]
-        @cumulative_points_possible += stats[:total_points_possible]
+      # STABILIZED GPA LOGIC:
+      # 1. For PAST semesters: Use the actual earned score.
+      # 2. For CURRENT/OVERVIEW semester: Use the PROJECTED score (earned + target for remaining).
+      # This prevents early-semester "dips" and ensures upcoming semesters don't dilute the GPA.
+      
+      score_to_use = 0.0
+      is_future_or_active = (c_weight == overview_weight)
+      
+      if is_future_or_active
+        # Projection: Assume target grade for unearned points
+        target = c.target_grade || 93.0
+        earned = stats[:total_points_earned] || 0.0
+        possible = stats[:total_points_possible] || 0.0
+        all_pts = stats[:all_possible_points] || 0.0
+        
+        remaining = all_pts - possible
+        projected_total = earned + (remaining * (target / 100.0))
+        
+        score_to_use = all_pts > 0 ? (projected_total / all_pts * 100.0) : target
+      else
+        # Past semester: Use reality
+        score_to_use = stats[:score]
 
-        course_gpa_value = Grade.to_gpa(stats[:score])
-        course_units = c.units || 3
-        total_weighted_points += (course_gpa_value * course_units)
-        total_units_count += course_units
+        # Fix: If a past semester course has no graded units, skip it to avoid GPA dilution.
+        # This handles courses where data is missing or not yet synced.
+        if stats[:total_points_possible] == 0
+          next
+        end
       end
+
+      # Update cumulative stats
+      @cumulative_points_earned += stats[:total_points_earned]
+      @cumulative_points_possible += stats[:total_points_possible]
+
+      course_gpa_value = Grade.to_gpa(score_to_use)
+      course_units = c.units || 3
+      total_weighted_points += (course_gpa_value * course_units)
+      total_units_count += course_units
     end
 
     # Historic baseline from preferences
