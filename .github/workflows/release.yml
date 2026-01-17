@@ -21,6 +21,21 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Import Apple Certificates
+        if: matrix.os == 'macos-14'
+        env:
+          CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERTIFICATE_P12" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -32,7 +47,7 @@ jobs:
         with:
           ruby-version: '3.4'
 
-      - name: Setup Native Dependencies (macOS)
+      - name: Setup and Sign Native Dependencies (macOS)
         if: matrix.os == 'macos-14'
         run: |
           set -e
@@ -57,10 +72,15 @@ jobs:
           bundle config set --local path 'vendor/bundle'
           bundle install --deployment || bundle install
 
-          # Recursive ad-hoc signing for all binaries and libraries (Required for Apple Silicon)
-          echo "Ad-hoc signing and hardening binaries..."
-          find bin/ruby_dist/macos-arm64 -type f \( -name "ruby" -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) -exec codesign -s - -f --options runtime {} \;
-          find vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) -exec codesign -s - -f --options runtime {} \;
+          # Identity for signing - will use the imported certificate
+          # Expected secret: APPLE_DEVELOPER_IDENTITY (e.g., "Developer ID Application: Your Name (ID)")
+          IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
+          
+          echo "Hardening and Signing Native Binaries with Identity: $IDENTITY"
+          ENTITLEMENTS="build/entitlements.mac.plist"
+          
+          find bin/ruby_dist/macos-arm64 -type f \( -name "ruby" -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) -exec codesign --deep --force --options runtime --entitlements "$ENTITLEMENTS" -s "$IDENTITY" {} \;
+          find vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) -exec codesign --deep --force --options runtime --entitlements "$ENTITLEMENTS" -s "$IDENTITY" {} \;
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -90,6 +110,11 @@ jobs:
         run: npm run build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
 
       - name: List Build Output
         run: ls -R dist/
@@ -134,16 +159,9 @@ jobs:
           body: |
             ## Brilliant Release v${{ github.run_number }}
             
-            ###  macOS Installation Note (Apple Silicon)
-            Because this app is not notarized by Apple, you may see a message saying **"Brilliant is damaged and can't be opened."**
-            
-            This is a security feature (Gatekeeper) for apps downloaded from the internet. To fix it:
-            1. Drag **Brilliant** to your **Applications** folder.
-            2. Open **Terminal** and run this command:
-               ```bash
-               xattr -cr /Applications/Brilliant.app
-               ```
-            3. Open the app as usual.
+            ###  macOS Update
+            This build is now **Properly Signed and Notarized** with a valid Apple Developer Certificate. 
+            It should open directly on Apple Silicon and Intel Macs without "Damaged" or Gatekeeper warnings.
             
             ---
             *Automated build from release branch.*

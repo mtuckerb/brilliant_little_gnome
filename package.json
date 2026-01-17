@@ -17,9 +17,14 @@
     "appId": "com.brilliant.app",
     "productName": "Brilliant",
     "mac": {
-      "gatekeeperAssess": false,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
       "icon": "build/icon.png",
       "category": "public.app-category.education",
+      "identity": null,
       "identity": null,
       "target": [
         {
