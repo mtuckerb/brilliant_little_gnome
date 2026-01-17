@@ -23,8 +23,8 @@
                 <span class="is-size-7 has-text-grey ml-2">(<%= n.semester %>)</span>
               <% end %>
             </div>
-            <h3 class="title is-6 mb-1" onclick="window.location='<%= n.url %>'"><%= n.title %></h3>
-            <div class="content is-size-7 has-text-grey-dark mb-0" onclick="window.location='<%= n.url %>'">
+            <h3 class="title is-6 mb-1" onclick="window.location='/notifications/<%= n.id %>/view'"><%= n.title %></h3>
+            <div class="content is-size-7 has-text-grey-dark mb-0" onclick="window.location='/notifications/<%= n.id %>/view'">
               <%= n.body ? truncate_text(n.body, 150) : "No description" %>
             </div>
           </div>

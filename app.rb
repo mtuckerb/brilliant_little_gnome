@@ -815,6 +815,36 @@ post '/notifications/:id/mark_read' do
   redirect back
 end
 
+# Proxy route to mark as read when clicking and then redirect to content
+get '/notifications/:id/view' do
+  notification = Notification.find(params[:id])
+  notification.update(is_read: true)
+
+  # Brightspace Integration sync (background)
+  Thread.new do
+    ext_id = notification.external_id
+    begin
+      if ext_id.start_with?("news_")
+        parts = ext_id.split('_')
+        $client.dismiss_news_item(parts[1], parts[2]) if parts.size >= 3
+      elsif ext_id.match?(/^\d+$/)
+        $client.mark_notification_read(ext_id)
+      end
+    rescue => e
+      puts "[Brilliant] View/Sync Error: #{e.message}"
+    end
+  end
+
+  target_url = notification.url
+  # Append param to show the "Keep Unread" bar if it's a local internal link
+  if target_url.start_with?('/')
+    separator = target_url.include?('?') ? '&' : '?'
+    target_url += "#{separator}from_notification=#{notification.id}"
+  end
+  
+  redirect target_url
+end
+
 post '/notifications/:id/mark_unread' do
   notification = Notification.find(params[:id])
   notification.update(is_read: false)

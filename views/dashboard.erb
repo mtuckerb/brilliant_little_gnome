@@ -175,7 +175,7 @@
     <h2 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Recent Updates</h2>
     <% if @recent_notifications && !@recent_notifications.empty? %>
       <% @recent_notifications.each do |n| %>
-        <div class="box mb-4 notification-card-small" onclick="window.location='<%= n.url %>'" style="cursor:pointer; border-left: 4px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
+        <div class="box mb-4 notification-card-small" onclick="window.location='/notifications/<%= n.id %>/view'" style="cursor:pointer; border-left: 4px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
           <p class="is-size-7 has-text-primary has-text-weight-bold mb-1">
             <%= n.course_name ? extract_course_info(n.course_name)[:course_display] : "General" %>
           </p>
@@ -193,7 +193,7 @@
               </span>
             </div>
             <div class="level-right">
-              <a href="<%= n.url %>" class="button is-small is-white has-text-link">View</a>
+              <a href="/notifications/<%= n.id %>/view" class="button is-small is-white has-text-link">View</a>
             </div>
           </div>
         </div>
