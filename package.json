@@ -17,6 +17,7 @@
     "appId": "com.brilliant.app",
     "productName": "Brilliant",
     "mac": {
+      "gatekeeperAssess": false,
       "icon": "build/icon.png",
       "category": "public.app-category.education",
       "identity": null,
@@ -56,7 +57,11 @@
       "models/**/*",
       "db/**/*",
       "views/**/*",
-      "public/**/*"
+      "public/**/*",
+      "bin/ruby_dist/macos-arm64/bin/ruby",
+      "bin/ruby_dist/win-x64/bin/ruby.exe",
+      "vendor/bundle/**/*.bundle",
+      "vendor/bundle/**/*.so"
     ]
   },
   "keywords": [],

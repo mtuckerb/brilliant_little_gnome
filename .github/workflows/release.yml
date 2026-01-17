@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-14, windows-latest]
 
     steps:
       - name: Checkout Code
@@ -33,7 +33,7 @@ jobs:
           ruby-version: '3.4'
 
       - name: Setup Native Dependencies (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-14'
         run: |
           set -e
           set -x
@@ -53,13 +53,14 @@ jobs:
           fi
           install_name_tool -add_rpath "@executable_path/../lib" "$RB_BIN" || true
 
-          # Re-sign for ARM64 macOS
-          codesign -s - -f "$RB_LIB"
-          codesign -s - -f "$RB_BIN"
-
           # Use system ruby to install gems into the app's vendor folder
           bundle config set --local path 'vendor/bundle'
           bundle install --deployment || bundle install
+
+          # Recursive ad-hoc signing for all binaries and libraries (Required for Apple Silicon)
+          echo "Ad-hoc signing and hardening binaries..."
+          find bin/ruby_dist/macos-arm64 -type f \( -name "ruby" -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) -exec codesign -s - -f --options runtime {} \;
+          find vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) -exec codesign -s - -f --options runtime {} \;
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -127,9 +128,24 @@ jobs:
         with:
           files: artifacts/*
           tag_name: v${{ github.run_number }}
-          name: Release v${{ github.run_number }}
+          name: Brilliant v${{ github.run_number }}
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body: |
+            ## Brilliant Release v${{ github.run_number }}
+            
+            ###  macOS Installation Note (Apple Silicon)
+            Because this app is not notarized by Apple, you may see a message saying **"Brilliant is damaged and can't be opened."**
+            
+            This is a security feature (Gatekeeper) for apps downloaded from the internet. To fix it:
+            1. Drag **Brilliant** to your **Applications** folder.
+            2. Open **Terminal** and run this command:
+               ```bash
+               xattr -cr /Applications/Brilliant.app
+               ```
+            3. Open the app as usual.
+            
+            ---
+            *Automated build from release branch.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
