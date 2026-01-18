@@ -106,82 +106,59 @@ jobs:
           # Clean up gem extended attributes
           xattr -cr vendor/bundle
 
-          echo "Bundling and Hardening missing dependencies (libgmp)..."
+          echo "Bundling and Fixup missing dependencies (libgmp and libyaml)..."
           LIB_DEST="bin/ruby_dist/macos-arm64/lib"
+          
+          # Bundle libgmp
           GMP_PATH=$(brew --prefix gmp)/lib/libgmp.10.dylib
           if [ -f "$GMP_PATH" ]; then
             cp "$GMP_PATH" "$LIB_DEST/"
             chmod 644 "$LIB_DEST/libgmp.10.dylib"
-            
-            # Update internal ID of libgmp
             install_name_tool -id "@loader_path/libgmp.10.dylib" "$LIB_DEST/libgmp.10.dylib"
+          fi
+          
+          # Bundle libyaml
+          YAML_PATH=$(brew --prefix libyaml)/lib/libyaml-0.2.dylib
+          if [ -f "$YAML_PATH" ]; then
+            cp "$YAML_PATH" "$LIB_DEST/"
+            chmod 644 "$LIB_DEST/libyaml-0.2.dylib"
+            install_name_tool -id "@loader_path/libyaml-0.2.dylib" "$LIB_DEST/libyaml-0.2.dylib"
+          fi
 
-            # Update ruby to look for libgmp relatively
-            install_name_tool -change "$GMP_PATH" "@executable_path/../lib/libgmp.10.dylib" "$RB_BIN"
-            
-            # Update ruby to look for libruby relatively (standardize)
-            CURRENT_LIBRUBY=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1)
-            if [ ! -z "$CURRENT_LIBRUBY" ]; then
-               install_name_tool -change "$CURRENT_LIBRUBY" "@executable_path/../lib/libruby.3.4.dylib" "$RB_BIN"
-            fi
-            
-            # DEEP INSPECTION: Scan EVERY binary/library in the distribution for /opt/homebrew paths
-            echo "Deep scanning for hardcoded Homebrew dependencies..."
-            find bin/ruby_dist/macos-arm64 -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r binary; do
-              # Change reference to gmp
-              install_name_tool -change "$GMP_PATH" "@loader_path/../lib/libgmp.10.dylib" "$binary" 2>/dev/null || \
-              install_name_tool -change "$GMP_PATH" "@loader_path/libgmp.10.dylib" "$binary" 2>/dev/null || true
-              
-              # General sweep: Replace any other /opt/homebrew references found in dependencies
-              otool -L "$binary" 2>/dev/null | grep "/opt/homebrew" | awk '{print $1}' | while read -r dep; do
-                dep_base=$(basename "$dep")
-                # Check if we have this dependency in our lib folder
-                if [ -f "bin/ruby_dist/macos-arm64/lib/$dep_base" ]; then
-                   install_name_tool -change "$dep" "@loader_path/../lib/$dep_base" "$binary" 2>/dev/null || \
-                   install_name_tool -change "$dep" "@loader_path/$dep_base" "$binary" 2>/dev/null || true
+          # Standardize dependencies for ALL native files
+          echo "Standardizing native library paths..."
+          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r binary; do
+            # Standardize Homebrew paths to relative paths
+            otool -L "$binary" 2>/dev/null | grep "/opt/homebrew" | awk '{print $1}' | while read -r old_path; do
+              lib_name=$(basename "$old_path")
+              if [ -f "$LIB_DEST/$lib_name" ]; then
+                # Prefer relative to executable if in bin/, else relative to current folder
+                if [[ "$binary" == */bin/* ]]; then
+                  install_name_tool -change "$old_path" "@executable_path/../lib/$lib_name" "$binary" 2>/dev/null || true
+                else
+                  install_name_tool -change "$old_path" "@loader_path/../lib/$lib_name" "$binary" 2>/dev/null || \
+                  install_name_tool -change "$old_path" "@loader_path/$lib_name" "$binary" 2>/dev/null || true
                 fi
-              done
+              fi
             done
-            
-            # Update libruby to look for libgmp relatively
-            install_name_tool -change "$GMP_PATH" "@loader_path/libgmp.10.dylib" "$RB_LIB" 2>/dev/null || true
-            
-            echo "Verifying linking for $RB_BIN:"
-            otool -L "$RB_BIN"
-            echo "Verifying linking for $RB_LIB:"
-            otool -L "$RB_LIB"
+          done
 
-            # Also sign the newly added dylib early
-            IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
-            codesign --force --options runtime --timestamp -s "$IDENTITY" "$LIB_DEST/libgmp.10.dylib"
-          else
-            echo "Warning: libgmp.10.dylib not found at $GMP_PATH"
-          fi
-            IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
-            codesign --force --options runtime --timestamp -s "$IDENTITY" "$LIB_DEST/libgmp.10.dylib"
-          else
-            echo "Warning: libgmp.10.dylib not found at $GMP_PATH"
-          fi
-
-          # Identity for signing - we'll use the one from secrets
-          # Per user instruction, omitting the "Developer ID Application:" prefix
+          # Final verification and pre-signing
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
           ENTITLEMENTS="build/entitlements.mac.plist"
           
           echo "Pre-signing native binaries with Hardened Runtime..."
           
-          # 1. Sign dylibs and bundles
-          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) \
-            -exec codesign --force --options runtime --timestamp -s "$IDENTITY" {} \;
+          # One pass to sign ALL dependencies including our new bundled ones
+          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r file; do
+             codesign --force --options runtime --timestamp -s "$IDENTITY" "$file"
+          done
           
-          # 2. Sign the Ruby executable with entitlements
+          # Sign the main Ruby executable last with entitlements
           codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$RB_BIN"
           
-          # 3. Verify
           echo "Verifying Ruby signature..."
           codesign -vvv --deep --strict "$RB_BIN"
-
-          echo "Native dependencies signed. electron-builder will package them."
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
