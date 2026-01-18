@@ -153,8 +153,15 @@ function startRubyApp() {
   const baseDir = isPackaged ? app.getAppPath().replace('app.asar', 'app.asar.unpacked') : __dirname;
   const userDataPath = app.getPath('userData') || path.join(app.getPath('appData'), app.getName());
   
-  if (!fs.existsSync(userDataPath)) {
-    fs.mkdirSync(userDataPath, { recursive: true });
+  // Ensure the base data path exists (Application Support/Brilliant or similar)
+  try {
+    if (!fs.existsSync(userDataPath)) {
+      fs.mkdirSync(userDataPath, { recursive: true });
+    }
+  } catch (err) {
+    // If we can't create the primary path, fall back to temporary directory
+    // This is a last resort to allow logging even in restricted environments
+    console.error(`Failed to create userDataPath: ${userDataPath}`, err);
   }
 
   const pidFile = path.join(userDataPath, 'ruby_sidecar.pid');
