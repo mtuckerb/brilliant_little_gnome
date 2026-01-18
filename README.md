@@ -60,6 +60,14 @@ If you prefer not to use the automated tool:
 
 ## Maintenance
 
+### Troubleshooting (macOS)
+If you encounter a message stating that the app is **"damaged"** or **"cannot be opened because Apple cannot check it for malicious software"**, this is typically due to macOS Gatekeeper's handling of unsigned or recursively signed binaries.
+
+You can resolve this by running the following command in your Terminal:
+```bash
+xattr -cr /Applications/Brilliant.app
+```
+
 ### Refresh & Sync
 The **Settings** menu now contains a dedicated maintenance section:
 - **Reset & Sync Notifications**: Rebuilds your entire notification history and clears the API cache.
