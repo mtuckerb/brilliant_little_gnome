@@ -208,6 +208,17 @@ function startRubyApp() {
   } catch(e) {}
 
   const pathSeparator = process.platform === 'win32' ? ';' : ':';
+
+  // Calculate RUBYLIB to include standard libraries
+  const rubyLibPaths = [
+    path.join(rubyBase, 'lib', 'ruby', '3.4.0'),
+    path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'arm64-darwin20'),
+    path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'x86_64-darwin20'),
+    path.join(rubyBase, 'lib', 'ruby', 'site_ruby', '3.4.0'),
+    path.join(rubyBase, 'lib', 'ruby', 'vendor_ruby', '3.4.0')
+  ];
+  const rubyLib = rubyLibPaths.join(pathSeparator);
+
   const env = { 
     ...process.env, 
     PORT: '4567', 
@@ -216,6 +227,7 @@ function startRubyApp() {
     BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
     GEM_PATH: `${vendorGems}${pathSeparator}${internalGems}`,
     GEM_HOME: vendorGems,
+    RUBYLIB: rubyLib,
     RUBY_PLATFORM_DIR: platformDir,
     BRILLIANT_DATA_DIR: userDataPath,
     BRILLIANT_ENV: 'electron',
@@ -236,6 +248,7 @@ App Path: ${app.getAppPath()}
 Base Dir: ${baseDir}
 Ruby Bin: ${rubyBinary}
 Data Dir: ${userDataPath}
+RUBYLIB: ${rubyLib}
 ---------------------------
 `;
     fs.writeSync(logFd, startupMsg);
