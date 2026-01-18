@@ -27,18 +27,23 @@ function createWindow() {
 
   // Attempt to load the URL with retries
   let retryCount = 0;
+  const healthUrl = 'http://127.0.0.1:4567/health';
+  
   const loadWithRetry = () => {
     retryCount++;
-    console.log(`Checking Ruby sidecar health (attempt ${retryCount})...`);
+    if (retryCount % 10 === 0) {
+      console.log(`[Electron] Still waiting for Ruby sidecar at ${healthUrl} (Attempt ${retryCount})...`);
+    }
     
-    if (retryCount > 60) { // After 30 seconds, show dev tools to see what's wrong
+    if (retryCount > 60) { 
+      console.log("[Electron] Timeout reached. Opening DevTools for manual inspection.");
       mainWindow.webContents.openDevTools();
     }
 
-    fetch('http://127.0.0.1:4567/health')
+    fetch(healthUrl)
       .then(res => {
         if (res.ok) {
-          console.log("Sinatra is ready!");
+          console.log("[Electron] Ruby sidecar is healthy! Loading dashboard.");
           mainWindow.loadURL('http://127.0.0.1:4567');
         } else {
           setTimeout(loadWithRetry, 500);
@@ -207,10 +212,17 @@ function startRubyApp() {
   };
 
   // Fix: Use absolute path to bundle binary and ensure we use the vendored ruby
-  // Using -S can sometimes fail if the PATH isn't updated globally in the environment
+  // We'll also log the spawn command for debugging
+  console.log(`[Electron] Spawning Ruby: ${rubyBinary} ${bundleBinary} exec ruby app.rb`);
+  console.log(`[Electron] Working Directory: ${baseDir}`);
+
   rubyApp = spawn(rubyBinary, [bundleBinary, 'exec', 'ruby', 'app.rb'], {
     cwd: baseDir,
     env: env
+  });
+
+  rubyApp.on('error', (err) => {
+    console.error(`[Electron] Failed to start Ruby process: ${err}`);
   });
 
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
