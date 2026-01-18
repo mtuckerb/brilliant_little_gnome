@@ -61,9 +61,15 @@ If you prefer not to use the automated tool:
 ## Maintenance
 
 ### Troubleshooting (macOS)
-If you encounter a message stating that the app is **"damaged"** or **"cannot be opened because Apple cannot check it for malicious software"**, this is typically due to macOS Gatekeeper's handling of unsigned or recursively signed binaries.
+If you encounter a message stating that the app is **"damaged"** or **"cannot be opened because Apple cannot check it for malicious software"**, follow these steps:
 
-You can resolve this by running the following command in your Terminal:
+**Option 1: Right-Click Open (Easiest)**
+1. Locate Brilliant in your **Applications** folder.
+2. **Right-click** (or Control-click) the app icon and select **Open**.
+3. In the dialog box that appears, click **Open** again to confirm.
+
+**Option 2: Terminal Fix**
+Run the following command in your Terminal:
 ```bash
 xattr -cr /Applications/Brilliant.app
 ```
