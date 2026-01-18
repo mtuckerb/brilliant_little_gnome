@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -151,7 +151,12 @@ ipcMain.on('start-login', (event, host) => {
 function startRubyApp() {
   const isPackaged = app.isPackaged;
   const baseDir = isPackaged ? app.getAppPath().replace('app.asar', 'app.asar.unpacked') : __dirname;
-  const userDataPath = app.getPath('userData');
+  const userDataPath = app.getPath('userData') || path.join(app.getPath('appData'), app.getName());
+  
+  if (!fs.existsSync(userDataPath)) {
+    fs.mkdirSync(userDataPath, { recursive: true });
+  }
+
   const pidFile = path.join(userDataPath, 'ruby_sidecar.pid');
 
   let platformDir = '';
@@ -165,26 +170,18 @@ function startRubyApp() {
     rubyExec = 'ruby.exe';
   }
 
-  // Paths for portable Ruby and Gems
   const rubyBase = path.join(baseDir, 'bin', 'ruby_dist', platformDir);
   const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
   const bundleBinary = path.join(rubyBase, 'bin', 'bundle');
 
-  // Check if we are running in the "Brilliant-Test" directory or "Brilliant"
-  // Electron app.getName() will tell us the correct folder
-  const appName = app.getName();
-  const actualUserDataPath = path.join(app.getPath('appData'), appName);
-  
-  const logFile = path.join(actualUserDataPath, 'ruby_sidecar.log');
-  const dbDir = path.join(actualUserDataPath, 'db');
-  const cacheDir = path.join(actualUserDataPath, 'bootsnap');
-  const pidFile = path.join(actualUserDataPath, 'ruby_sidecar.pid');
-
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-
-  // Gem Paths
   const vendorGems = path.join(baseDir, 'vendor', 'bundle', 'ruby', '3.4.0');
   const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
+  
+  const cacheDir = path.join(userDataPath, 'bootsnap');
+  const dbDir = path.join(userDataPath, 'db');
+  const logFile = path.join(userDataPath, 'ruby_sidecar.log');
+  
+  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
   // --- PID FAILSAFE ---
   if (fs.existsSync(pidFile)) {
@@ -212,36 +209,52 @@ function startRubyApp() {
     GEM_PATH: `${vendorGems}${pathSeparator}${internalGems}`,
     GEM_HOME: vendorGems,
     RUBY_PLATFORM_DIR: platformDir,
-    BRILLIANT_DATA_DIR: actualUserDataPath,
+    BRILLIANT_DATA_DIR: userDataPath,
     BRILLIANT_ENV: 'electron',
     BOOTSNAP_CACHE_DIR: cacheDir,
     DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
     PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`
   };
 
-
-  // Open log file and write startup info
-  const logFd = fs.openSync(logFile, 'a');
-  const startupMsg = `
+  console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
+  
+  let logFd;
+  try {
+    logFd = fs.openSync(logFile, 'a');
+    const startupMsg = `
 --- Startup at ${new Date().toISOString()} ---
 Platform: ${process.platform} (${process.arch})
 App Path: ${app.getAppPath()}
 Base Dir: ${baseDir}
 Ruby Bin: ${rubyBinary}
-Data Dir: ${actualUserDataPath}
+Data Dir: ${userDataPath}
 ---------------------------
 `;
-  fs.writeSync(logFd, startupMsg);
+    fs.writeSync(logFd, startupMsg);
+  } catch (err) {
+    console.error("Failed to open log file:", err);
+  }
 
   rubyApp = spawn(rubyBinary, [bundleBinary, 'exec', 'ruby', 'app.rb'], {
     cwd: baseDir,
     env: env,
-    stdio: ['ignore', logFd, logFd] // Directly pipe to log file, avoiding Node-managed pipes
+    stdio: logFd ? ['ignore', logFd, logFd] : 'inherit'
   });
 
   rubyApp.on('error', (err) => {
     console.error(`[Electron] Failed to start Ruby process: ${err}`);
+    dialog.showErrorBox("Ruby Startup Error", `Failed to start the Ruby sidecar: ${err.message}\nBinary: ${rubyBinary}`);
   });
+
+  rubyApp.on('exit', (code, signal) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[Electron] Ruby process exited with code ${code}`);
+      if (isPackaged) {
+        dialog.showErrorBox("Ruby Sidecar Crash", `The Ruby backend process crashed with code ${code}.\nCheck the log at: ${logFile}`);
+      }
+    }
+  });
+}
 }
 
 app.on('ready', () => {

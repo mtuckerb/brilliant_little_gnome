@@ -103,38 +103,49 @@ jobs:
           # Use system ruby to install gems into the app's vendor folder
           bundle config set --local path 'vendor/bundle'
           bundle install --deployment || bundle install
-          
           # Clean up gem extended attributes
           xattr -cr vendor/bundle
 
-          echo "Bundling and Fixup missing dependencies (libgmp)..."
+          echo "Bundling and Hardening missing dependencies (libgmp)..."
           LIB_DEST="bin/ruby_dist/macos-arm64/lib"
           GMP_PATH=$(brew --prefix gmp)/lib/libgmp.10.dylib
           if [ -f "$GMP_PATH" ]; then
             cp "$GMP_PATH" "$LIB_DEST/"
             chmod 644 "$LIB_DEST/libgmp.10.dylib"
             
-            # Update ruby and libruby to look for libgmp relatively
-            install_name_tool -change "$GMP_PATH" "@executable_path/../lib/libgmp.10.dylib" "$RB_BIN"
-            install_name_tool -change "$GMP_PATH" "@loader_path/libgmp.10.dylib" "$RB_LIB"
-            
-            # ALSO update the internal ID of libgmp so loaders find it relative to each other
+            # Update internal ID of libgmp
             install_name_tool -id "@loader_path/libgmp.10.dylib" "$LIB_DEST/libgmp.10.dylib"
 
-            # CRITICAL: Re-link libruby inside the lib folder itself if it has a hard path for gmp
+            # Update ruby to look for libgmp relatively
+            install_name_tool -change "$GMP_PATH" "@executable_path/../lib/libgmp.10.dylib" "$RB_BIN"
+            
+            # Update ruby to look for libruby relatively (standardize)
+            CURRENT_LIBRUBY=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1)
+            if [ ! -z "$CURRENT_LIBRUBY" ]; then
+               install_name_tool -change "$CURRENT_LIBRUBY" "@executable_path/../lib/libruby.3.4.dylib" "$RB_BIN"
+            fi
+
+            # Update libruby to look for libgmp relatively
+            install_name_tool -change "$GMP_PATH" "@loader_path/libgmp.10.dylib" "$RB_LIB"
+            
+            # Re-link any other hidden references in libruby
             otool -L "$RB_LIB" | grep gmp | awk '{print $1}' | while read -r line; do
               if [[ $line == /opt/homebrew* ]]; then
                 install_name_tool -change "$line" "@loader_path/libgmp.10.dylib" "$RB_LIB"
               fi
             done
             
-            # Also check if libruby itself needs a gmp reference update
-            CURRENT_GMP_IN_LIB=$(otool -L "$RB_LIB" | grep libgmp | awk '{print $1}' | head -n 1)
-            if [ ! -z "$CURRENT_GMP_IN_LIB" ] && [ "$CURRENT_GMP_IN_LIB" != "@loader_path/libgmp.10.dylib" ]; then
-               install_name_tool -change "$CURRENT_GMP_IN_LIB" "@loader_path/libgmp.10.dylib" "$RB_LIB"
-            fi
+            echo "Verifying linking for $RB_BIN:"
+            otool -L "$RB_BIN"
+            echo "Verifying linking for $RB_LIB:"
+            otool -L "$RB_LIB"
 
-            # Sign the newly added dylib
+            # Also sign the newly added dylib early
+            IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
+            codesign --force --options runtime --timestamp -s "$IDENTITY" "$LIB_DEST/libgmp.10.dylib"
+          else
+            echo "Warning: libgmp.10.dylib not found at $GMP_PATH"
+          fi
             IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
             codesign --force --options runtime --timestamp -s "$IDENTITY" "$LIB_DEST/libgmp.10.dylib"
           else
