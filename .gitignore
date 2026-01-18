@@ -1,6 +1,6 @@
 public/banners/
 logs/
-dist
+dist/
 bin/ruby_dist
 vendor/bundle
 vendor/cache
@@ -11,6 +11,5 @@ debugging
 db/production.sqlite3
 db/development.sqlite3
 node_modules/
-dist/
 *.log
 .DS_Store
