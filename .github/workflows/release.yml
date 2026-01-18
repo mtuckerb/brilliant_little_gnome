@@ -107,6 +107,32 @@ jobs:
           # Clean up gem extended attributes
           xattr -cr vendor/bundle
 
+          echo "Bundling missing dependencies (libgmp)..."
+          # libgmp is a common dependency for Ruby that might be missing on clean macOS installs
+          # We find where it is on the runner and copy it into our dist lib folder
+          LIB_DEST="bin/ruby_dist/macos-arm64/lib"
+          GMP_PATH=$(brew --prefix gmp)/lib/libgmp.10.dylib
+          if [ -f "$GMP_PATH" ]; then
+            cp "$GMP_PATH" "$LIB_DEST/"
+            chmod 644 "$LIB_DEST/libgmp.10.dylib"
+            
+            # Update ruby and libruby to look for libgmp relatively
+            install_name_tool -change "$GMP_PATH" "@executable_path/../lib/libgmp.10.dylib" "$RB_BIN"
+            install_name_tool -change "$GMP_PATH" "@loader_path/libgmp.10.dylib" "$RB_LIB"
+            
+            # Also check if libruby itself needs a gmp reference update
+            CURRENT_GMP_IN_LIB=$(otool -L "$RB_LIB" | grep libgmp | awk '{print $1}' | head -n 1)
+            if [ ! -z "$CURRENT_GMP_IN_LIB" ] && [ "$CURRENT_GMP_IN_LIB" != "@loader_path/libgmp.10.dylib" ]; then
+               install_name_tool -change "$CURRENT_GMP_IN_LIB" "@loader_path/libgmp.10.dylib" "$RB_LIB"
+            fi
+
+            # Sign the newly added dylib
+            IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
+            codesign --force --options runtime --timestamp -s "$IDENTITY" "$LIB_DEST/libgmp.10.dylib"
+          else
+            echo "Warning: libgmp.10.dylib not found at $GMP_PATH"
+          fi
+
           # Identity for signing - we'll use the one from secrets
           # Per user instruction, omitting the "Developer ID Application:" prefix
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
