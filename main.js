@@ -26,10 +26,16 @@ function createWindow() {
   });
 
   // Attempt to load the URL with retries
+  let retryCount = 0;
   const loadWithRetry = () => {
-    fetch('http://localhost:4567')
+    retryCount++;
+    if (retryCount > 60) { // After 30 seconds, show dev tools to see what's wrong
+      mainWindow.webContents.openDevTools();
+    }
+
+    fetch('http://localhost:4567/health')
       .then(res => {
-        if (res.ok || res.status === 303) {
+        if (res.ok) {
           console.log("Sinatra is ready!");
           mainWindow.loadURL('http://localhost:4567');
         } else {
@@ -198,8 +204,9 @@ function startRubyApp() {
     PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`
   };
 
-  // Fix: Removed duplicate spawn and simplified to use bundle exec ruby app.rb
-  rubyApp = spawn(rubyBinary, [bundleBinary, 'exec', 'ruby', 'app.rb'], {
+  // Fix: Use the bundle binary directly to avoid issues with standard ruby shell finding
+  // This is much safer in packaged environments
+  rubyApp = spawn(rubyBinary, ['-S', 'bundle', 'exec', 'ruby', 'app.rb'], {
     cwd: baseDir,
     env: env
   });
