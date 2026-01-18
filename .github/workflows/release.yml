@@ -107,9 +107,7 @@ jobs:
           # Clean up gem extended attributes
           xattr -cr vendor/bundle
 
-          echo "Bundling missing dependencies (libgmp)..."
-          # libgmp is a common dependency for Ruby that might be missing on clean macOS installs
-          # We find where it is on the runner and copy it into our dist lib folder
+          echo "Bundling and Fixup missing dependencies (libgmp)..."
           LIB_DEST="bin/ruby_dist/macos-arm64/lib"
           GMP_PATH=$(brew --prefix gmp)/lib/libgmp.10.dylib
           if [ -f "$GMP_PATH" ]; then
@@ -119,6 +117,16 @@ jobs:
             # Update ruby and libruby to look for libgmp relatively
             install_name_tool -change "$GMP_PATH" "@executable_path/../lib/libgmp.10.dylib" "$RB_BIN"
             install_name_tool -change "$GMP_PATH" "@loader_path/libgmp.10.dylib" "$RB_LIB"
+            
+            # ALSO update the internal ID of libgmp so loaders find it relative to each other
+            install_name_tool -id "@loader_path/libgmp.10.dylib" "$LIB_DEST/libgmp.10.dylib"
+
+            # CRITICAL: Re-link libruby inside the lib folder itself if it has a hard path for gmp
+            otool -L "$RB_LIB" | grep gmp | awk '{print $1}' | while read -r line; do
+              if [[ $line == /opt/homebrew* ]]; then
+                install_name_tool -change "$line" "@loader_path/libgmp.10.dylib" "$RB_LIB"
+              fi
+            done
             
             # Also check if libruby itself needs a gmp reference update
             CURRENT_GMP_IN_LIB=$(otool -L "$RB_LIB" | grep libgmp | awk '{print $1}' | head -n 1)
@@ -210,6 +218,13 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Get version from package.json
+        id: pkg_version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -217,19 +232,16 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Display structure of downloaded artifacts
-        run: ls -R artifacts
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
-          tag_name: v${{ github.run_number }}
-          name: Brilliant v${{ github.run_number }}
+          tag_name: v${{ steps.pkg_version.outputs.version }}
+          name: Brilliant v${{ steps.pkg_version.outputs.version }}
           draft: false
           prerelease: false
           body: |
-            ## Brilliant Release v${{ github.run_number }}
+            ## Brilliant Release v${{ steps.pkg_version.outputs.version }}
             
             ###  macOS Update
             This build is now **Properly Signed and Notarized** with a valid Apple Developer Certificate. 
