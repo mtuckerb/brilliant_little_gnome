@@ -66,6 +66,22 @@
       "bin/ruby_dist/win-x64/bin/ruby.exe",
       "vendor/bundle/**/*.bundle",
       "vendor/bundle/**/*.so"
+    ],
+    "extraResources": [
+      {
+        "from": "bin/ruby_dist",
+        "to": "bin/ruby_dist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/bundle",
+        "to": "vendor/bundle",
+        "filter": [
+          "**/*"
+        ]
+      }
     ]
   },
   "keywords": [],
