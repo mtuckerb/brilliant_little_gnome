@@ -108,8 +108,8 @@ jobs:
           xattr -cr vendor/bundle
 
           # Identity for signing - we'll use the one from secrets
-          # We'll use the "Developer ID Application:" prefix which is standard
-          IDENTITY="Developer ID Application: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
+          # Per user instruction, omitting the "Developer ID Application:" prefix
+          IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
           ENTITLEMENTS="build/entitlements.mac.plist"
           
           echo "Pre-signing native binaries with Hardened Runtime..."
