@@ -218,9 +218,6 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
 
       - name: Get version from package.json
         id: pkg_version
