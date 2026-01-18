@@ -1,6 +1,6 @@
 {
   "name": "britespace",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard.",
   "main": "main.js",
   "scripts": {
@@ -24,12 +24,6 @@
       "notarize": true,
       "icon": "build/icon.png",
       "category": "public.app-category.education",
-      "binaries": [
-        "Contents/Resources/app.asar.unpacked/bin/ruby_dist/macos-arm64/bin/ruby",
-        "Contents/Resources/app.asar.unpacked/bin/ruby_dist/macos-arm64/lib/*.dylib",
-        "Contents/Resources/app.asar.unpacked/vendor/bundle/**/*.bundle",
-        "Contents/Resources/app.asar.unpacked/vendor/bundle/**/*.so"
-      ],
       "target": [
         {
           "target": "dmg",

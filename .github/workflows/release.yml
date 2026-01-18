@@ -107,7 +107,25 @@ jobs:
           # Clean up gem extended attributes
           xattr -cr vendor/bundle
 
-          echo "Native dependencies prepared. electron-builder will handle signing."
+          # Identity for signing - we'll use the one from secrets
+          # We'll use the "Developer ID Application:" prefix which is standard
+          IDENTITY="Developer ID Application: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
+          ENTITLEMENTS="build/entitlements.mac.plist"
+          
+          echo "Pre-signing native binaries with Hardened Runtime..."
+          
+          # 1. Sign dylibs and bundles
+          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) \
+            -exec codesign --force --options runtime --timestamp -s "$IDENTITY" {} \;
+          
+          # 2. Sign the Ruby executable with entitlements
+          codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$RB_BIN"
+          
+          # 3. Verify
+          echo "Verifying Ruby signature..."
+          codesign -vvv --deep --strict "$RB_BIN"
+
+          echo "Native dependencies signed. electron-builder will package them."
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -136,12 +154,13 @@ jobs:
       - name: Build Electron App
         run: npm run build
         env:
-          DEBUG: electron-builder
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_NAME: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          # Use CSC_LINK and CSC_KEY_PASSWORD for more reliable CI signing
+          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
 
       - name: List Build Output
         run: ls -R dist/
