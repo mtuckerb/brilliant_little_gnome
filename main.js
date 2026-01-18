@@ -204,9 +204,9 @@ function startRubyApp() {
     PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`
   };
 
-  // Fix: Use the bundle binary directly to avoid issues with standard ruby shell finding
-  // This is much safer in packaged environments
-  rubyApp = spawn(rubyBinary, ['-S', 'bundle', 'exec', 'ruby', 'app.rb'], {
+  // Fix: Use absolute path to bundle binary and ensure we use the vendored ruby
+  // Using -S can sometimes fail if the PATH isn't updated globally in the environment
+  rubyApp = spawn(rubyBinary, [bundleBinary, 'exec', 'ruby', 'app.rb'], {
     cwd: baseDir,
     env: env
   });
