@@ -169,6 +169,12 @@ helpers do
   end
 end
 
+# System Check
+get '/health' do
+  status 200
+  "OK"
+end
+
 # Serve API Documentation
 get '/docs' do
   redirect '/docs/'

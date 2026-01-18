@@ -29,15 +29,17 @@ function createWindow() {
   let retryCount = 0;
   const loadWithRetry = () => {
     retryCount++;
+    console.log(`Checking Ruby sidecar health (attempt ${retryCount})...`);
+    
     if (retryCount > 60) { // After 30 seconds, show dev tools to see what's wrong
       mainWindow.webContents.openDevTools();
     }
 
-    fetch('http://localhost:4567/health')
+    fetch('http://127.0.0.1:4567/health')
       .then(res => {
         if (res.ok) {
           console.log("Sinatra is ready!");
-          mainWindow.loadURL('http://localhost:4567');
+          mainWindow.loadURL('http://127.0.0.1:4567');
         } else {
           setTimeout(loadWithRetry, 500);
         }
