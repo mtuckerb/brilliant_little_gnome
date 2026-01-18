@@ -151,6 +151,7 @@ ipcMain.on('start-login', (event, host) => {
 function startRubyApp() {
   const isPackaged = app.isPackaged;
   const baseDir = isPackaged ? app.getAppPath().replace('app.asar', 'app.asar.unpacked') : __dirname;
+  const resourceDir = isPackaged ? process.resourcesPath : __dirname;
   const userDataPath = app.getPath('userData') || path.join(app.getPath('appData'), app.getName());
   
   // Ensure the base data path exists (Application Support/Brilliant or similar)
@@ -177,11 +178,11 @@ function startRubyApp() {
     rubyExec = 'ruby.exe';
   }
 
-  const rubyBase = path.join(baseDir, 'bin', 'ruby_dist', platformDir);
+  const rubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
   const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
   const bundleBinary = path.join(rubyBase, 'bin', 'bundle');
 
-  const vendorGems = path.join(baseDir, 'vendor', 'bundle', 'ruby', '3.4.0');
+  const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', '3.4.0');
   const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
   
   const cacheDir = path.join(userDataPath, 'bootsnap');
@@ -212,7 +213,7 @@ function startRubyApp() {
     PORT: '4567', 
     BUNDLE_GEMFILE: path.join(baseDir, 'Gemfile'),
     BUNDLE_DEPLOYMENT: 'true', 
-    BUNDLE_PATH: path.join(baseDir, 'vendor', 'bundle'),
+    BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
     GEM_PATH: `${vendorGems}${pathSeparator}${internalGems}`,
     GEM_HOME: vendorGems,
     RUBY_PLATFORM_DIR: platformDir,
