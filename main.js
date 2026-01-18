@@ -154,21 +154,6 @@ function startRubyApp() {
   const userDataPath = app.getPath('userData');
   const pidFile = path.join(userDataPath, 'ruby_sidecar.pid');
 
-  // --- PID FAILSAFE ---
-  if (fs.existsSync(pidFile)) {
-    try {
-      const oldPid = parseInt(fs.readFileSync(pidFile, 'utf8'));
-      if (oldPid) {
-        process.kill(oldPid, 'SIGTERM');
-        console.log(`Killed stale Ruby process: ${oldPid}`);
-      }
-    } catch (e) {
-      console.log("Stale PID file found but process already dead.");
-    }
-    fs.unlinkSync(pidFile);
-  }
-  // --------------------
-
   let platformDir = '';
   let rubyExec = 'ruby';
 
@@ -180,19 +165,42 @@ function startRubyApp() {
     rubyExec = 'ruby.exe';
   }
 
+  // Paths for portable Ruby and Gems
   const rubyBase = path.join(baseDir, 'bin', 'ruby_dist', platformDir);
   const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
   const bundleBinary = path.join(rubyBase, 'bin', 'bundle');
 
+  // Check if we are running in the "Brilliant-Test" directory or "Brilliant"
+  // Electron app.getName() will tell us the correct folder
+  const appName = app.getName();
+  const actualUserDataPath = path.join(app.getPath('appData'), appName);
+  
+  const logFile = path.join(actualUserDataPath, 'ruby_sidecar.log');
+  const dbDir = path.join(actualUserDataPath, 'db');
+  const cacheDir = path.join(actualUserDataPath, 'bootsnap');
+  const pidFile = path.join(actualUserDataPath, 'ruby_sidecar.pid');
+
+  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
+  // Gem Paths
   const vendorGems = path.join(baseDir, 'vendor', 'bundle', 'ruby', '3.4.0');
   const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
-  
-  const cacheDir = path.join(userDataPath, 'bootsnap');
-  const dbDir = path.join(userDataPath, 'db');
-  const logFile = path.join(userDataPath, 'ruby_sidecar.log');
-  
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  try { fs.chmodSync(rubyBinary, 0o755); } catch(e) {}
+
+  // --- PID FAILSAFE ---
+  if (fs.existsSync(pidFile)) {
+    try {
+      const oldPid = parseInt(fs.readFileSync(pidFile, 'utf8'));
+      if (oldPid) {
+        process.kill(oldPid, 'SIGTERM');
+      }
+    } catch (e) {}
+    try { fs.unlinkSync(pidFile); } catch(e) {}
+  }
+  // --------------------
+
+  try { 
+    if (process.platform !== 'win32') fs.chmodSync(rubyBinary, 0o755); 
+  } catch(e) {}
 
   const pathSeparator = process.platform === 'win32' ? ';' : ':';
   const env = { 
@@ -204,20 +212,26 @@ function startRubyApp() {
     GEM_PATH: `${vendorGems}${pathSeparator}${internalGems}`,
     GEM_HOME: vendorGems,
     RUBY_PLATFORM_DIR: platformDir,
-    BRILLIANT_DATA_DIR: userDataPath,
+    BRILLIANT_DATA_DIR: actualUserDataPath,
     BRILLIANT_ENV: 'electron',
     BOOTSNAP_CACHE_DIR: cacheDir,
     DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
     PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`
   };
 
-  // Fix: Use absolute path to bundle binary and ensure we use the vendored ruby
-  // We'll also log the spawn command for debugging
-  console.log(`[Electron] Spawning Ruby: ${rubyBinary} ${bundleBinary} exec ruby app.rb`);
-  console.log(`[Electron] Working Directory: ${baseDir}`);
 
+  // Open log file and write startup info
   const logFd = fs.openSync(logFile, 'a');
-  fs.writeSync(logFd, `\n--- Started at ${new Date().toISOString()} ---\n`);
+  const startupMsg = `
+--- Startup at ${new Date().toISOString()} ---
+Platform: ${process.platform} (${process.arch})
+App Path: ${app.getAppPath()}
+Base Dir: ${baseDir}
+Ruby Bin: ${rubyBinary}
+Data Dir: ${actualUserDataPath}
+---------------------------
+`;
+  fs.writeSync(logFd, startupMsg);
 
   rubyApp = spawn(rubyBinary, [bundleBinary, 'exec', 'ruby', 'app.rb'], {
     cwd: baseDir,
