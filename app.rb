@@ -1476,7 +1476,7 @@ helpers do
 
     case method
     when 'initialize'
-      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.3.0" } } }
+      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.4.0" } } }
     when 'tools/list'
       { jsonrpc: "2.0", id: id, result: { tools: [
         { 
