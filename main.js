@@ -262,7 +262,6 @@ Data Dir: ${userDataPath}
     }
   });
 }
-}
 
 app.on('ready', () => {
     startRubyApp();
