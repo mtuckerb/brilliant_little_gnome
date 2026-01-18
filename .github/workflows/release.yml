@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    environment: production
 
     strategy:
       fail-fast: false
