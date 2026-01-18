@@ -216,28 +216,17 @@ function startRubyApp() {
   console.log(`[Electron] Spawning Ruby: ${rubyBinary} ${bundleBinary} exec ruby app.rb`);
   console.log(`[Electron] Working Directory: ${baseDir}`);
 
+  const logFd = fs.openSync(logFile, 'a');
+  fs.writeSync(logFd, `\n--- Started at ${new Date().toISOString()} ---\n`);
+
   rubyApp = spawn(rubyBinary, [bundleBinary, 'exec', 'ruby', 'app.rb'], {
     cwd: baseDir,
-    env: env
+    env: env,
+    stdio: ['ignore', logFd, logFd] // Directly pipe to log file, avoiding Node-managed pipes
   });
 
   rubyApp.on('error', (err) => {
     console.error(`[Electron] Failed to start Ruby process: ${err}`);
-  });
-
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
-  logStream.write(`\n--- Started at ${new Date().toISOString()} ---\n`);
-
-  rubyApp.stdout.on('data', (data) => {
-    logStream.write(`STDOUT: ${data}`);
-  });
-
-  rubyApp.stderr.on('data', (data) => {
-    logStream.write(`STDERR: ${data}`);
-  });
-
-  rubyApp.on('exit', (code) => {
-    logStream.write(`EXIT: Ruby exited with code ${code}\n`);
   });
 }
 
