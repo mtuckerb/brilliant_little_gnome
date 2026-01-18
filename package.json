@@ -1,6 +1,6 @@
 {
   "name": "britespace",
-  "version": "1.4.6",
+  "version": "1.4.8",
   "description": "A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard.",
   "main": "main.js",
   "scripts": {
@@ -21,7 +21,8 @@
       "gatekeeperAssess": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": true,
+      "notarize": false,
+      "afterSign": "scripts/notarize.js",
       "icon": "build/icon.png",
       "category": "public.app-category.education",
       "target": [
@@ -73,6 +74,7 @@
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^26.4.0",
+    "electron-notarize": "^1.2.2",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.2"
   }
