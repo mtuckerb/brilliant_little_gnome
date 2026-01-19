@@ -208,19 +208,12 @@ function startRubyApp() {
 
   const pathSeparator = process.platform === 'win32' ? ';' : ':';
 
-  // Calculate RUBYLIB to include standard libraries
+  // Construction of RUBYLIB and load paths
+  // We prioritize the standard library paths that come with the portable distribution
   const rubyLibPaths = [
     path.join(rubyBase, 'lib', 'ruby', '3.4.0'),
-    path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'arm64-darwin20'),
-    path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'x86_64-darwin20')
+    path.join(rubyBase, 'lib', 'ruby', '3.4.0', platformDir.includes('arm64') ? 'arm64-darwin20' : 'x86_64-darwin20')
   ];
-  
-  // Verify paths exist for debugging
-  rubyLibPaths.forEach(p => {
-    if (!fs.existsSync(p)) {
-      console.warn(`[Electron] Ruby lib path does not exist: ${p}`);
-    }
-  });
 
   const rubyLib = rubyLibPaths.join(pathSeparator);
 
@@ -233,8 +226,6 @@ function startRubyApp() {
     GEM_PATH: `${vendorGems}${pathSeparator}${internalGems}`,
     GEM_HOME: vendorGems,
     RUBYLIB: rubyLib,
-    // Add load path to RUBYOPT as well for extra robustness
-    RUBYOPT: `-I${rubyLibPaths[0]} -I${rubyLibPaths[1]}`,
     RUBY_PLATFORM_DIR: platformDir,
     BRILLIANT_DATA_DIR: userDataPath,
     BRILLIANT_ENV: 'electron',
@@ -256,7 +247,6 @@ Base Dir: ${baseDir}
 Ruby Bin: ${rubyBinary}
 Data Dir: ${userDataPath}
 RUBYLIB: ${rubyLib}
-RUBYOPT: ${env.RUBYOPT}
 GEM_PATH: ${env.GEM_PATH}
 ---------------------------
 `;
@@ -265,14 +255,10 @@ GEM_PATH: ${env.GEM_PATH}
     console.error("Failed to open log file:", err);
   }
 
-  // Use explicit -I flags in arguments to ensure load paths are respected
-  const rubyArgs = [
-    '-I', rubyLibPaths[0],
-    '-I', rubyLibPaths[1],
-    'app.rb'
-  ];
-
-  rubyApp = spawn(rubyBinary, rubyArgs, {
+  // Use ruby directly. App.rb has require 'bundler/setup'.
+  // Don't use -I or RUBYOPT to avoid double-loading or overriding 
+  // Ruby's own internal search order for default gems.
+  rubyApp = spawn(rubyBinary, ['app.rb'], {
     cwd: baseDir,
     env: env,
     stdio: logFd ? ['ignore', logFd, logFd] : 'inherit'
