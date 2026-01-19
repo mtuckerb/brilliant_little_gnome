@@ -20,12 +20,13 @@
         <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
+              <th width="40"></th>
               <th>Assignment</th>
               <th class="has-text-right">Action</th>
             </tr>
           </thead>
           <tbody>
-            <% @assignments.each do |a| %>
+            <% @assignments.order(completed: :asc, due_date: :asc).each do |a| %>
               <%
                 id = a.is_a?(Hash) ? a['Id'] : a.brightspace_id
                 name = a.is_a?(Hash) ? a['Name'] : a.name
@@ -40,11 +41,17 @@
                 
                 base_url = is_quiz ? "/course/#{@course_id}/quizzes" : "/course/#{@course_id}/assignments"
                 view_url = "#{base_url}/#{link_id}"
+                is_completed = a.respond_to?(:completed) && a.completed
               %>
-              <tr>
+              <tr class="<%= 'is-completed' if is_completed %>" style="<%= 'opacity: 0.6; background-color: #fafafa;' if is_completed %>">
+                <td class="is-vcentered">
+                  <div class="control">
+                    <input type="checkbox" class="assignment-checkbox" data-id="<%= a.is_a?(Assignment) ? a.id : '' %>" <%= 'checked' if is_completed %> onchange="toggleAssignment(this)" <%= 'disabled' if a.is_a?(Hash) %>>
+                  </div>
+                </td>
                 <td>
                   <div class="mb-1">
-                    <strong><a href="<%= view_url %>"><%= name %></a></strong>
+                    <strong style="<%= 'text-decoration: line-through;' if is_completed %>"><a href="<%= view_url %>"><%= name %></a></strong>
                     <% if is_quiz %><span class="tag is-info is-light is-small ml-2">Quiz</span><% end %>
                   </div>
                   <div class="is-size-7 has-text-grey">
@@ -64,3 +71,33 @@
     </div>
   </div>
 </div>
+
+<script>
+function toggleAssignment(checkbox) {
+  const id = checkbox.getAttribute('data-id');
+  if (!id) return;
+  
+  const row = checkbox.closest('tr');
+  const titleLink = row.querySelector('strong');
+  
+  fetch(`/assignments/${id}/toggle_complete`, {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.status === 'ok') {
+      if (data.completed) {
+        row.style.opacity = '0.6';
+        row.style.backgroundColor = '#fafafa';
+        if (titleLink) titleLink.style.textDecoration = 'line-through';
+      } else {
+        row.style.opacity = '1';
+        row.style.backgroundColor = 'transparent';
+        if (titleLink) titleLink.style.textDecoration = 'none';
+      }
+    }
+  })
+  .catch(err => console.error("Error toggling assignment:", err));
+}
+</script>

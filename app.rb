@@ -348,7 +348,7 @@ before '/course/:id*' do
   @lineage = find_lineage(@toc['Modules'], current_module_id) if @toc && current_module_id
 
   # Upcoming Assignments for this course
-  @course_upcoming = Assignment.where(course_id: @course_id).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
+  @course_upcoming = Assignment.where(course_id: @course_id, completed: false).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
 end
 
 get '/' do
@@ -540,11 +540,43 @@ get '/dashboard' do
   @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
   
   # Upcoming Assignments for Dashboard
-  @upcoming_assignments = Assignment.where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
+  @upcoming_assignments = Assignment.where(completed: false).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
   
   @sync_status = $client.sync_status
   
   erb :dashboard
+end
+  assignment = Assignment.find(params[:id])
+  new_status = !assignment.completed
+  assignment.update(completed: new_status, completed_at: (new_status ? Time.now : nil))
+  
+  ext_id = "assignment_comp_#{assignment.brightspace_id}"
+  if new_status
+    n = Notification.find_or_initialize_by(external_id: ext_id, course_id: assignment.course_id)
+    n.notification_type = "Assignment"
+    n.title = "Completed: #{assignment.name}"
+    n.body = "You marked this assignment as completed."
+    n.date = assignment.completed_at
+    n.course_name = assignment.course&.name
+    n.semester = assignment.course&.semester
+    n.urgency = 1
+    n.is_personal = true
+    n.url = "/course/#{assignment.course_id}/assignments/#{assignment.brightspace_id}"
+    n.is_read = true
+    n.save
+  else
+    Notification.where(external_id: ext_id).destroy_all
+  end
+
+  if request.xhr?
+    content_type :json
+    { status: 'ok', completed: assignment.completed, notification_id: n&.id }.to_json
+  else
+    redirect back
+  end
+    # Create or update a notification for this assignment if completed
+    redirect back
+  end
 end
 
 # Sync Status Endpoint

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_01_19_162000) do
+ActiveRecord::Schema[7.2].define(version: 2026_01_19_170000) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
@@ -31,6 +31,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_19_162000) do
     t.datetime "updated_at", precision: nil, null: false
     t.string "grade_item_id"
     t.string "assignment_type", default: "dropbox"
+    t.boolean "completed", default: false
+    t.datetime "completed_at"
     t.index ["brightspace_id"], name: "index_assignments_on_brightspace_id"
     t.index ["course_id"], name: "index_assignments_on_course_id"
     t.index ["grade_item_id"], name: "index_assignments_on_grade_item_id"
