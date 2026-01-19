@@ -230,31 +230,38 @@ function startRubyApp() {
 
   console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
   
+  const logFile = path.join(userDataPath, 'ruby_sidecar.log');
   let logFd;
   try {
     logFd = fs.openSync(logFile, 'a');
-    const startupMsg = `
---- Startup at ${new Date().toISOString()} ---
-Platform: ${process.platform} (${process.arch})
-App Path: ${app.getAppPath()}
-Base Dir: ${baseDir}
-Ruby Bin: ${rubyBinary}
-Data Dir: ${userDataPath}
-RUBYLIB: ${env.RUBYLIB}
-GEM_PATH: ${env.GEM_PATH}
----------------------------
-`;
-    fs.writeSync(logFd, startupMsg);
   } catch (err) {
     console.error("Failed to open log file:", err);
   }
 
-  // Use ruby directly to avoid redundant bundle exec calls
-  rubyApp = spawn(rubyBinary, ['app.rb'], {
+  // Forward command line arguments (e.g., --headless) to Ruby
+  const rubyArgs = ['app.rb', ...process.argv.slice(2)];
+
+  rubyApp = spawn(rubyBinary, rubyArgs, {
     cwd: baseDir,
     env: env,
-    stdio: logFd ? ['ignore', logFd, logFd] : 'inherit'
+    stdio: ['ignore', 'pipe', 'pipe']
   });
+
+  // Pipe Ruby output to both the log file and the Electron process console
+  // This ensures metadata (DB path, URLs) shows up during 'npm start'
+  if (rubyApp.stdout) {
+    rubyApp.stdout.on('data', (data) => {
+      if (logFd) fs.writeSync(logFd, data);
+      process.stdout.write(data);
+    });
+  }
+
+  if (rubyApp.stderr) {
+    rubyApp.stderr.on('data', (data) => {
+      if (logFd) fs.writeSync(logFd, data);
+      process.stderr.write(data);
+    });
+  }
 
   rubyApp.on('error', (err) => {
     console.error(`[Electron] Failed to start Ruby process: ${err}`);
@@ -273,7 +280,13 @@ GEM_PATH: ${env.GEM_PATH}
 
 app.on('ready', () => {
     startRubyApp();
-    createWindow();
+    
+    // Only create the browser window if NOT in headless mode
+    if (!process.argv.includes('--headless')) {
+      createWindow();
+    } else {
+      console.log("[Electron] Running in headless mode. UI suppressed.");
+    }
 });
 
 app.on('window-all-closed', function () {
