@@ -107,7 +107,7 @@ ipcMain.on('start-login', (event, host) => {
     height: 800,
     parent: mainWindow,
     modal: true,
-    title: "Brightspace Login",
+    title: "Brilliant Login",
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true

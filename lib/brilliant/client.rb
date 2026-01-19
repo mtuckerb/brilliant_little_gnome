@@ -6,13 +6,14 @@ require 'digest'
 require 'fileutils'
 require 'time'
 
-class BrightspaceClient
+class BrilliantClient
   class AuthenticationError < StandardError; attr_reader :status_code; def initialize(msg, code); super(msg); @status_code = code; end; end
   
   attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status, :degraded_mode
 
   def initialize
-    @config_path = 'config/connection.json'
+    data_dir = ENV['BRILLIANT_DATA_DIR'] || '.'
+    @config_path = File.join(data_dir, 'config', 'connection.json')
     load_connection_config
     
     @api_version = "1.40"
@@ -22,7 +23,8 @@ class BrightspaceClient
     @degraded_mode = false
     
     # Legacy/Fallback: Try loading from cookies.txt
-    load_cookies_from_file if !authenticated? && File.exist?('cookies.txt')
+    cookies_fallback = File.join(data_dir, 'cookies.txt')
+    load_cookies_from_file(cookies_fallback) if !authenticated? && File.exist?(cookies_fallback)
   end
 
   def load_connection_config
@@ -44,7 +46,7 @@ class BrightspaceClient
     @cookie_string = cookies.sub(/^Cookie:\s*/i, '')
     @degraded_mode = false # Reset degraded mode on new config
     
-    FileUtils.mkdir_p('config')
+    FileUtils.mkdir_p(File.dirname(@config_path))
     File.write(@config_path, { host: @host, cookies: @cookie_string }.to_json)
   end
 
@@ -82,28 +84,36 @@ class BrightspaceClient
           courses.each do |c|
             course_id = c['OrgUnit']['Id']
             course_name = c['OrgUnit']['Name']
-            @sync_status[:current_task] = "Syncing #{course_name}..."
+            
+            # Simple truncation helper for status display
+            short_name = course_name.length > 10 ? course_name[0...9] + "…" : course_name
+
+            @sync_status[:current_task] = "#{short_name} - Syncing Core Content..."
             
             # Sync Core
             toc = get_toc(course_id)
             sync_course_content(course_id, toc) if toc
             
             sleep 0.1
+            @sync_status[:current_task] = "#{short_name} - Syncing Assignments..."
             assignments = get_assignments(course_id)
             sync_assignments(course_id, assignments) if assignments
 
             sleep 0.1
+            @sync_status[:current_task] = "#{short_name} - Syncing Quizzes..."
             quizzes = get_quizzes(course_id)
             sync_quizzes(course_id, quizzes) if quizzes
             
             sleep 0.1
             
+            @sync_status[:current_task] = "#{short_name} - Syncing Discussions..."
             # Sync Discussions
             forums = get_discussions(course_id) || []
             sync_discussions(course_id, forums) if forums.any?
             
             sleep 0.1
             
+            @sync_status[:current_task] = "#{short_name} - Syncing Grades..."
             # Sync Grades
             grades_raw = get_grades(course_id)
             sync_grades(course_id, grades_raw) if grades_raw.is_a?(Array)
@@ -128,7 +138,7 @@ class BrightspaceClient
   end
 
   def sync_notifications(courses, user, full_sync: false)
-    puts "[Brightspace API] Syncing notifications to DB..."
+    puts "[Brilliant API] Syncing notifications to DB..."
     
     last_sync_key = "last_notification_sync_at"
     last_sync_time = full_sync ? nil : UserPreference.get(last_sync_key)
@@ -254,11 +264,11 @@ class BrightspaceClient
     
     UserPreference.set(last_sync_key, Time.now.utc.iso8601)
 
-    puts "[Brightspace API] Notification sync complete."
+    puts "[Brilliant API] Notification sync complete."
   end
 
   def sync_upcoming_assignment_notifications(courses)
-    puts "[Brightspace API] Syncing upcoming assignments to notifications..."
+    puts "[Brilliant API] Syncing upcoming assignments to notifications..."
     
     # We look for assignments due in the next 7 days
     upcoming_limit = Time.now + 7.days
@@ -372,7 +382,7 @@ class BrightspaceClient
         n.date ||= Time.now
       end
     rescue => e
-      puts "[Brightspace API] Date parse error for #{data[:id]}: #{e.message} (Raw: #{raw_date})"
+      puts "[Brilliant API] Date parse error for #{data[:id]}: #{e.message} (Raw: #{raw_date})"
       n.date ||= Time.now
     end
     
@@ -567,7 +577,7 @@ class BrightspaceClient
     
     # Fallback: if threads endpoint 404s or is empty, try to synthesize from posts
     if data.nil? || (data.is_a?(Hash) && (data['Items'] || []).empty?)
-      puts "[Brightspace API] Threads 404 or empty for topic #{topic_id}. Attempting synthesis from posts..."
+      puts "[Brilliant API] Threads 404 or empty for topic #{topic_id}. Attempting synthesis from posts..."
       posts_data = get_topic_posts(org_unit_id, forum_id, topic_id)
       posts = posts_data.is_a?(Hash) ? (posts_data['Items'] || []) : posts_data
       
@@ -1150,18 +1160,18 @@ class BrightspaceClient
     begin
       response = http.request(request)
       if response.code.start_with?('2')
-        puts "[Brightspace API] POST Success: #{path}"
+        puts "[Brilliant API] POST Success: #{path}"
         true
       elsif response.code == '401' || response.code == '403'
         puts "[!] AUTH ERROR #{response.code} (POST): Cookie/Token likely expired."
         raise AuthenticationError.new("Brightspace session expired", response.code.to_i)
         false
       else
-        puts "[Brightspace API] POST Error #{response.code}: #{path}"
+        puts "[Brilliant API] POST Error #{response.code}: #{path}"
         false
       end
     rescue => e
-      puts "[Brightspace API] POST Exception: #{e.message}"
+      puts "[Brilliant API] POST Exception: #{e.message}"
       false
     end
   end
@@ -1173,7 +1183,7 @@ class BrightspaceClient
     # Optional: silence noisy expected 404s for discussions
     is_notoriously_noisy = path.include?('/discussions/') && path.include?('/threads/')
 
-    puts "[Brightspace API] Fetching: #{path}" unless is_notoriously_noisy
+    puts "[Brilliant API] Fetching: #{path}" unless is_notoriously_noisy
 
     uri = URI("https://#{@host}#{path}")
     request = Net::HTTP::Get.new(uri)

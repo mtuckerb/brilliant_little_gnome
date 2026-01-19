@@ -246,6 +246,9 @@ document.addEventListener('DOMContentLoaded', function() {
   const taskText = document.getElementById('sync-task');
   const percentText = document.getElementById('sync-percent');
   const progressBar = document.getElementById('sync-progress');
+  
+  let checkInterval = 10000; // Default 10s
+  let timerId = null;
 
   function checkSyncStatus() {
     fetch('/sync/status')
@@ -256,22 +259,48 @@ document.addEventListener('DOMContentLoaded', function() {
           taskText.innerText = data.current_task;
           percentText.innerText = data.progress + '%';
           progressBar.value = data.progress;
-          setTimeout(checkSyncStatus, 2000); // Check every 2s
+          
+          // Speed up checks when active
+          if (checkInterval !== 2000) {
+            checkInterval = 2000;
+            resetTimer();
+          }
         } else if (data.status === 'completed') {
-          taskText.innerText = "Sync complete!";
-          percentText.innerText = '100%';
-          progressBar.value = 100;
-          setTimeout(() => { indicator.style.display = 'none'; }, 3000);
+          // If we were just syncing, show completion briefly
+          if (indicator.style.display !== 'none' && !taskText.innerText.includes("complete")) {
+            taskText.innerText = "Sync complete!";
+            percentText.innerText = '100%';
+            progressBar.value = 100;
+            setTimeout(() => { indicator.style.display = 'none'; }, 3000);
+          }
+          
+          // Slow down checks when idle
+          if (checkInterval !== 10000) {
+            checkInterval = 10000;
+            resetTimer();
+          }
         } else {
           indicator.style.display = 'none';
+          if (checkInterval !== 10000) {
+            checkInterval = 10000;
+            resetTimer();
+          }
         }
       })
-      .catch(err => console.error("Sync check error:", err));
+      .catch(err => {
+        console.error("Sync check error:", err);
+        // On error, slow down
+        checkInterval = 10000;
+      });
   }
 
-  // Initial trigger if dashboard shows it is active
-  if (indicator.style.display !== 'none') {
-    checkSyncStatus();
+  function resetTimer() {
+    if (timerId) clearInterval(timerId);
+    timerId = setInterval(checkSyncStatus, checkInterval);
   }
+
+  // Initial call and start timer
+  checkSyncStatus();
+  resetTimer();
 });
 </script>

@@ -27,8 +27,8 @@ require 'tempfile'
 require 'icalendar'
 require 'rack-flash'
 
-require_relative 'lib/brightspace/client'
-require_relative 'lib/brightspace/auth_helper'
+require_relative 'lib/brilliant/client'
+require_relative 'lib/brilliant/auth_helper'
 require_relative 'helpers/course_helpers'
 require_relative 'models/notification'
 require_relative 'models/api_cache'
@@ -130,7 +130,7 @@ configure do
 end
 
 # Initialize Client
-$client = BrightspaceClient.new
+$client = BrilliantClient.new
 # Helpers
 helpers CourseHelpers
 
@@ -215,8 +215,12 @@ before do
     redirect '/setup'
   end
 
-  @user_prefs = UserPreference.current
-  @user = $client.get_who_am_i || { 'FirstName' => @user_prefs.display_name, 'LastName' => '' }
+  # Memoize preferences and user for the duration of this single request
+  @user_prefs ||= UserPreference.current
+  
+  # Only fetch whoami if we haven't already in this request
+  # and use a shorter timeout for the background refresh to reduce noise
+  @user ||= $client.get_who_am_i || { 'FirstName' => @user_prefs.display_name, 'LastName' => '' }
   
   # Auto-fetch name from Brightspace if we still have the default or empty
   if (@user_prefs.display_name == "User" || @user_prefs.display_name.nil?) && @user['DisplayName']
@@ -280,7 +284,7 @@ end
 
 get '/auth/login' do
   host = params[:host] || $client.host
-  cookies = BrightspaceAuthHelper.fetch_cookies(host)
+  cookies = BrilliantAuthHelper.fetch_cookies(host)
   
   if cookies
     $client.save_connection_config(host, cookies)
