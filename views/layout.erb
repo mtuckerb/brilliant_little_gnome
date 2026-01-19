@@ -73,9 +73,12 @@
           </a>
        </div>
        <div class="navbar-item">
-          <% if @user %>
-             <a href="/settings" class="tag is-light is-medium" style="text-decoration: none;">
-               <i class="fas fa-user mr-2"></i> <%= @user_prefs.display_name || "#{@user['FirstName']} #{@user['LastName']}" %>
+          <% if $client.authenticated? %>
+             <a href="/settings" class="button is-primary is-light" id="settings-button" style="border: 2px solid #739AC3 !important; font-weight: bold;">
+               <span class="icon"><i class="fas fa-cog"></i></span>
+               <span>
+                 <%= (@user && @user['FirstName']) ? (@user_prefs.display_name || "#{@user['FirstName']} #{@user['LastName']}") : (@user_prefs.display_name || "Settings") %>
+               </span>
              </a>
           <% end %>
        </div>

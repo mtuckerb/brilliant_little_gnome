@@ -213,7 +213,7 @@ function startRubyApp() {
   const rubyLibPaths = [
     path.join(rubyBase, 'lib', 'ruby', '3.4.0'),
     path.join(rubyBase, 'lib', 'ruby', '3.4.0', platformDir.includes('arm64') ? 'arm64-darwin20' : 'x86_64-darwin20')
-  ];
+  ].filter(p => fs.existsSync(p));
 
   const rubyLib = rubyLibPaths.join(pathSeparator);
 
