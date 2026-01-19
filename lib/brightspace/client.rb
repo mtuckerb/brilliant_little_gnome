@@ -1071,7 +1071,7 @@ class BrightspaceClient
     if data.is_a?(Array)
       data
     elsif data.is_a?(Hash)
-      data['Items'] || []
+      data['Objects'] || data['Items'] || []
     else
       []
     end
