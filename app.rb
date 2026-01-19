@@ -687,6 +687,30 @@ get '/course/:id/assignments/:assignment_id' do
   erb :assignment_detail
 end
 
+# Quizzes
+get '/course/:id/quizzes/:quiz_id' do
+  @active_tab = 'assignments' # Group with assignments
+  @quiz_id = params[:quiz_id]
+  @course_id = params[:id]
+  
+  # Fetch Quiz Info
+  @quiz = $client.do_get("/d2l/api/le/1.40/#{@course_id}/quizzes/#{@quiz_id}")
+  halt 404, "Quiz not found" unless @quiz
+
+  @breadcrumb_trail = [
+    { title: 'Assignments', url: "/course/#{@course_id}/assignments" },
+    { title: @quiz['Name'], url: "/course/#{@course_id}/quizzes/#{@quiz_id}" }
+  ]
+
+  # Simple detail view - reuse assignment layout or separate
+  erb :quiz_detail
+end
+
+get '/course/:id/quizzes' do
+  # Redirect to assignments since we display them together there
+  redirect "/course/#{params[:id]}/assignments"
+end
+
 # Announcements
 get '/course/:id/announcements' do
   @active_tab = 'announcements'

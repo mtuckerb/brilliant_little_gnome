@@ -91,6 +91,10 @@ class BrightspaceClient
             sleep 0.1
             assignments = get_assignments(course_id)
             sync_assignments(course_id, assignments) if assignments
+
+            sleep 0.1
+            quizzes = get_quizzes(course_id)
+            sync_quizzes(course_id, quizzes) if quizzes
             
             sleep 0.1
             
@@ -263,18 +267,23 @@ class BrightspaceClient
       Assignment.where("due_date > ? AND due_date <= ?", Time.now, upcoming_limit).each do |a|
         course = courses.find { |c| c['OrgUnit']['Id'].to_s == a.course_id.to_s }
         course_name = course ? course['OrgUnit']['Name'] : (Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course")
+
+        type_label = a.assignment_type == 'quiz' ? 'Quiz' : 'Assignment'
+        url = a.assignment_type == 'quiz' ? 
+              "/course/#{a.course_id}/quizzes/#{a.brightspace_id.sub('quiz_', '')}" : 
+              "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
         
         upsert_notification({
           id: "upcoming_assignment_#{a.brightspace_id}",
           type: 'Assignment',
-          title: "Upcoming Due Date: #{a.name}",
-          body: "This assignment is due on #{a.due_date.strftime('%A, %b %d at %I:%M %p')}.",
+          title: "Upcoming #{type_label}: #{a.name}",
+          body: "This #{type_label.downcase} is due on #{a.due_date.strftime('%A, %b %d at %I:%M %p')}.",
           date: a.due_date - 1.day, # Set notification date to roughly now/recent to show in feed
           course_id: a.course_id,
           course_name: course_name,
           urgency: 2,
           is_personal: true,
-          url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
+          url: url
         })
       end
     end
@@ -495,6 +504,10 @@ class BrightspaceClient
 
   def get_assignments(org_unit_id)
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/")
+  end
+
+  def get_quizzes(org_unit_id)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/quizzes/")
   end
 
   def get_assignment(org_unit_id, assignment_id)
@@ -732,6 +745,28 @@ class BrightspaceClient
       
       assignment.is_graded = a['IsGraded'] || false
       assignment.grade_item_id = a['GradeItemId'].to_s if a['GradeItemId']
+      assignment.save!
+    end
+  end
+
+  def sync_quizzes(course_id, quizzes)
+    items = ensure_array(quizzes)
+    
+    items.each do |q|
+      # We use the Assignment model for Quizzes too, but mark the type
+      assignment = Assignment.find_or_initialize_by(brightspace_id: "quiz_#{q['QuizId']}", course_id: course_id.to_s)
+      
+      assignment.name = q['Name']
+      assignment.assignment_type = 'quiz'
+      
+      # Quizzes use DueDate in their object format
+      new_due = (Time.parse(q['DueDate']) rescue nil)
+      assignment.due_date = new_due if new_due
+      
+      new_desc = q.dig('Description', 'Text') || q.dig('Header', 'Text')
+      assignment.description = new_desc if new_desc.present?
+      
+      assignment.is_graded = q['IsActive'] || false # Quizzes don't have IsGraded in same way, but usually active means gradable
       assignment.save!
     end
   end
@@ -1020,6 +1055,8 @@ class BrightspaceClient
       "#{base_url}/home/#{course_id}"
     when :assignment
       "#{base_url}/lms/dropbox/user/folder_submit_files.d2l?db=#{id}&ou=#{course_id}"
+    when :quiz
+      "#{base_url}/lms/quizzing/user/quiz_summary.d2l?qi=#{id}&ou=#{course_id}"
     when :discussion_topic
       "#{base_url}/lms/discussions/admin/forum_topics_list.d2l?ou=#{course_id}"
     when :discussion_thread

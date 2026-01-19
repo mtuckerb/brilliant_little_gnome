@@ -240,7 +240,7 @@ App Path: ${app.getAppPath()}
 Base Dir: ${baseDir}
 Ruby Bin: ${rubyBinary}
 Data Dir: ${userDataPath}
-RUBYLIB: ${rubyLib}
+RUBYLIB: ${env.RUBYLIB}
 GEM_PATH: ${env.GEM_PATH}
 ---------------------------
 `;

@@ -30,18 +30,29 @@
                 id = a.is_a?(Hash) ? a['Id'] : a.brightspace_id
                 name = a.is_a?(Hash) ? a['Name'] : a.name
                 due_date = a.is_a?(Hash) ? a['DueDate'] : a.due_date
+                
+                is_quiz = false
+                link_id = id
+                if id.to_s.start_with?('quiz_')
+                  is_quiz = true
+                  link_id = id.to_s.sub('quiz_', '')
+                end
+                
+                base_url = is_quiz ? "/course/#{@course_id}/quizzes" : "/course/#{@course_id}/assignments"
+                view_url = "#{base_url}/#{link_id}"
               %>
               <tr>
                 <td>
                   <div class="mb-1">
-                    <strong><a href="/course/<%= @course_id %>/assignments/<%= id %>"><%= name %></a></strong>
+                    <strong><a href="<%= view_url %>"><%= name %></a></strong>
+                    <% if is_quiz %><span class="tag is-info is-light is-small ml-2">Quiz</span><% end %>
                   </div>
                   <div class="is-size-7 has-text-grey">
                     <i class="fas fa-calendar-alt mr-1"></i> Due: <%= due_date ? format_date(due_date) : "No due date" %>
                   </div>
                 </td>
                 <td class="has-text-right">
-                  <a href="/course/<%= @course_id %>/assignments/<%= id %>" class="button is-small is-primary is-light">View Details</a>
+                  <a href="<%= view_url %>" class="button is-small is-primary is-light">View Details</a>
                 </td>
               </tr>
             <% end %>
