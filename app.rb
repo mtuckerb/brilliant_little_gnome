@@ -322,6 +322,9 @@ before '/course/:id*' do
   # Identify the lineage of the current module to keep the sidebar expanded
   current_module_id = params[:module_id] || (request.path.split('/module/')[1] if request.path.include?('/module/'))
   @lineage = find_lineage(@toc['Modules'], current_module_id) if @toc && current_module_id
+
+  # Upcoming Assignments for this course
+  @course_upcoming = Assignment.where(course_id: @course_id).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
 end
 
 get '/' do
@@ -509,6 +512,9 @@ get '/dashboard' do
   # --------------------------
 
   @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
+  
+  # Upcoming Assignments for Dashboard
+  @upcoming_assignments = Assignment.where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
   
   @sync_status = $client.sync_status
   

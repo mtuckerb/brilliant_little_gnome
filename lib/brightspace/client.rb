@@ -244,10 +244,40 @@ class BrightspaceClient
         upsert_notification(item)
       end
     end
+
+    # Sync Upcoming Assignments as Notifications
+    sync_upcoming_assignment_notifications(courses)
     
     UserPreference.set(last_sync_key, Time.now.utc.iso8601)
 
     puts "[Brightspace API] Notification sync complete."
+  end
+
+  def sync_upcoming_assignment_notifications(courses)
+    puts "[Brightspace API] Syncing upcoming assignments to notifications..."
+    
+    # We look for assignments due in the next 7 days
+    upcoming_limit = Time.now + 7.days
+    
+    ActiveRecord::Base.connection_pool.with_connection do
+      Assignment.where("due_date > ? AND due_date <= ?", Time.now, upcoming_limit).each do |a|
+        course = courses.find { |c| c['OrgUnit']['Id'].to_s == a.course_id.to_s }
+        course_name = course ? course['OrgUnit']['Name'] : (Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course")
+        
+        upsert_notification({
+          id: "upcoming_assignment_#{a.brightspace_id}",
+          type: 'Assignment',
+          title: "Upcoming Due Date: #{a.name}",
+          body: "This assignment is due on #{a.due_date.strftime('%A, %b %d at %I:%M %p')}.",
+          date: a.due_date - 1.day, # Set notification date to roughly now/recent to show in feed
+          course_id: a.course_id,
+          course_name: course_name,
+          urgency: 2,
+          is_personal: true,
+          url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
+        })
+      end
+    end
   end
 
   def get_content_notifications(courses, since: nil)

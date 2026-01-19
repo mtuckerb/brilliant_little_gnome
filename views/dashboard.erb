@@ -172,6 +172,22 @@
   </div>
 
   <div class="column is-4">
+    <% if @upcoming_assignments && !@upcoming_assignments.empty? %>
+      <h2 class="title is-4"><i class="fas fa-calendar-check mr-2"></i> Upcoming Assignments</h2>
+      <% @upcoming_assignments.each do |a| %>
+        <div class="box mb-4 has-background-warning-light" onclick="window.location='/course/<%= a.course_id %>/assignments/<%= a.brightspace_id %>'" style="cursor:pointer; border: 1px solid #ffdd57;">
+          <p class="is-size-7 has-text-weight-bold mb-1">
+            <%= Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course" %>
+          </p>
+          <h6 class="title is-6 mb-1"><%= a.name %></h6>
+          <p class="is-size-7 has-text-danger">
+            Due: <%= format_date(a.due_date, "%A, %b %d at %I:%M %p") %>
+          </p>
+        </div>
+      <% end %>
+      <hr>
+    <% end %>
+
     <h2 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Recent Updates</h2>
     <% if @recent_notifications && !@recent_notifications.empty? %>
       <% @recent_notifications.each do |n| %>
