@@ -8,6 +8,14 @@ require 'securerandom'
 # Handle --headless flag before Sinatra/Bundler parses ARGV
 $headless_mode = ARGV.delete('--headless')
 
+# Pre-emptively rescue EPIPE on standard streams to prevent sidecar crashes during pipe-cleanup
+def $stderr.write(data)
+  super rescue nil
+end
+def $stdout.write(data)
+  super rescue nil
+end
+
 Bundler.require(:default)
 
 require 'sinatra'
