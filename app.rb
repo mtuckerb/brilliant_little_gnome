@@ -1001,6 +1001,24 @@ get '/debug/notifications' do
   }.to_json
 end
 
+# --- Centralized Error Handling ---
+not_found do
+  status 404
+  @error_title = "404 - Not Found"
+  @error_message = "The page you are looking for does not exist or has been moved."
+  erb :error
+end
+
+error do
+  @error = env['sinatra.error']
+  status 500
+  @error_title = "500 - Server Error"
+  @error_message = "An unexpected error occurred while processing your request."
+  puts "[Brilliant Error] #{@error.message}"
+  puts @error.backtrace.first(10).join("\n")
+  erb :error
+end
+
 # Grades
 get '/course/:id/grades' do
   @active_tab = 'grades'
