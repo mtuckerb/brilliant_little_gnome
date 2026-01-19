@@ -1,6 +1,6 @@
 {
   "name": "brilliant",
-  "version": "1.10.6",
+  "version": "1.10.7",
   "description": "A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard.",
   "main": "main.js",
   "scripts": {
@@ -84,11 +84,14 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@electron/notarize": "^2.5.0",
     "electron": "^33.0.0",
     "electron-builder": "^26.4.0",
-    "@electron/notarize": "^2.5.0",
     "fs-extra": "^11.2.0",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.2"
+  },
+  "dependencies": {
+    "axios": "^1.13.2"
   }
 }

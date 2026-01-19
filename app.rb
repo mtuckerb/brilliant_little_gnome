@@ -209,7 +209,11 @@ end
 
 before do
   # Allow access to setup and public files without being "configured"
-  return if ['/setup', '/favicon.ico', '/logo.png', '/auth/login', '/docs'].include?(request.path_info) || request.path_info.start_with?('/public') || request.path_info.start_with?('/api/') || request.path_info.start_with?('/docs/')
+  return if ['/setup', '/favicon.ico', '/logo.png', '/auth/login', '/docs', '/sync/status'].include?(request.path_info) || 
+            request.path_info.start_with?('/public') || 
+            request.path_info.start_with?('/api/') || 
+            request.path_info.start_with?('/docs/') ||
+            request.path_info.start_with?('/job/')
   
   if !configured?
     redirect '/setup'
@@ -303,26 +307,29 @@ before '/course/:id*' do
   @course_id = params[:id]
 
   # Try to load course from normalized table
-  @course = Course.find_by(org_unit_id: @course_id)
+  @course = Course.find_by(org_unit_id: @course_id.to_s)
   
   # If not in DB, try to fetch info from API to populate name
-  if @course.nil? || @course.name.to_s.match?(/^\d+$/)
+  if @course.nil? || @course.name.blank? || @course.name.to_s.match?(/^\d+$/)
     course_info = $client.get_org_unit(@course_id)
-    if course_info
-      @course_name = course_info['Name']
-      # Proactively create the course record so we have it next time
-      @course = Course.create(
-        org_unit_id: @course_id,
-        name: @course_name,
-        code: course_info['Code']
-      ) rescue nil
+    
+    # Check if we got a valid name from API
+    new_name = course_info ? course_info['Name'] : nil
+    if new_name && !new_name.to_s.match?(/^\d+$/)
+      @course_name = new_name
+      
+      # Update or create database record
+      if @course
+        @course.update(name: @course_name, code: course_info['Code'])
+      else
+        @course = Course.create(org_unit_id: @course_id.to_s, name: @course_name, code: course_info['Code']) rescue nil
+      end
+    elsif @course && @course.name.present? && !@course.name.to_s.match?(/^\d+$/)
+      # Fallback to DB name if API failed but DB has a good name
+      @course_name = @course.name
     else
+      # Absolute fallback
       @course_name = "Course #{@course_id}"
-    end
-
-    # If course exists but had a numeric name, update it
-    if @course && @course_name != @course.name && !@course_name.match?(/^\d+$/)
-      @course.update(name: @course_name)
     end
   else
     @course_name = @course.name
@@ -381,7 +388,9 @@ get '/dashboard' do
       Thread.new(c.org_unit_id) do |oid|
         ActiveRecord::Base.connection_pool.with_connection do
           info = $client.get_org_unit(oid)
-          Course.find_by(org_unit_id: oid)&.update(name: info['Name']) if info && info['Name']
+          if info && info['Name'] && !info['Name'].to_s.match?(/^\d+$/)
+            Course.find_by(org_unit_id: oid)&.update(name: info['Name'])
+          end
         end
       end
     end
@@ -566,7 +575,7 @@ get '/course/:id/module/:module_id' do
   @active_tab = "module_#{@module_id}"
   @module = find_module(@toc['Modules'], @module_id)
   @breadcrumbs = build_breadcrumbs(@toc['Modules'], @module_id) if @toc
-  
+
   @breadcrumb_trail = (@breadcrumbs || []).map do |crumb|
     { title: crumb[:title], url: "/course/#{@course_id}/module/#{crumb[:id]}" }
   end
@@ -582,7 +591,12 @@ get '/course/:id/assignments' do
   
   # Fallback if empty
   if @assignments.empty?
-    @assignments_raw = $client.get_assignments(@course_id)
+    # Immediate fallback to API to avoid blank screen
+    raw = $client.get_assignments(@course_id)
+    @assignments = ensure_array(raw) if raw
+    
+    # Trigger background sync to populate DB for next time
+    Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_assignments(@course_id, raw) } } if raw
   end
 
   erb :assignments
@@ -1015,7 +1029,8 @@ get '/course/:id/discussions' do
   if @topics.empty? || params[:force_refresh] == 'true'
     # Immediate fallback to raw data if DB is empty to avoid blank screen
     @forums_raw = $client.get_discussions(@course_id) || []
-    @topics = @forums_raw.flat_map do |f| 
+    @forums = @forums_raw # Populate @forums for the view too
+    @topics = @forums_raw.flat_map do |f|
       topics_data = $client.get_discussion_topics(@course_id, f['ForumId'], force_refresh: params[:force_refresh] == 'true')
       # Defensive check: ensure topics_data is a hash/array before mapping
       items = if topics_data.is_a?(Hash)
