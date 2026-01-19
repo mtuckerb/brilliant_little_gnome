@@ -207,13 +207,13 @@ function startRubyApp() {
   } catch(e) {}
 
   const pathSeparator = process.platform === 'win32' ? ';' : ':';
-
-  // Calculate RUBYLIB to include standard libraries
+  // Construction of RUBYLIB and load paths
+  // We prioritize the standard library paths that come with the portable distribution
   const rubyLibPaths = [
     path.join(rubyBase, 'lib', 'ruby', '3.4.0'),
-    path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'arm64-darwin20'),
-    path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'x86_64-darwin20')
-  ];
+    path.join(rubyBase, 'lib', 'ruby', '3.4.0', platformDir.includes('arm64') ? 'arm64-darwin20' : 'x86_64-darwin20')
+  ].filter(p => fs.existsSync(p));
+
   const rubyLib = rubyLibPaths.join(pathSeparator);
 
   const env = { 
