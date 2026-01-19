@@ -1,6 +1,6 @@
 {
-  "name": "britespace",
-  "version": "1.8.1",
+  "name": "brilliant",
+  "version": "1.10.6",
   "description": "A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard.",
   "main": "main.js",
   "scripts": {

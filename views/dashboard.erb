@@ -172,6 +172,22 @@
   </div>
 
   <div class="column is-4">
+    <% if @upcoming_assignments && !@upcoming_assignments.empty? %>
+      <h2 class="title is-4"><i class="fas fa-calendar-check mr-2"></i> Upcoming Assignments</h2>
+      <% @upcoming_assignments.each do |a| %>
+        <div class="box mb-4 has-background-warning-light" onclick="window.location='/course/<%= a.course_id %>/assignments/<%= a.brightspace_id %>'" style="cursor:pointer; border: 1px solid #ffdd57;">
+          <p class="is-size-7 has-text-weight-bold mb-1">
+            <%= Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course" %>
+          </p>
+          <h6 class="title is-6 mb-1"><%= a.name %></h6>
+          <p class="is-size-7 has-text-danger">
+            Due: <%= format_date(a.due_date, "%A, %b %d at %I:%M %p") %>
+          </p>
+        </div>
+      <% end %>
+      <hr>
+    <% end %>
+
     <h2 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Recent Updates</h2>
     <% if @recent_notifications && !@recent_notifications.empty? %>
       <% @recent_notifications.each do |n| %>
@@ -230,6 +246,9 @@ document.addEventListener('DOMContentLoaded', function() {
   const taskText = document.getElementById('sync-task');
   const percentText = document.getElementById('sync-percent');
   const progressBar = document.getElementById('sync-progress');
+  
+  let checkInterval = 10000; // Default 10s
+  let timerId = null;
 
   function checkSyncStatus() {
     fetch('/sync/status')
@@ -240,22 +259,48 @@ document.addEventListener('DOMContentLoaded', function() {
           taskText.innerText = data.current_task;
           percentText.innerText = data.progress + '%';
           progressBar.value = data.progress;
-          setTimeout(checkSyncStatus, 2000); // Check every 2s
+          
+          // Speed up checks when active
+          if (checkInterval !== 2000) {
+            checkInterval = 2000;
+            resetTimer();
+          }
         } else if (data.status === 'completed') {
-          taskText.innerText = "Sync complete!";
-          percentText.innerText = '100%';
-          progressBar.value = 100;
-          setTimeout(() => { indicator.style.display = 'none'; }, 3000);
+          // If we were just syncing, show completion briefly
+          if (indicator.style.display !== 'none' && !taskText.innerText.includes("complete")) {
+            taskText.innerText = "Sync complete!";
+            percentText.innerText = '100%';
+            progressBar.value = 100;
+            setTimeout(() => { indicator.style.display = 'none'; }, 3000);
+          }
+          
+          // Slow down checks when idle
+          if (checkInterval !== 10000) {
+            checkInterval = 10000;
+            resetTimer();
+          }
         } else {
           indicator.style.display = 'none';
+          if (checkInterval !== 10000) {
+            checkInterval = 10000;
+            resetTimer();
+          }
         }
       })
-      .catch(err => console.error("Sync check error:", err));
+      .catch(err => {
+        console.error("Sync check error:", err);
+        // On error, slow down
+        checkInterval = 10000;
+      });
   }
 
-  // Initial trigger if dashboard shows it is active
-  if (indicator.style.display !== 'none') {
-    checkSyncStatus();
+  function resetTimer() {
+    if (timerId) clearInterval(timerId);
+    timerId = setInterval(checkSyncStatus, checkInterval);
   }
+
+  // Initial call and start timer
+  checkSyncStatus();
+  resetTimer();
 });
 </script>

@@ -5,6 +5,17 @@ require 'cgi'
 
 require 'securerandom'
 
+# Handle --headless flag before Sinatra/Bundler parses ARGV
+$headless_mode = ARGV.delete('--headless')
+
+# Pre-emptively rescue EPIPE on standard streams to prevent sidecar crashes during pipe-cleanup
+def $stderr.write(data)
+  super rescue nil
+end
+def $stdout.write(data)
+  super rescue nil
+end
+
 Bundler.require(:default)
 
 require 'sinatra'
@@ -16,8 +27,8 @@ require 'tempfile'
 require 'icalendar'
 require 'rack-flash'
 
-require_relative 'lib/brightspace/client'
-require_relative 'lib/brightspace/auth_helper'
+require_relative 'lib/brilliant/client'
+require_relative 'lib/brilliant/auth_helper'
 require_relative 'helpers/course_helpers'
 require_relative 'models/notification'
 require_relative 'models/api_cache'
@@ -59,6 +70,8 @@ begin
     # Ensure the local directory exists
     puts "[Brilliant] Using default development database"
     FileUtils.mkdir_p("db")
+    db_path = File.expand_path("db/development.sqlite3")
+    puts "[Brilliant] Database path: #{db_path}"
     db_config = {
       adapter: "sqlite3",
       database: "db/development.sqlite3",
@@ -117,7 +130,7 @@ configure do
 end
 
 # Initialize Client
-$client = BrightspaceClient.new
+$client = BrilliantClient.new
 # Helpers
 helpers CourseHelpers
 
@@ -202,8 +215,12 @@ before do
     redirect '/setup'
   end
 
-  @user_prefs = UserPreference.current
-  @user = $client.get_who_am_i || { 'FirstName' => @user_prefs.display_name, 'LastName' => '' }
+  # Memoize preferences and user for the duration of this single request
+  @user_prefs ||= UserPreference.current
+  
+  # Only fetch whoami if we haven't already in this request
+  # and use a shorter timeout for the background refresh to reduce noise
+  @user ||= $client.get_who_am_i || { 'FirstName' => @user_prefs.display_name, 'LastName' => '' }
   
   # Auto-fetch name from Brightspace if we still have the default or empty
   if (@user_prefs.display_name == "User" || @user_prefs.display_name.nil?) && @user['DisplayName']
@@ -267,7 +284,7 @@ end
 
 get '/auth/login' do
   host = params[:host] || $client.host
-  cookies = BrightspaceAuthHelper.fetch_cookies(host)
+  cookies = BrilliantAuthHelper.fetch_cookies(host)
   
   if cookies
     $client.save_connection_config(host, cookies)
@@ -322,6 +339,9 @@ before '/course/:id*' do
   # Identify the lineage of the current module to keep the sidebar expanded
   current_module_id = params[:module_id] || (request.path.split('/module/')[1] if request.path.include?('/module/'))
   @lineage = find_lineage(@toc['Modules'], current_module_id) if @toc && current_module_id
+
+  # Upcoming Assignments for this course
+  @course_upcoming = Assignment.where(course_id: @course_id).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
 end
 
 get '/' do
@@ -510,6 +530,9 @@ get '/dashboard' do
 
   @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
   
+  # Upcoming Assignments for Dashboard
+  @upcoming_assignments = Assignment.where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
+  
   @sync_status = $client.sync_status
   
   erb :dashboard
@@ -679,6 +702,30 @@ get '/course/:id/assignments/:assignment_id' do
   @rubric_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:rubric")
 
   erb :assignment_detail
+end
+
+# Quizzes
+get '/course/:id/quizzes/:quiz_id' do
+  @active_tab = 'assignments' # Group with assignments
+  @quiz_id = params[:quiz_id]
+  @course_id = params[:id]
+  
+  # Fetch Quiz Info
+  @quiz = $client.do_get("/d2l/api/le/1.40/#{@course_id}/quizzes/#{@quiz_id}")
+  halt 404, "Quiz not found" unless @quiz
+
+  @breadcrumb_trail = [
+    { title: 'Assignments', url: "/course/#{@course_id}/assignments" },
+    { title: @quiz['Name'], url: "/course/#{@course_id}/quizzes/#{@quiz_id}" }
+  ]
+
+  # Simple detail view - reuse assignment layout or separate
+  erb :quiz_detail
+end
+
+get '/course/:id/quizzes' do
+  # Redirect to assignments since we display them together there
+  redirect "/course/#{params[:id]}/assignments"
 end
 
 # Announcements
@@ -1587,4 +1634,25 @@ helpers do
 end
 
 # Transition to Start Server
-Sinatra::Application.run! if __FILE__ == $0
+if __FILE__ == $0
+  # Print Startup Info
+  port = settings.port
+  bind = settings.bind == '0.0.0.0' ? 'localhost' : settings.bind
+  
+  puts "\n" + "="*60
+  puts " [Brilliant] Server Instance: http://#{bind}:#{port}"
+  puts " [Brilliant] API Base URL:    http://#{bind}:#{port}/api/v1"
+  puts " [Brilliant] API Docs:        http://#{bind}:#{port}/docs"
+  puts "="*60 + "\n"
+
+  # Handle Headless Mode
+  if ARGV.include?('--headless')
+    puts "[Brilliant] Running in HEADLESS mode (No Electron)"
+    # We use Sinatra's built-in run!
+    Sinatra::Application.run!
+  else
+    # In standard mode, Sinatra is usually started by the sidecar manager, 
+    # but we'll maintain compatibility here.
+    Sinatra::Application.run!
+  end
+end

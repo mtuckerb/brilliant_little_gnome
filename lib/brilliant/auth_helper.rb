@@ -1,6 +1,6 @@
 require 'ferrum'
 
-class BrightspaceAuthHelper
+class BrilliantAuthHelper
   def self.fetch_cookies(host)
     # Launch browser
     # headless: false so the user can actually log in

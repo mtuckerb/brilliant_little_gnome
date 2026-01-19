@@ -1,236 +1,56 @@
-const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
-const { spawn } = require('child_process');
+const { app, BrowserWindow, ipcMain, shell, dialog, protocol, net } = require('electron');
 const path = require('path');
+const { spawn, execSync, exec } = require('child_process');
+const axios = require('axios');
 const fs = require('fs');
 
 let mainWindow;
 let rubyApp;
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    title: "Brilliant",
-    show: false, // Don't show until ready
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
-    }
-  });
+// Configuration based on app package identity
+const appName = "brilliant";
+const productName = "Brilliant";
 
-  // Load the splash screen immediately
-  mainWindow.loadFile(path.join(__dirname, 'public', 'splash.html'));
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-  });
+// Rebranding: Transition operational directory from "brightspace" to "Brilliant"
+// We use app.getPath('userData') which Electron handles based on the 'name' in package.json
+const userDataPath = app.getPath('userData');
+const logFile = path.join(userDataPath, 'sidecar.log');
 
-  // Attempt to load the URL with retries
-  let retryCount = 0;
-  const healthUrl = 'http://127.0.0.1:4567/health';
-  
-  const loadWithRetry = () => {
-    retryCount++;
-    if (retryCount % 10 === 0) {
-      console.log(`[Electron] Still waiting for Ruby sidecar at ${healthUrl} (Attempt ${retryCount})...`);
-    }
-    
-    if (retryCount > 60) { 
-      console.log("[Electron] Timeout reached. Opening DevTools for manual inspection.");
-      mainWindow.webContents.openDevTools();
-    }
-
-    fetch(healthUrl)
-      .then(res => {
-        if (res.ok) {
-          console.log("[Electron] Ruby sidecar is healthy! Loading dashboard.");
-          mainWindow.loadURL('http://127.0.0.1:4567');
-        } else {
-          setTimeout(loadWithRetry, 500);
-        }
-      })
-      .catch(() => {
-        setTimeout(loadWithRetry, 500);
-      });
-  };
-
-  loadWithRetry();
-
-  // Open dev tools for debugging during development
-  // mainWindow.webContents.openDevTools();
-
-  mainWindow.on('closed', function () {
-    mainWindow = null;
-  });
-
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.includes('/download')) {
-      return { action: 'allow' };
-    }
-    return { action: 'deny' };
-  });
-
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (url.includes('/download')) {
-      // Allow the navigation but handle as download
-    }
-  });
-
-  session.defaultSession.on('will-download', (event, item, webContents) => {
-    // Set the save path, which making Electron show the save dialog
-    // item.setSavePath(path.join(app.getPath('downloads'), item.getFilename()));
-    
-    item.on('updated', (event, state) => {
-      if (state === 'interrupted') {
-        console.log('Download is interrupted but can be resumed');
-      } else if (state === 'progressing') {
-        if (item.isPaused()) {
-          console.log('Download is paused');
-        } else {
-          console.log(`Received bytes: ${item.getReceivedBytes()}`);
-        }
-      }
-    });
-    item.once('done', (event, state) => {
-      if (state === 'completed') {
-        console.log('Download successfully');
-      } else {
-        console.log(`Download failed: ${state}`);
-      }
-    });
-  });
+// Ensure data directory exists
+if (!fs.existsSync(userDataPath)) {
+  fs.mkdirSync(userDataPath, { recursive: true });
 }
 
-ipcMain.on('start-login', (event, host) => {
-  const loginWindow = new BrowserWindow({
-    width: 600,
-    height: 800,
-    parent: mainWindow,
-    modal: true,
-    title: "Brightspace Login",
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true
+function getRubyBinary() {
+  if (process.platform === 'darwin') {
+    try {
+      // Try to find ruby via which, fall back to common path
+      const pathFound = execSync('which ruby').toString().trim();
+      return pathFound || '/usr/bin/ruby';
+    } catch (e) {
+      return '/usr/bin/ruby';
     }
-  });
-
-  loginWindow.loadURL(`https://${host}/d2l/lp/auth/login/login.d2l`);
-
-  // Suppress Brightspace's annoying alerts - injected at start and when DOM is ready
-  loginWindow.webContents.on('dom-ready', () => {
-    const script = "window.alert = function(){}; window.confirm = function(){return true;}; window.prompt = function(){return null;};";
-    loginWindow.webContents.executeJavaScript(script);
-  });
-
-  loginWindow.webContents.on('did-navigate', (event, url) => {
-    if (url.includes("/d2l/home") || url.includes("/d2l/lp/homepage")) {
-      // Extract cookies
-      session.defaultSession.cookies.get({ domain: host })
-        .then((cookies) => {
-          const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-          
-          // Send back to Sinatra via main window (or we can use an IPC -> Ruby bridge)
-          // For now, let's send it back to the renderer to POST it to Sinatra
-          mainWindow.webContents.send('login-complete', { host, cookies: cookieString });
-          
-          setTimeout(() => {
-            loginWindow.close();
-          }, 1000);
-        })
-        .catch((error) => {
-          console.error("Failed to get cookies:", error);
-        });
-    }
-  });
-
-  loginWindow.on('closed', () => {
-    // Handle cancellation
-  });
-});
+  }
+  return 'ruby'; // Assume it's in PATH for other platforms
+}
 
 function startRubyApp() {
-  const isPackaged = app.isPackaged;
-  const baseDir = isPackaged ? app.getAppPath().replace('app.asar', 'app.asar.unpacked') : __dirname;
-  const resourceDir = isPackaged ? process.resourcesPath : __dirname;
-  const userDataPath = app.getPath('userData') || path.join(app.getPath('appData'), app.getName());
+  const rubyBinary = getRubyBinary();
+  const baseDir = app.getAppPath();
   
-  // Ensure the base data path exists (Application Support/Brilliant or similar)
-  try {
-    if (!fs.existsSync(userDataPath)) {
-      fs.mkdirSync(userDataPath, { recursive: true });
-    }
-  } catch (err) {
-    // If we can't create the primary path, fall back to temporary directory
-    // This is a last resort to allow logging even in restricted environments
-    console.error(`Failed to create userDataPath: ${userDataPath}`, err);
-  }
-
-  const pidFile = path.join(userDataPath, 'ruby_sidecar.pid');
-
-  let platformDir = '';
-  let rubyExec = 'ruby';
-
-  if (process.platform === 'darwin') {
-    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-    platformDir = `macos-${arch}`;
-  } else if (process.platform === 'win32') {
-    platformDir = 'win-x64';
-    rubyExec = 'ruby.exe';
-  }
-
-  const rubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
-  const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
-
-  const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', '3.4.0');
-  const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
+  // Set up environment for Ruby
+  const env = { ...process.env };
   
-  const cacheDir = path.join(userDataPath, 'bootsnap');
-  const dbDir = path.join(userDataPath, 'db');
-  const logFile = path.join(userDataPath, 'ruby_sidecar.log');
+  // Set the data directory so Ruby knows where to store its database and config
+  env.BRILLIANT_DATA_DIR = userDataPath;
   
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-
-  // --- PID FAILSAFE ---
-  if (fs.existsSync(pidFile)) {
-    try {
-      const oldPid = parseInt(fs.readFileSync(pidFile, 'utf8'));
-      if (oldPid) {
-        process.kill(oldPid, 'SIGTERM');
-      }
-    } catch (e) {}
-    try { fs.unlinkSync(pidFile); } catch(e) {}
-  }
-  // --------------------
-
-  try { 
-    if (process.platform !== 'win32') fs.chmodSync(rubyBinary, 0o755); 
-  } catch(e) {}
-
-  const pathSeparator = process.platform === 'win32' ? ';' : ':';
-
-  const env = { 
-    ...process.env, 
-    PORT: '4567', 
-    BUNDLE_GEMFILE: path.join(baseDir, 'Gemfile'),
-    BUNDLE_DEPLOYMENT: 'true', 
-    BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
-    GEM_PATH: vendorGems,
-    GEM_HOME: vendorGems,
-    RUBY_PLATFORM_DIR: platformDir,
-    // When using a portable ruby, setting RUBYLIB can interfere with its 
-    // internal path discovery logic which is often relative to the binary.
-    // We only set it if we're not packaged, and even then, usually ruby 
-    // finds its internal libs. We'll leave it empty to let the binary decide.
-    RUBYLIB: "",
-    BRILLIANT_DATA_DIR: userDataPath,
-    BRILLIANT_ENV: 'electron',
-    BOOTSNAP_CACHE_DIR: cacheDir,
-    DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
-    PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`
-  };
-
-  console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
+  // In development, we might need to point to the local lib
+  env.RUBYLIB = path.join(baseDir, 'lib') + (env.RUBYLIB ? `:${env.RUBYLIB}` : '');
   
+  // Point to the gems bundled with the app if we're in a packaged state
+  // This depends on how you package the ruby environment.
+  // For now, assume a local environment where gems are available.
+
   let logFd;
   try {
     logFd = fs.openSync(logFile, 'a');
@@ -250,14 +70,30 @@ GEM_PATH: ${env.GEM_PATH}
     console.error("Failed to open log file:", err);
   }
 
-  // Use ruby directly. App.rb has require 'bundler/setup'.
-  // Don't use -I or RUBYOPT to avoid double-loading or overriding 
-  // Ruby's own internal search order for default gems.
-  rubyApp = spawn(rubyBinary, ['app.rb'], {
+  // Forward command line arguments (e.g., --headless) to Ruby
+  const rubyArgs = ['app.rb', ...process.argv.slice(2)];
+
+  rubyApp = spawn(rubyBinary, rubyArgs, {
     cwd: baseDir,
     env: env,
-    stdio: logFd ? ['ignore', logFd, logFd] : 'inherit'
+    stdio: ['ignore', 'pipe', 'pipe']
   });
+
+  // Pipe Ruby output to both the log file and the Electron process console
+  // This ensures metadata (DB path, URLs) shows up during 'npm start'
+  if (rubyApp.stdout) {
+    rubyApp.stdout.on('data', (data) => {
+      if (logFd) fs.writeSync(logFd, data);
+      process.stdout.write(data);
+    });
+  }
+
+  if (rubyApp.stderr) {
+    rubyApp.stderr.on('data', (data) => {
+      if (logFd) fs.writeSync(logFd, data);
+      process.stderr.write(data);
+    });
+  }
 
   rubyApp.on('error', (err) => {
     console.error(`[Electron] Failed to start Ruby process: ${err}`);
@@ -265,30 +101,87 @@ GEM_PATH: ${env.GEM_PATH}
   });
 
   rubyApp.on('exit', (code, signal) => {
+    console.log(`[Electron] Ruby sidecar exited with code ${code} and signal ${signal}`);
     if (code !== 0 && code !== null) {
-      console.error(`[Electron] Ruby process exited with code ${code}`);
-      if (isPackaged) {
-        dialog.showErrorBox("Ruby Sidecar Crash", `The Ruby backend process crashed with code ${code}.\nCheck the log at: ${logFile}`);
+      // Only show error box if not already quitting
+      if (!app.isQuitting) {
+        dialog.showErrorBox("Ruby Sidecar Crash", `The Ruby application exited unexpectedly (code: ${code}).\nCheck ${logFile} for details.`);
       }
     }
+    if (logFd) fs.closeSync(logFd);
   });
 }
 
-app.on('ready', () => {
-    startRubyApp();
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    title: productName,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+
+  // We wait for the Ruby app to be ready
+  const checkRuby = setInterval(async () => {
+    try {
+      await axios.get('http://localhost:4567/health');
+      clearInterval(checkRuby);
+      mainWindow.loadURL('http://localhost:4567/');
+    } catch (e) {
+      // Ruby not ready yet
+    }
+  }, 500);
+
+  mainWindow.on('closed', function () {
+    mainWindow = null;
+  });
+}
+
+// Check for --headless flag
+const isHeadless = process.argv.includes('--headless');
+
+app.whenReady().then(() => {
+  startRubyApp();
+  if (!isHeadless) {
     createWindow();
+  } else {
+    console.log("[Electron] Running in headless mode. UI will not be shown.");
+  }
+
+  app.on('activate', function () {
+    if (mainWindow === null && !isHeadless) createWindow();
+  });
 });
 
 app.on('window-all-closed', function () {
-  if (process.platform !== 'darwin') app.quit();
-});
-
-app.on('will-quit', () => {
-  if (rubyApp) {
-    rubyApp.kill();
+  // On macOS it is common for applications and their menu bar
+  // to stay active until the user quits explicitly with Cmd + Q
+  if (process.platform !== 'darwin') {
+    app.quit();
   }
 });
 
-app.on('activate', function () {
-  if (mainWindow === null) createWindow();
+// Flag to indicate we are intentionally shutting down
+app.isQuitting = false;
+
+app.on('before-quit', () => {
+  app.isQuitting = true;
+  if (rubyApp) {
+    console.log("[Electron] Sending TERM to Ruby sidecar...");
+    rubyApp.kill('SIGTERM');
+  }
+});
+
+// Handle cookie requests from the sidecar
+ipcMain.handle('get-cookies', async (event, url) => {
+  const cookies = await mainWindow.webContents.session.cookies.get({ url: url });
+  return cookies;
+});
+
+// Handle open-url requests
+ipcMain.on('open-external', (event, url) => {
+  shell.openExternal(url);
 });
