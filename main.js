@@ -180,7 +180,6 @@ function startRubyApp() {
 
   const rubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
   const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
-  const bundleBinary = path.join(rubyBase, 'bin', 'bundle');
 
   const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', '3.4.0');
   const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
@@ -213,9 +212,7 @@ function startRubyApp() {
   const rubyLibPaths = [
     path.join(rubyBase, 'lib', 'ruby', '3.4.0'),
     path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'arm64-darwin20'),
-    path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'x86_64-darwin20'),
-    path.join(rubyBase, 'lib', 'ruby', 'site_ruby', '3.4.0'),
-    path.join(rubyBase, 'lib', 'ruby', 'vendor_ruby', '3.4.0')
+    path.join(rubyBase, 'lib', 'ruby', '3.4.0', 'x86_64-darwin20')
   ];
   const rubyLib = rubyLibPaths.join(pathSeparator);
 
@@ -249,6 +246,7 @@ Base Dir: ${baseDir}
 Ruby Bin: ${rubyBinary}
 Data Dir: ${userDataPath}
 RUBYLIB: ${rubyLib}
+GEM_PATH: ${env.GEM_PATH}
 ---------------------------
 `;
     fs.writeSync(logFd, startupMsg);
@@ -256,7 +254,8 @@ RUBYLIB: ${rubyLib}
     console.error("Failed to open log file:", err);
   }
 
-  rubyApp = spawn(rubyBinary, [bundleBinary, 'exec', 'ruby', 'app.rb'], {
+  // Use ruby directly to avoid redundant bundle exec calls
+  rubyApp = spawn(rubyBinary, ['app.rb'], {
     cwd: baseDir,
     env: env,
     stdio: logFd ? ['ignore', logFd, logFd] : 'inherit'
