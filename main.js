@@ -205,16 +205,7 @@ function startRubyApp() {
   try { 
     if (process.platform !== 'win32') fs.chmodSync(rubyBinary, 0o755); 
   } catch(e) {}
-
   const pathSeparator = process.platform === 'win32' ? ';' : ':';
-  // Construction of RUBYLIB and load paths
-  // We prioritize the standard library paths that come with the portable distribution
-  const rubyLibPaths = [
-    path.join(rubyBase, 'lib', 'ruby', '3.4.0'),
-    path.join(rubyBase, 'lib', 'ruby', '3.4.0', platformDir.includes('arm64') ? 'arm64-darwin20' : 'x86_64-darwin20')
-  ].filter(p => fs.existsSync(p));
-
-  const rubyLib = rubyLibPaths.join(pathSeparator);
 
   const env = { 
     ...process.env, 
@@ -222,10 +213,14 @@ function startRubyApp() {
     BUNDLE_GEMFILE: path.join(baseDir, 'Gemfile'),
     BUNDLE_DEPLOYMENT: 'true', 
     BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
-    GEM_PATH: `${vendorGems}${pathSeparator}${internalGems}`,
+    GEM_PATH: vendorGems,
     GEM_HOME: vendorGems,
-    RUBYLIB: rubyLib,
     RUBY_PLATFORM_DIR: platformDir,
+    // When using a portable ruby, setting RUBYLIB can interfere with its 
+    // internal path discovery logic which is often relative to the binary.
+    // We only set it if we're not packaged, and even then, usually ruby 
+    // finds its internal libs. We'll leave it empty to let the binary decide.
+    RUBYLIB: "",
     BRILLIANT_DATA_DIR: userDataPath,
     BRILLIANT_ENV: 'electron',
     BOOTSNAP_CACHE_DIR: cacheDir,
