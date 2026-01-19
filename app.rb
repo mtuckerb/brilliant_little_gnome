@@ -203,12 +203,12 @@ before do
   end
 
   @user_prefs = UserPreference.current
+  @user = $client.get_who_am_i
   
   # Auto-fetch name from Brightspace if we still have the default or empty
   if @user_prefs.display_name == "User" || @user_prefs.display_name.nil?
-    user_data = $client.get_who_am_i
-    if user_data && user_data['DisplayName']
-      @user_prefs.update(display_name: user_data['DisplayName'])
+    if @user && @user['DisplayName']
+      @user_prefs.update(display_name: @user['DisplayName'])
     end
   end
 end
