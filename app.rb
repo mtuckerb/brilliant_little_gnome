@@ -546,6 +546,8 @@ get '/dashboard' do
   
   erb :dashboard
 end
+
+post '/assignments/:id/toggle_complete' do
   assignment = Assignment.find(params[:id])
   new_status = !assignment.completed
   assignment.update(completed: new_status, completed_at: (new_status ? Time.now : nil))
@@ -572,9 +574,6 @@ end
     content_type :json
     { status: 'ok', completed: assignment.completed, notification_id: n&.id }.to_json
   else
-    redirect back
-  end
-    # Create or update a notification for this assignment if completed
     redirect back
   end
 end
