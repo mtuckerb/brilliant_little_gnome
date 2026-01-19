@@ -5,6 +5,9 @@ require 'cgi'
 
 require 'securerandom'
 
+# Handle --headless flag before Sinatra/Bundler parses ARGV
+$headless_mode = ARGV.delete('--headless')
+
 Bundler.require(:default)
 
 require 'sinatra'

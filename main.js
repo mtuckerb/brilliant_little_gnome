@@ -230,7 +230,6 @@ function startRubyApp() {
 
   console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
   
-  const logFile = path.join(userDataPath, 'ruby_sidecar.log');
   let logFd;
   try {
     logFd = fs.openSync(logFile, 'a');
