@@ -59,6 +59,8 @@ begin
     # Ensure the local directory exists
     puts "[Brilliant] Using default development database"
     FileUtils.mkdir_p("db")
+    db_path = File.expand_path("db/development.sqlite3")
+    puts "[Brilliant] Database path: #{db_path}"
     db_config = {
       adapter: "sqlite3",
       database: "db/development.sqlite3",
@@ -1617,4 +1619,25 @@ helpers do
 end
 
 # Transition to Start Server
-Sinatra::Application.run! if __FILE__ == $0
+if __FILE__ == $0
+  # Print Startup Info
+  port = settings.port
+  bind = settings.bind == '0.0.0.0' ? 'localhost' : settings.bind
+  
+  puts "\n" + "="*60
+  puts " [Brilliant] Server Instance: http://#{bind}:#{port}"
+  puts " [Brilliant] API Base URL:    http://#{bind}:#{port}/api/v1"
+  puts " [Brilliant] API Docs:        http://#{bind}:#{port}/docs"
+  puts "="*60 + "\n"
+
+  # Handle Headless Mode
+  if ARGV.include?('--headless')
+    puts "[Brilliant] Running in HEADLESS mode (No Electron)"
+    # We use Sinatra's built-in run!
+    Sinatra::Application.run!
+  else
+    # In standard mode, Sinatra is usually started by the sidecar manager, 
+    # but we'll maintain compatibility here.
+    Sinatra::Application.run!
+  end
+end
