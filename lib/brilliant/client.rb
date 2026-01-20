@@ -729,7 +729,7 @@ class BrilliantClient
         begin
           m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
           m.title = mod['Title']
-          new_desc = mod.dig('Description', 'Text')
+          new_desc = mod.dig('Description', 'Html') || mod.dig('Description', 'Text')
           m.description = new_desc if new_desc && !new_desc.empty?
           m.sort_order = index
           m.save!
@@ -764,7 +764,7 @@ class BrilliantClient
       begin
         m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
         m.title = mod['Title']
-        new_desc = mod.dig('Description', 'Text')
+        new_desc = mod.dig('Description', 'Html') || mod.dig('Description', 'Text')
         m.description = new_desc if new_desc && !new_desc.empty?
         m.sort_order = index
         m.parent_id = parent_id
@@ -1135,9 +1135,10 @@ class BrilliantClient
     when :course_home
       "#{base_url}/home/#{course_id}"
     when :assignment
-      "#{base_url}/lms/dropbox/user/folder_submit_files.d2l?db=#{id}&ou=#{course_id}"
+      # Uses QuickLink to handle auth context better and avoid 403s on certain courses
+      "#{base_url}/common/dialogs/quickLink/quickLink.d2l?ou=#{course_id}&type=dropbox&id=#{id}"
     when :quiz
-      "#{base_url}/lms/quizzing/user/quiz_summary.d2l?qi=#{id}&ou=#{course_id}"
+      "#{base_url}/common/dialogs/quickLink/quickLink.d2l?ou=#{course_id}&type=quiz&id=#{id}"
     when :discussion_topic
       "#{base_url}/lms/discussions/admin/forum_topics_list.d2l?ou=#{course_id}"
     when :discussion_thread

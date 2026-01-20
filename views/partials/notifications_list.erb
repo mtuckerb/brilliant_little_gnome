@@ -1,14 +1,14 @@
-<% if @notifications.empty? %>
+<% if @notifications&.empty? %>
   <div class="box has-text-centered py-6">
     <span class="icon is-large has-text-grey-light mb-4">
       <i class="fas fa-bell-slash fa-2x"></i>
     </span>
     <p class="has-text-grey">No notifications found with these filters.</p>
   </div>
-<% else %>
+  <% elsif @notifications.count > 0 %>
   <div class="notification-list">
     <% @notifications.each do |n| %>
-      <div class="box mb-3 notification-card p-4 <%= 'is-read' if n.is_read %>" style="cursor: pointer; border-left: 5px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
+      <div class="box mb-3 notification-card p-4 <%= 'is-read' if n.is_read %>" id="notification-<%= n.id %>" style="cursor: pointer; border-left: 5px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
         <div class="columns is-mobile is-vcentered is-gapless mb-0">
           <div class="column">
             <div class="is-flex is-align-items-center mb-1">
@@ -38,23 +38,18 @@
               </span>
             <% end %>
             <div>
-              <% if !n.is_read %>
-                <form action="/notifications/<%= n.id %>/mark_read" method="post" style="display:inline;">
-                  <button type="submit" class="button is-ghost p-0 is-small hov-success" title="Mark as Read">
-                    <span class="icon is-small">
-                      <i class="far fa-circle"></i>
-                    </span>
-                  </button>
-                </form>
-              <% else %>
-                <form action="/notifications/<%= n.id %>/mark_unread" method="post" style="display:inline;">
-                  <button type="submit" class="button is-ghost p-0 is-small hov-unread" title="Mark as Unread">
-                    <span class="icon is-small has-text-link">
-                      <i class="fas fa-check-circle"></i>
-                    </span>
-                  </button>
-                </form>
-              <% end %>
+              <button type="button" 
+                      class="button is-ghost p-0 is-small hov-success mark-read-btn <%= 'is-hidden' if n.is_read %>" 
+                      onclick="updateNotificationReadStatus(event, <%= n.id %>, true)" 
+                      title="Mark as Read">
+                <span class="icon is-small"><i class="far fa-circle"></i></span>
+              </button>
+              <button type="button" 
+                      class="button is-ghost p-0 is-small hov-unread mark-unread-btn <%= 'is-hidden' unless n.is_read %>" 
+                      onclick="updateNotificationReadStatus(event, <%= n.id %>, false)" 
+                      title="Mark as Unread">
+                <span class="icon is-small has-text-link"><i class="fas fa-check-circle"></i></span>
+              </button>
             </div>
           </div>
         </div>
@@ -92,6 +87,52 @@
     </nav>
   <% end %>
 <% end %>
+
+<script>
+function updateNotificationReadStatus(event, id, isRead) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  const url = isRead ? `/notifications/${id}/mark_read` : `/notifications/${id}/mark_unread`;
+  
+  fetch(url, {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === 'ok') {
+      const card = document.getElementById(`notification-${id}`);
+      const readBtn = card.querySelector('.mark-read-btn');
+      const unreadBtn = card.querySelector('.mark-unread-btn');
+      
+      if (isRead) {
+        card.classList.add('is-read');
+        readBtn.classList.add('is-hidden');
+        unreadBtn.classList.remove('is-hidden');
+      } else {
+        card.classList.remove('is-read');
+        readBtn.classList.remove('is-hidden');
+        unreadBtn.classList.add('is-hidden');
+      }
+
+      // If we are filtering by unread and just marked it as read, fade it out
+      const urlParams = new URLSearchParams(window.location.search);
+      const isReadingAll = urlParams.get('show_read') === 'true';
+      
+      if (isRead && !isReadingAll) {
+        card.style.transition = 'opacity 0.6s, height 0.6s, margin 0.6s, padding 0.6s';
+        card.style.opacity = '0';
+        card.style.pointerEvents = 'none';
+        setTimeout(() => { card.style.display = 'none'; }, 600);
+      }
+    }
+  })
+  .catch(err => console.error("Error updating notification status:", err));
+}
+</script>
 
 <style>
 .notification-card {
