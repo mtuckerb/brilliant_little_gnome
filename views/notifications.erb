@@ -3,12 +3,12 @@
     <div class="box">
       <h3 class="title is-5 mb-4"><i class="fas fa-filter mr-2"></i> Filters</h3>
       
-      <form action="/notifications" method="get">
+      <form id="filter-form" action="/notifications" method="get">
         <div class="field mb-3">
           <label class="label is-size-7">Sort By</label>
           <div class="control">
             <div class="select is-fullwidth is-small">
-              <select name="sort" onchange="this.form.submit()">
+              <select name="sort">
                 <option value="date" <%= 'selected' if params[:sort] == 'date' %>>Newest First</option>
                 <option value="urgency" <%= 'selected' if params[:sort] == 'urgency' %>>Urgency First</option>
               </select>
@@ -20,7 +20,7 @@
           <label class="label is-size-7">Semester</label>
           <div class="control">
             <div class="select is-fullwidth is-small">
-              <select name="semester" onchange="this.form.submit()">
+              <select name="semester">
                 <option value="">All Semesters</option>
                 <% 
                   semesters = Notification.where.not(semester: [nil, ""]).pluck(:semester).uniq.sort
@@ -39,7 +39,7 @@
           <label class="label is-size-7">Course</label>
           <div class="control">
             <div class="select is-fullwidth is-small">
-              <select name="course_id" onchange="this.form.submit()">
+              <select name="course_id">
                 <option value="">All Courses</option>
                 <% @courses.each do |c| %>
                   <% info = extract_course_info(c['OrgUnit']['Name']) %>
@@ -53,10 +53,30 @@
         </div>
 
         <div class="field mb-3">
+          <label class="label is-size-7">Type</label>
+          <div class="control">
+            <div class="select is-fullwidth is-small">
+              <select name="type">
+                <option value="">All Types</option>
+                <% 
+                  # Common types: Assignment, News, Grade, Content, Discussion, System
+                  types = Notification.where.not(notification_type: [nil, ""]).pluck(:notification_type).uniq.sort
+                  types.each do |t| 
+                %>
+                  <option value="<%= t %>" <%= 'selected' if params[:type] == t %>>
+                    <%= t %>
+                  </option>
+                <% end %>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field mb-3">
           <label class="label is-size-7">Urgency</label>
           <div class="control">
             <div class="select is-fullwidth is-small">
-              <select name="urgency" onchange="this.form.submit()">
+              <select name="urgency">
                 <option value="">Any Urgency</option>
                 <option value="3" <%= 'selected' if params[:urgency] == '3' %>>High (Red)</option>
                 <option value="2" <%= 'selected' if params[:urgency] == '2' %>>Medium (Yellow)</option>
@@ -68,14 +88,14 @@
 
         <div class="field mb-4">
           <label class="checkbox is-size-7">
-            <input type="checkbox" name="personal_only" value="true" <%= 'checked' if params[:personal_only] == 'true' %> onchange="this.form.submit()">
+            <input type="checkbox" name="personal_only" value="true" <%= 'checked' if params[:personal_only] == 'true' %>>
             Directly for me only
           </label>
         </div>
 
         <div class="field mb-4">
           <label class="checkbox is-size-7">
-            <input type="checkbox" name="show_read" value="true" <%= 'checked' if params[:show_read] == 'true' %> onchange="this.form.submit()">
+            <input type="checkbox" name="show_read" value="true" <%= 'checked' if params[:show_read] == 'true' %>>
             Include already read
           </label>
         </div>
@@ -121,6 +141,44 @@
       </div>
     </div>
 
-    <%= erb :'partials/notifications_list' %>
+    <div id="notifications-container">
+      <%= erb :'partials/notifications_list' %>
+    </div>
   </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const filterForm = document.querySelector('form[action="/notifications"]');
+  if (!filterForm) return;
+
+  const container = document.getElementById('notifications-container');
+
+  filterForm.addEventListener('change', (e) => {
+    // Collect form data
+    const formData = new FormData(filterForm);
+    const params = new URLSearchParams(formData);
+    
+    // Update URL without reload
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.pushState({ path: newUrl }, '', newUrl);
+
+    // Fetch updated list via AJAX
+    container.style.opacity = '0.5';
+    fetch(newUrl, {
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    })
+    .then(res => res.text())
+    .then(html => {
+      container.innerHTML = html;
+      container.style.opacity = '1';
+    })
+    .catch(err => {
+      console.error("Filter Error:", err);
+      container.style.opacity = '1';
+    });
+  });
+});
+</script>

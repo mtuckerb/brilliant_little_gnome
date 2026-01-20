@@ -24,9 +24,18 @@
                 </div>
               </summary>
               <div class="content p-4 has-background-white">
-                <p class="is-size-7 has-text-grey mb-3">
-                  Posted: <%= format_date(item["StartDate"]) %>
-                </p>
+                <div class="is-flex is-justify-content-space-between is-align-items-flex-start mb-3">
+                  <p class="is-size-7 has-text-grey mb-0">
+                    Posted: <%= format_date(item["StartDate"]) %>
+                  </p>
+                  <form action="/course/<%= @course_id %>/announcements/<%= item['Id'] %>/create_task" method="POST">
+                    <input type="hidden" name="title" value="<%= item['Title'] %>">
+                    <button type="submit" class="button is-small is-primary is-light" title="Create synthetic task from this announcement">
+                      <span class="icon is-small"><i class="fas fa-plus"></i></span>
+                      <span>Task</span>
+                    </button>
+                  </form>
+                </div>
                 <div class="announcement-body">
                   <% 
                      desc = item['Body']

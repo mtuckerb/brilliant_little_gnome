@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, session, dialog, shell } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -64,20 +64,38 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.includes('/download')) {
+    // If it's a download link or local app relative link, allow Electron to handle it
+    if (url.includes('/download') || url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
       return { action: 'allow' };
     }
-    return { action: 'deny' };
+    
+    // For any other external http/https links, open in the system's default browser
+    if (url.startsWith('http')) {
+      shell.openExternal(url).catch(err => {
+        console.error(`[Electron] Failed to open external link: ${url}`, err);
+      });
+      return { action: 'deny' };
+    }
+
+    return { action: 'allow' };
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (url.includes('/download')) {
-      // Allow the navigation but handle as download
+    // If it's the local app or a download, allow it
+    if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost') || url.includes('/download')) {
+      return;
+    }
+
+    // Otherwise, intercept and open in external browser
+    if (url.startsWith('http')) {
+      event.preventDefault();
+      shell.openExternal(url).catch(err => {
+        console.error(`[Electron] Failed to open external link: ${url}`, err);
+      });
     }
   });
 
   session.defaultSession.on('will-download', (event, item, webContents) => {
-    // Set the save path, which making Electron show the save dialog
     // item.setSavePath(path.join(app.getPath('downloads'), item.getFilename()));
     
     item.on('updated', (event, state) => {
@@ -116,7 +134,6 @@ ipcMain.on('start-login', (event, host) => {
 
   loginWindow.loadURL(`https://${host}/d2l/lp/auth/login/login.d2l`);
 
-  // Suppress Brightspace's annoying alerts - injected at start and when DOM is ready
   loginWindow.webContents.on('dom-ready', () => {
     const script = "window.alert = function(){}; window.confirm = function(){return true;}; window.prompt = function(){return null;};";
     loginWindow.webContents.executeJavaScript(script);
@@ -124,13 +141,9 @@ ipcMain.on('start-login', (event, host) => {
 
   loginWindow.webContents.on('did-navigate', (event, url) => {
     if (url.includes("/d2l/home") || url.includes("/d2l/lp/homepage")) {
-      // Extract cookies
       session.defaultSession.cookies.get({ domain: host })
         .then((cookies) => {
           const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-          
-          // Send back to Sinatra via main window (or we can use an IPC -> Ruby bridge)
-          // For now, let's send it back to the renderer to POST it to Sinatra
           mainWindow.webContents.send('login-complete', { host, cookies: cookieString });
           
           setTimeout(() => {
@@ -144,7 +157,6 @@ ipcMain.on('start-login', (event, host) => {
   });
 
   loginWindow.on('closed', () => {
-    // Handle cancellation
   });
 });
 
@@ -154,14 +166,11 @@ function startRubyApp() {
   const resourceDir = isPackaged ? process.resourcesPath : __dirname;
   const userDataPath = app.getPath('userData') || path.join(app.getPath('appData'), app.getName());
   
-  // Ensure the base data path exists (Application Support/Brilliant or similar)
   try {
     if (!fs.existsSync(userDataPath)) {
       fs.mkdirSync(userDataPath, { recursive: true });
     }
   } catch (err) {
-    // If we can't create the primary path, fall back to temporary directory
-    // This is a last resort to allow logging even in restricted environments
     console.error(`Failed to create userDataPath: ${userDataPath}`, err);
   }
 
@@ -190,7 +199,6 @@ function startRubyApp() {
   
   if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
-  // --- PID FAILSAFE ---
   if (fs.existsSync(pidFile)) {
     try {
       const oldPid = parseInt(fs.readFileSync(pidFile, 'utf8'));
@@ -200,7 +208,6 @@ function startRubyApp() {
     } catch (e) {}
     try { fs.unlinkSync(pidFile); } catch(e) {}
   }
-  // --------------------
 
   try { 
     if (process.platform !== 'win32') fs.chmodSync(rubyBinary, 0o755); 
@@ -216,10 +223,6 @@ function startRubyApp() {
     GEM_PATH: vendorGems,
     GEM_HOME: vendorGems,
     RUBY_PLATFORM_DIR: platformDir,
-    // When using a portable ruby, setting RUBYLIB can interfere with its 
-    // internal path discovery logic which is often relative to the binary.
-    // We only set it if we're not packaged, and even then, usually ruby 
-    // finds its internal libs. We'll leave it empty to let the binary decide.
     RUBYLIB: "",
     BRILLIANT_DATA_DIR: userDataPath,
     BRILLIANT_ENV: 'electron',
@@ -237,7 +240,6 @@ function startRubyApp() {
     console.error("Failed to open log file:", err);
   }
 
-  // Forward command line arguments (e.g., --headless) to Ruby
   const rubyArgs = ['app.rb', ...process.argv.slice(2)];
 
   rubyApp = spawn(rubyBinary, rubyArgs, {
@@ -246,8 +248,6 @@ function startRubyApp() {
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
-  // Pipe Ruby output to both the log file and the Electron process console
-  // This ensures metadata (DB path, URLs) shows up during 'npm start'
   if (rubyApp.stdout) {
     rubyApp.stdout.on('data', (data) => {
       if (logFd) fs.writeSync(logFd, data);
@@ -279,8 +279,6 @@ function startRubyApp() {
 
 app.on('ready', () => {
     startRubyApp();
-    
-    // Only create the browser window if NOT in headless mode
     if (!process.argv.includes('--headless')) {
       createWindow();
     } else {

@@ -10,6 +10,44 @@
           <h2 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Announcements</h2>
         </div>
         <div class="level-right">
+          <form id="course-filter-form" action="/course/<%= @course_id %>/notifications" method="get" class="is-flex is-align-items-center mr-3">
+             <div class="field is-narrow mr-2 mb-0">
+               <div class="control">
+                 <div class="select is-small">
+                   <select name="type">
+                     <option value="">All Types</option>
+                     <% 
+                       types = Notification.where(course_id: @course_id).where.not(notification_type: [nil, ""]).pluck(:notification_type).uniq.sort
+                       types.each do |t| 
+                     %>
+                       <option value="<%= t %>" <%= 'selected' if params[:type] == t %>><%= t %></option>
+                     <% end %>
+                   </select>
+                 </div>
+               </div>
+             </div>
+
+             <div class="field is-narrow mr-2 mb-0">
+               <div class="control">
+                 <div class="select is-small">
+                   <select name="urgency">
+                     <option value="">Any Urgency</option>
+                     <option value="3" <%= 'selected' if params[:urgency] == '3' %>>High</option>
+                     <option value="2" <%= 'selected' if params[:urgency] == '2' %>>Medium</option>
+                     <option value="1" <%= 'selected' if params[:urgency] == '1' %>>Low</option>
+                   </select>
+                 </div>
+               </div>
+             </div>
+
+             <div class="field is-narrow mb-0">
+               <label class="checkbox is-size-7 mr-2">
+                 <input type="checkbox" name="show_read" value="true" <%= 'checked' if params[:show_read] == 'true' %>>
+                 Read
+               </label>
+             </div>
+          </form>
+
           <form action="/notifications/mark_all_read" method="post" class="mr-2">
             <button type="submit" class="button is-link is-light is-small">
               <i class="fas fa-check-double mr-2"></i> Mark All Read
@@ -17,7 +55,45 @@
           </form>
         </div>
       </div>
-      <%= erb :'partials/notifications_list' %>
+      <div id="notifications-container">
+        <%= erb :'partials/notifications_list' %>
+      </div>
     </div>
   </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const filterForm = document.querySelector('form[action="/course/<%= @course_id %>/notifications"]');
+  if (!filterForm) return;
+
+  const container = document.getElementById('notifications-container');
+
+  filterForm.addEventListener('change', (e) => {
+    // Collect form data
+    const formData = new FormData(filterForm);
+    const params = new URLSearchParams(formData);
+    
+    // Update URL without reload
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.pushState({ path: newUrl }, '', newUrl);
+
+    // Fetch updated list via AJAX
+    container.style.opacity = '0.5';
+    fetch(newUrl, {
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    })
+    .then(res => res.text())
+    .then(html => {
+      container.innerHTML = html;
+      container.style.opacity = '1';
+    })
+    .catch(err => {
+      console.error("Filter Error:", err);
+      container.style.opacity = '1';
+    });
+  });
+});
+</script>

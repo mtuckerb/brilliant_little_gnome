@@ -332,7 +332,7 @@ module CourseHelpers
           {
             'Identifier' => item.brightspace_id,
             'Title' => item.title,
-            'Type' => item.item_type.to_i,
+            'Type' => item.item_type,
             'Url' => item.url,
             'IsHidden' => item.is_hidden
           }
@@ -393,5 +393,127 @@ module CourseHelpers
     end
     
     (year * 10) + season_weight
+  end
+
+  def synthesize_tasks(module_obj, course_name = "", tasks = [], parent_date = nil)
+    return tasks unless module_obj
+    
+    module_title = module_obj['Title'] || ""
+    
+    # Try to extract a date from the module title (e.g. "Week 1 - 1/19" or "Week 1, January 26")
+    inferred_date = nil
+    year = Time.now.year
+    
+    # Pattern 1: M/D (1/19)
+    date_match = module_title.match(/(\d{1,2}\/\d{1,2})/)
+    if date_match
+      begin
+        month, day = date_match[1].split('/').map(&:to_i)
+        inferred_date = Time.new(year, month, day, 23, 59, 59)
+      rescue; end
+    elsif (month_match = module_title.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*,?\s*(\d{1,2})/i))
+      # Pattern 2: Month Day (January 26 or Jan. 26 or January, 26)
+      begin
+        parsed = Time.parse("#{month_match[1]} #{month_match[2]}")
+        inferred_date = Time.new(parsed.year, parsed.month, parsed.day, 23, 59, 59)
+      rescue; end
+    end
+
+    inferred_date ||= parent_date
+
+    # 1. PROCESS TOPICS (Structural Identifying)
+    (module_obj['Topics'] || []).each do |topic|
+      is_task = false
+      type_label = "Task"
+      t_type = topic['Type'].to_s
+      
+      if t_type == "3" || t_type == "Link"
+        is_task = true
+        type_label = "Link"
+        url = topic['Url'].to_s
+        if url.include?('type=discuss')
+          type_label = "Discussion"
+        elsif url.include?('type=lti') || url.include?('rCode=')
+          type_label = "External"
+        elsif url.include?('type=quiz')
+          type_label = "Quiz"
+        end
+      end
+
+      if is_task
+        tasks << {
+          name: topic['Title'],
+          type: type_label,
+          due_date: inferred_date,
+          source: 'topic',
+          id: topic['Id'] || topic['TopicId'],
+          module_id: module_obj['ModuleId'],
+          context: module_title,
+          url: topic['Url'],
+          synthetic: true,
+          external_url: topic['Url']
+        }
+      end
+    end
+
+    # 2. PROCESS DESCRIPTION
+    desc = module_obj['Description']
+    desc_text = ""
+    if desc.is_a?(Hash)
+      desc_text = (desc['Html'] || desc['Text'] || "").to_s
+    else 
+      desc_text = desc.to_s
+    end
+    
+    unless desc_text.strip.empty?
+      text = desc_text.gsub(/<br\s*\/?>/i, "\n").gsub(/<\/p>/i, "\n").gsub(/<[^>]+>/, ' ')
+      lines = text.split("\n").map(&:strip).reject(&:empty?)
+      
+      current_category = "Task"
+      lines.each do |line|
+        if line =~ /^[A-Z\s]{4,}:?$/ || line =~ /^(Readings|Assignments|Tasks|To Do|Review Questions|Activities|Objectives|Watch):?$/i
+          current_category = line.gsub(':', '').strip
+          next
+        end
+
+        next if current_category =~ /Review Questions|Objectives|Resources/i
+
+        content = nil
+        if line =~ /^[\-•*]\s*(.*+)/ || line =~ /^\d+\.\s*(.*+)/
+          content = $1 || line
+        elsif current_category != "Task" && line.split.size >= 2 && line.split.size <= 8
+          content = line
+        end
+
+        if content && content.length > 2
+          next if tasks.any? { |t| t[:name].downcase == content.strip.downcase }
+          
+          tasks << { 
+            name: content.strip, 
+            type: current_category,
+            due_date: inferred_date,
+            source: 'text',
+            module_id: module_obj['ModuleId'],
+            context: module_title,
+            synthetic: true,
+            external_url: "/d2l/le/content/#{@course_id}/viewContent/#{module_obj['ModuleId']}/View"
+          }
+        end
+      end
+    end
+
+    # Deduplicate before recursion to keep tasks at their most specific level
+    # but carry the date context down.
+    # Actually, deduplication happens at the very end.
+
+    # Update current tasks that don't have a date if we just found one
+    tasks.each { |t| t[:due_date] ||= inferred_date if t[:context] == module_title }
+
+    # 3. RECURSE INTO SUBMODULES
+    (module_obj['Modules'] || []).each do |sub|
+      synthesize_tasks(sub, course_name, tasks, inferred_date)
+    end
+    
+    tasks.uniq { |t| t[:name] }
   end
 end

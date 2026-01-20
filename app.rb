@@ -868,6 +868,38 @@ get '/course/:id/announcements' do
   erb :announcements
 end
 
+post '/course/:id/announcements/:announcement_id/create_task' do
+  @course_id = params[:id]
+  announcement_id = params[:announcement_id]
+  announcement_title = params[:title]
+  
+  ext_id = "syn_ann_#{announcement_id}"
+  existing = Assignment.find_by(brightspace_id: ext_id, course_id: @course_id)
+  
+  if existing
+    flash[:error] = "A task for this announcement already exists."
+    redirect back
+  end
+
+  # Default due date to end of current week
+  due_date = (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+
+  Assignment.create(
+    course_id: @course_id,
+    brightspace_id: ext_id,
+    name: "[Announcement] #{announcement_title}",
+    due_date: due_date,
+    description: "Synthesized from Announcement: #{announcement_title}",
+    assignment_type: 'synthetic',
+    external_url: "/course/#{@course_id}/announcements",
+    synthetic: true
+  )
+
+  flash[:success] = "Created task for: #{announcement_title}"
+  redirect back
+end
+
+
 # Notifications
 get '/notifications' do
   @active_tab = 'notifications'
