@@ -208,16 +208,19 @@ end
 # ==========================================
 
 before do
+  # Memoize preferences for all requests so they are available in layouts/helpers
+  @user_prefs ||= UserPreference.current
+
   # Allow access to setup and public files without being "configured"
-  return if ['/setup', '/favicon.ico', '/logo.png', '/auth/login', '/docs'].include?(request.path_info) || request.path_info.start_with?('/public') || request.path_info.start_with?('/api/') || request.path_info.start_with?('/docs/')
+  return if ['/setup', '/favicon.ico', '/logo.png', '/auth/login', '/docs', '/sync/status'].include?(request.path_info) || 
+            request.path_info.start_with?('/public') || 
+            request.path_info.start_with?('/api/') || 
+            request.path_info.start_with?('/docs/')
   
   if !configured?
     redirect '/setup'
   end
 
-  # Memoize preferences and user for the duration of this single request
-  @user_prefs ||= UserPreference.current
-  
   # Only fetch whoami if we haven't already in this request
   # and use a shorter timeout for the background refresh to reduce noise
   @user ||= $client.get_who_am_i || { 'FirstName' => @user_prefs.display_name, 'LastName' => '' }
@@ -303,26 +306,29 @@ before '/course/:id*' do
   @course_id = params[:id]
 
   # Try to load course from normalized table
-  @course = Course.find_by(org_unit_id: @course_id)
+  @course = Course.find_by(org_unit_id: @course_id.to_s)
   
   # If not in DB, try to fetch info from API to populate name
-  if @course.nil? || @course.name.to_s.match?(/^\d+$/)
+  if @course.nil? || @course.name.blank? || @course.name.to_s.match?(/^\d+$/)
     course_info = $client.get_org_unit(@course_id)
-    if course_info
-      @course_name = course_info['Name']
-      # Proactively create the course record so we have it next time
-      @course = Course.create(
-        org_unit_id: @course_id,
-        name: @course_name,
-        code: course_info['Code']
-      ) rescue nil
+    
+    # Check if we got a valid name from API
+    new_name = course_info ? course_info['Name'] : nil
+    if new_name && !new_name.to_s.match?(/^\d+$/)
+      @course_name = new_name
+      
+      # Update or create database record
+      if @course
+        @course.update(name: @course_name, code: course_info['Code'])
+      else
+        @course = Course.create(org_unit_id: @course_id.to_s, name: @course_name, code: course_info['Code']) rescue nil
+      end
+    elsif @course && @course.name.present? && !@course.name.to_s.match?(/^\d+$/)
+      # Fallback to DB name if API failed but DB has a good name
+      @course_name = @course.name
     else
+      # Absolute fallback
       @course_name = "Course #{@course_id}"
-    end
-
-    # If course exists but had a numeric name, update it
-    if @course && @course_name != @course.name && !@course_name.match?(/^\d+$/)
-      @course.update(name: @course_name)
     end
   else
     @course_name = @course.name
@@ -341,7 +347,7 @@ before '/course/:id*' do
   @lineage = find_lineage(@toc['Modules'], current_module_id) if @toc && current_module_id
 
   # Upcoming Assignments for this course
-  @course_upcoming = Assignment.where(course_id: @course_id).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
+  @course_upcoming = Assignment.where(course_id: @course_id, completed: false).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
 end
 
 get '/' do
@@ -381,7 +387,9 @@ get '/dashboard' do
       Thread.new(c.org_unit_id) do |oid|
         ActiveRecord::Base.connection_pool.with_connection do
           info = $client.get_org_unit(oid)
-          Course.find_by(org_unit_id: oid)&.update(name: info['Name']) if info && info['Name']
+          if info && info['Name'] && !info['Name'].to_s.match?(/^\d+$/)
+            Course.find_by(org_unit_id: oid)&.update(name: info['Name'])
+          end
         end
       end
     end
@@ -531,12 +539,62 @@ get '/dashboard' do
   @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
   
   # Upcoming Assignments for Dashboard
-  @upcoming_assignments = Assignment.where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
+  @upcoming_assignments = Assignment.where(completed: false).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
   
   @sync_status = $client.sync_status
   
   erb :dashboard
 end
+
+post '/assignments/:id/toggle_complete' do
+  assignment = Assignment.find(params[:id])
+  new_status = !assignment.completed
+  assignment.update(completed: new_status, completed_at: (new_status ? Time.now : nil))
+  
+  ext_id = "assignment_comp_#{assignment.brightspace_id}"
+  if new_status
+    n = Notification.find_or_initialize_by(external_id: ext_id, course_id: assignment.course_id)
+    n.notification_type = "Assignment"
+    n.title = "Completed: #{assignment.name}"
+    n.body = "You marked this assignment as completed."
+    n.date = assignment.completed_at
+    n.course_name = assignment.course&.name
+    n.semester = assignment.course&.semester
+    n.urgency = 1
+    n.is_personal = true
+    n.url = "/course/#{assignment.course_id}/assignments/#{assignment.brightspace_id}"
+    n.is_read = true
+    n.save
+  else
+    Notification.where(external_id: ext_id).destroy_all
+  end
+
+  if request.xhr?
+    content_type :json
+    { status: 'ok', completed: assignment.completed, notification_id: n&.id }.to_json
+  else
+    redirect back
+  end
+end
+
+post '/assignments/:id/update_due_date' do
+  assignment = Assignment.find(params[:id])
+  new_date = params[:due_date]
+  if new_date.present?
+    # Simple parse, assuming YYYY-MM-DD from a date input
+    assignment.update(due_date: Time.parse(new_date))
+  else
+    assignment.update(due_date: nil)
+  end
+  
+  if request.xhr?
+    content_type :json
+    { status: 'ok', due_date: assignment.due_date ? assignment.due_date.iso8601 : nil }.to_json
+  else
+    redirect back
+  end
+end
+
 
 # Sync Status Endpoint
 get '/sync/status' do
@@ -566,12 +624,63 @@ get '/course/:id/module/:module_id' do
   @active_tab = "module_#{@module_id}"
   @module = find_module(@toc['Modules'], @module_id)
   @breadcrumbs = build_breadcrumbs(@toc['Modules'], @module_id) if @toc
-  
+
   @breadcrumb_trail = (@breadcrumbs || []).map do |crumb|
     { title: crumb[:title], url: "/course/#{@course_id}/module/#{crumb[:id]}" }
   end
   
   erb :module_detail
+end
+
+post '/course/:id/module/:module_id/create_tasks' do
+  @module_id = params[:module_id]
+  selected_indices = params[:tasks] # Array of indices
+  
+  if selected_indices.nil? || selected_indices.empty?
+    flash[:error] = "No tasks selected"
+    redirect back
+  end
+
+  built_tasks = []
+  selected_indices.each do |idx|
+    name = params["task_names_#{idx}"]
+    type = params["task_types_#{idx}"]
+    date_str = params["task_dates_#{idx}"]
+    url = params["task_urls_#{idx}"]
+    node_module_id = params["task_module_ids_#{idx}"] || @module_id
+
+    # Strip if empty string (placeholder for date input)
+    date_str = nil if date_str.blank?
+
+    due_date = date_str.present? ? (Time.parse(date_str) rescue nil) : nil
+    # Fallback if parsing failed or was never there
+    due_date ||= (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+
+    # Determine ext_id using index to keep it unique per module
+    ext_id = "syn_#{node_module_id}_#{idx}"
+    existing = Assignment.find_by(brightspace_id: ext_id, course_id: @course_id)
+    next if existing
+
+    Assignment.create(
+      course_id: @course_id,
+      brightspace_id: ext_id,
+      name: "[#{type}] #{name}",
+      due_date: due_date,
+      description: "Synthesized from Module: #{params[:module_title] || @module_id}",
+      assignment_type: 'synthetic',
+      external_url: url,
+      synthetic: true
+    )
+    built_tasks << name
+  end
+
+  if built_tasks.any?
+    flash[:success] = "Created #{built_tasks.size} tasks in Assignments"
+  else
+    flash[:error] = "Selected tasks already exist in Assignments"
+  end
+  
+  redirect back
 end
 
 # Assignments
@@ -582,7 +691,12 @@ get '/course/:id/assignments' do
   
   # Fallback if empty
   if @assignments.empty?
-    @assignments_raw = $client.get_assignments(@course_id)
+    # Immediate fallback to API to avoid blank screen
+    raw = $client.get_assignments(@course_id)
+    @assignments = $client.ensure_array(raw) if raw
+    
+    # Trigger background sync to populate DB for next time
+    Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_assignments(@course_id, raw) } } if raw
   end
 
   erb :assignments
@@ -657,10 +771,33 @@ end
 get '/course/:id/assignments/:assignment_id' do
   @active_tab = 'assignments'
   @assignment_id = params[:assignment_id]
-  @assignment = $client.get_assignment(@course_id, @assignment_id)
-  @feedback = $client.get_assignment_feedback(@course_id, @assignment_id)
-  @rubrics = $client.get_assignment_rubrics(@course_id, @assignment_id)
-  @submission_data = $client.get_assignment_submissions(@course_id, @assignment_id)
+  
+  if @assignment_id.start_with?('syn_')
+    # Synthetic Assignment Detail
+    rec = Assignment.find_by(brightspace_id: @assignment_id, course_id: @course_id)
+    puts "[DEBUG] Route: /course/#{@course_id}/assignments/#{@assignment_id}"
+    puts "[DEBUG] Found record: #{rec.inspect}"
+    halt 404, "Task not found" unless rec
+    
+    @assignment = {
+      'Id' => rec.brightspace_id,
+      'Name' => rec.name,
+      'DueDate' => rec.due_date&.iso8601,
+      'Instructions' => { 'Text' => rec.description },
+      'Synthetic' => true,
+      'ExternalUrl' => rec.external_url,
+      'Completed' => rec.completed
+    }
+  else
+    # Regular Brightspace assignment
+    @assignment = $client.get_assignment(@course_id, @assignment_id)
+  end
+  
+  halt 404, "Assignment not found" unless @assignment
+
+  @feedback = $client.get_assignment_feedback(@course_id, @assignment_id) unless @assignment['Synthetic']
+  @rubrics = $client.get_assignment_rubrics(@course_id, @assignment_id) unless @assignment['Synthetic']
+  @submission_data = $client.get_assignment_submissions(@course_id, @assignment_id) unless @assignment['Synthetic']
   
   sub_group = nil
   if @submission_data.is_a?(Array) && !@submission_data.empty?
@@ -672,19 +809,16 @@ get '/course/:id/assignments/:assignment_id' do
   end
 
   # Check for rubrics in the submission data if not found in specific endpoint
-  puts "DEBUG: Initial @rubrics: #{@rubrics.inspect}"
   if (@rubrics.nil? || @rubrics.empty?) && sub_group && sub_group['Rubrics']
     @rubrics = sub_group['Rubrics']
-    puts "DEBUG: Fallback to sub_group: #{@rubrics.inspect}"
   end
 
   # Fallback to Rubric Definition if no assessment rubric is found
   if (@rubrics.nil? || @rubrics.empty?) && @assignment['Assessment'] && @assignment['Assessment']['Rubrics']
     @rubrics = @assignment['Assessment']['Rubrics']
-    puts "DEBUG: Fallback to @assignment['Assessment']: #{@rubrics.inspect}"
   end
 
-  if (@feedback.nil? || (@feedback['Feedback']&.empty? rescue true))
+  if !@assignment['Synthetic'] && (@feedback.nil? || (@feedback['Feedback']&.empty? rescue true))
     # Passing force_refresh: true to ensure we get the latest gradebook data if assignment feedback is missing
     grades = $client.get_grades(@course_id, force_refresh: true)
     @grade_entry = grades.find { |g| g['GradeObjectIdentifier'] == @assignment['GradeItemId'].to_s } if grades && @assignment['GradeItemId']
@@ -736,6 +870,38 @@ get '/course/:id/announcements' do
   erb :announcements
 end
 
+post '/course/:id/announcements/:announcement_id/create_task' do
+  @course_id = params[:id]
+  announcement_id = params[:announcement_id]
+  announcement_title = params[:title]
+  
+  ext_id = "syn_ann_#{announcement_id}"
+  existing = Assignment.find_by(brightspace_id: ext_id, course_id: @course_id)
+  
+  if existing
+    flash[:error] = "A task for this announcement already exists."
+    redirect back
+  end
+
+  # Default due date to end of current week
+  due_date = (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+
+  Assignment.create(
+    course_id: @course_id,
+    brightspace_id: ext_id,
+    name: "[Announcement] #{announcement_title}",
+    due_date: due_date,
+    description: "Synthesized from Announcement: #{announcement_title}",
+    assignment_type: 'synthetic',
+    external_url: "/course/#{@course_id}/announcements",
+    synthetic: true
+  )
+
+  flash[:success] = "Created task for: #{announcement_title}"
+  redirect back
+end
+
+
 # Notifications
 get '/notifications' do
   @active_tab = 'notifications'
@@ -768,6 +934,11 @@ get '/notifications' do
     query = query.where(urgency: params[:urgency])
   end
 
+  # Filter: Type
+  if params[:type] && !params[:type].empty?
+    query = query.where(notification_type: params[:type])
+  end
+
   # Filter: Personal
   if params[:personal_only] == 'true'
     query = query.where(is_personal: true)
@@ -797,19 +968,11 @@ get '/notifications' do
   offset = (@page - 1) * @per_page
 
   @total_pages = (@notifications_total.to_f / @per_page).ceil
-  @notifications = query.offset(offset).limit(@per_page)
-
-  # Background check: If any semesters are missing, try to fill them
-  Thread.new do
-    ActiveRecord::Base.connection_pool.with_connection do
-      Notification.where(semester: [nil, ""]).where.not(course_name: nil).find_each do |n|
-        sem = $client.extract_semester_from_name(n.course_name)
-        n.update_column(:semester, sem) if sem
-      end
-    end
+  if request.xhr?
+    erb :'partials/notifications_list', layout: false
+  else
+    erb :notifications
   end
-
-  erb :notifications
 end
 
 get '/course/:id/notifications' do
@@ -828,6 +991,7 @@ get '/course/:id/notifications' do
   query = Notification.where(course_id: @course_id)
 
   # Apply standard filters
+  query = query.where(notification_type: params[:type]) if params[:type] && !params[:type].empty?
   query = query.where(urgency: params[:urgency]) if params[:urgency] && !params[:urgency].empty?
   query = query.where(is_personal: true) if params[:personal_only] == 'true'
   query = query.where(is_read: false) unless params[:show_read] == 'true'
@@ -843,7 +1007,11 @@ get '/course/:id/notifications' do
   
   @notifications = query.offset((@page - 1) * @per_page).limit(@per_page)
 
-  erb :course_notifications
+  if request.xhr?
+    erb :'partials/notifications_list', layout: false
+  else
+    erb :course_notifications
+  end
 end
 
 post '/notifications/:id/mark_read' do
@@ -865,7 +1033,12 @@ post '/notifications/:id/mark_read' do
     # in the API same way News does, but we perform the local state change above.
   end
 
-  redirect back
+  if request.xhr?
+    content_type :json
+    { status: 'ok', id: notification.id, is_read: true }.to_json
+  else
+    redirect back
+  end
 end
 
 # Proxy route to mark as read when clicking and then redirect to content
@@ -901,7 +1074,13 @@ end
 post '/notifications/:id/mark_unread' do
   notification = Notification.find(params[:id])
   notification.update(is_read: false)
-  redirect back
+
+  if request.xhr?
+    content_type :json
+    { status: 'ok', id: notification.id, is_read: false }.to_json
+  else
+    redirect back
+  end
 end
 
 post '/notifications/mark_all_read' do
@@ -953,6 +1132,24 @@ get '/debug/notifications' do
     sample: Notification.order(date: order).limit(5).map { |n| { id: n.id, date: n.date, title: n.title, semester: n.semester, is_read: n.is_read } },
     distinct_semesters: Notification.pluck(:semester).uniq
   }.to_json
+end
+
+# --- Centralized Error Handling ---
+not_found do
+  status 404
+  @error_title = "404 - Not Found"
+  @error_message = "The page you are looking for does not exist or has been moved."
+  erb :error
+end
+
+error do
+  @error = env['sinatra.error']
+  status 500
+  @error_title = "500 - Server Error"
+  @error_message = "An unexpected error occurred while processing your request."
+  puts "[Brilliant Error] #{@error.message}"
+  puts @error.backtrace.first(10).join("\n")
+  erb :error
 end
 
 # Grades
@@ -1015,7 +1212,8 @@ get '/course/:id/discussions' do
   if @topics.empty? || params[:force_refresh] == 'true'
     # Immediate fallback to raw data if DB is empty to avoid blank screen
     @forums_raw = $client.get_discussions(@course_id) || []
-    @topics = @forums_raw.flat_map do |f| 
+    @forums = @forums_raw # Populate @forums for the view too
+    @topics = @forums_raw.flat_map do |f|
       topics_data = $client.get_discussion_topics(@course_id, f['ForumId'], force_refresh: params[:force_refresh] == 'true')
       # Defensive check: ensure topics_data is a hash/array before mapping
       items = if topics_data.is_a?(Hash)
@@ -1307,7 +1505,7 @@ get '/course/:id/module/:module_id/download_all' do
   end
 
   safe_title = mod['Title'].gsub(/[^0-9a-z]/i, '_')
-  files = collect_all_files(mod, safe_title)
+  files = collect_all_files(@course_id, mod, safe_title)
   
   if files.empty?
     return "No downloadable files found in this module."
@@ -1430,6 +1628,57 @@ get '/api/v1/notifications' do
   query.order(date: :desc).limit(limit).to_json
 end
 
+# --- Synthetic Tasks CRUD ---
+get '/api/v1/synthetic_tasks' do
+  query = Assignment.where(assignment_type: 'synthetic')
+  query = query.where(course_id: params[:course_id]) if params[:course_id].present?
+  query.to_json
+end
+
+post '/api/v1/synthetic_tasks' do
+  payload = JSON.parse(request.body.read) rescue {}
+  
+  due_date = nil
+  if payload['due_date'].present?
+    due_date = Time.parse(payload['due_date'].to_s) rescue nil
+  end
+  due_date ||= (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+
+  task = Assignment.create(
+    course_id: payload['course_id'],
+    brightspace_id: payload['id'] || "syn_#{SecureRandom.hex(4)}",
+    name: payload['name'],
+    due_date: due_date,
+    description: payload['description'],
+    assignment_type: 'synthetic'
+  )
+  
+  if task.persisted?
+    task.to_json
+  else
+    halt 422, { errors: task.errors.full_messages }.to_json
+  end
+end
+
+patch '/api/v1/synthetic_tasks/:id' do
+  task = Assignment.find_by(brightspace_id: params[:id], assignment_type: 'synthetic')
+  halt 404, { error: "Task not found" }.to_json unless task
+  
+  payload = JSON.parse(request.body.read) rescue {}
+  if task.update(payload.slice('name', 'due_date', 'description', 'completed'))
+    task.to_json
+  else
+    halt 422, { errors: task.errors.full_messages }.to_json
+  end
+end
+
+delete '/api/v1/synthetic_tasks/:id' do
+  task = Assignment.find_by(brightspace_id: params[:id], assignment_type: 'synthetic')
+  halt 404, { error: "Task not found" }.to_json unless task
+  task.destroy
+  status 204
+end
+
 # --- Settings ---
 get '/api/v1/preferences' do
   @user_prefs.to_json(except: [:api_key, :brightspace_cookie])
@@ -1523,7 +1772,7 @@ helpers do
 
     case method
     when 'initialize'
-      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.4.0" } } }
+      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.4.3" } } }
     when 'tools/list'
       { jsonrpc: "2.0", id: id, result: { tools: [
         { 
@@ -1577,6 +1826,56 @@ helpers do
             }, 
             required: ["course_id"] 
           } 
+        },
+        {
+          name: "list_synthetic_tasks",
+          description: "List custom/synthetic tasks created for a course",
+          inputSchema: {
+            type: "object",
+            properties: {
+              course_id: { type: "string", description: "Filter by course ID" }
+            }
+          }
+        },
+        {
+          name: "create_synthetic_task",
+          description: "Create a new custom/synthetic assignment task",
+          inputSchema: {
+            type: "object",
+            properties: {
+              course_id: { type: "string", description: "Target course ID" },
+              name: { type: "string", description: "Task name" },
+              due_date: { type: "string", description: "ISO 8601 date string" },
+              description: { type: "string", description: "Task notes/instructions" }
+            },
+            required: ["course_id", "name"]
+          }
+        },
+        {
+          name: "update_synthetic_task",
+          description: "Update an existing synthetic task",
+          inputSchema: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "The 'syn_...' ID of the task" },
+              name: { type: "string" },
+              due_date: { type: "string" },
+              description: { type: "string" },
+              completed: { type: "boolean" }
+            },
+            required: ["id"]
+          }
+        },
+        {
+          name: "delete_synthetic_task",
+          description: "Remove a synthetic task",
+          inputSchema: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "The 'syn_...' ID to delete" }
+            },
+            required: ["id"]
+          }
         }
       ] } }
     when 'tools/call'
@@ -1627,6 +1926,44 @@ helpers do
     when 'get_course_assignments'
       assignments = Assignment.where(course_id: args['course_id']).order(due_date: :asc)
       { content: [{ type: "text", text: assignments.to_json }] }
+
+    when 'list_synthetic_tasks'
+      query = Assignment.where(assignment_type: 'synthetic')
+      query = query.where(course_id: args['course_id']) if args['course_id']
+      { content: [{ type: "text", text: query.to_json }] }
+
+    when 'create_synthetic_task'
+      task = Assignment.create(
+        course_id: args['course_id'],
+        brightspace_id: "syn_#{SecureRandom.hex(4)}",
+        name: args['name'],
+        due_date: args['due_date'].present? ? (Time.parse(args['due_date'].to_s) rescue nil) : nil,
+        description: args['description'],
+        assignment_type: 'synthetic'
+      )
+      if task.due_date.nil?
+        task.update(due_date: (Time.now.end_of_week - 1.day).change(hour: 23, min: 59))
+      end
+      { content: [{ type: "text", text: task.to_json }] }
+
+    when 'update_synthetic_task'
+      task = Assignment.find_by(brightspace_id: args['id'], assignment_type: 'synthetic')
+      if task
+        task.update(args.slice('name', 'due_date', 'description', 'completed'))
+        { content: [{ type: "text", text: task.to_json }] }
+      else
+        { isError: true, content: [{ type: "text", text: "Task not found" }] }
+      end
+
+    when 'delete_synthetic_task'
+      task = Assignment.find_by(brightspace_id: args['id'], assignment_type: 'synthetic')
+      if task
+        task.destroy
+        { content: [{ type: "text", text: "Task deleted" }] }
+      else
+        { isError: true, content: [{ type: "text", text: "Task not found" }] }
+      end
+
     else
       { isError: true, content: [{ type: "text", text: "Tool not found: #{name}" }] }
     end

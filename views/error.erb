@@ -1,14 +1,25 @@
+<div class="columns">
+  <% if @course_id && @toc %>
+    <div class="column is-3">
+      <%= erb :'partials/sidebar' %>
+    </div>
+  <% end %>
+
+  <div class="column <%= (@course_id && @toc) ? 'is-9' : 'is-12' %>">
+    <% if @course_id %>
+      <%= erb :'partials/course_detail_header' rescue nil %>
+    <% end %>
+
 <div class="section">
-  <div class="container">
-    <div class="columns is-centered">
-      <div class="column is-8">
-        <div class="box has-background-white p-6" style="border-top: 5px solid #ff3860;">
+    <div class="columns <%= 'is-centered' unless @course_id %>">
+      <div class="column <%= @course_id ? 'is-12' : 'is-8' %>">
+        <div class="box has-background-white <%= 'p-6' unless @course_id %>" style="border-top: 5px solid #ff3860;">
           <div class="has-text-centered mb-5">
             <span class="icon is-large has-text-danger">
               <i class="fas fa-exclamation-triangle fa-3x"></i>
             </span>
-            <h2 class="title is-3 mt-4">Something went wrong</h2>
-            <p class="subtitle is-6 has-text-grey">Detailed error information below</p>
+            <h2 class="title is-3 mt-4"><%= @error_title || "Something went wrong" %></h2>
+            <p class="subtitle is-6 has-text-grey"><%= @error_message || "Detailed error information below" %></p>
           </div>
 
           <% if @error %>
@@ -51,5 +62,6 @@
         </div>
       </div>
     </div>
+</div>
   </div>
 </div>

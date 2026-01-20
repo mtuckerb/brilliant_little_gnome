@@ -63,6 +63,7 @@ class BrilliantClient
           full_sync = UserPreference.get('force_full_sync') == 'true'
           
           courses = get_enrollments(force_refresh: full_sync) || []
+          puts "[Sync] Number of courses to process: #{courses.size}"
           user = get_who_am_i
           
           unless user && user['Identifier']
@@ -84,6 +85,7 @@ class BrilliantClient
           courses.each do |c|
             course_id = c['OrgUnit']['Id']
             course_name = c['OrgUnit']['Name']
+            puts "[Sync] Processing Course: #{course_name} (ID: #{course_id})"
             
             # Simple truncation helper for status display
             short_name = course_name.length > 10 ? course_name[0...9] + "…" : course_name
@@ -91,32 +93,44 @@ class BrilliantClient
             @sync_status[:current_task] = "#{short_name} - Syncing Core Content..."
             
             # Sync Core
+            toc_path = "/d2l/api/le/#{@api_version}/#{course_id}/content/toc"
             toc = get_toc(course_id)
+            puts "[Sync] TOC for #{course_id} fetched: #{toc.is_a?(Hash) ? toc.keys : toc.class}"
             sync_course_content(course_id, toc) if toc
+            archive_cache(toc_path) if toc
             
             sleep 0.1
             @sync_status[:current_task] = "#{short_name} - Syncing Assignments..."
+            assign_path = "/d2l/api/le/#{@api_version}/#{course_id}/dropbox/folders/"
             assignments = get_assignments(course_id)
+            puts "[Sync] Assignments for #{course_id} fetched: #{assignments.is_a?(Array) ? assignments.size : assignments.class}"
             sync_assignments(course_id, assignments) if assignments
+            archive_cache(assign_path) if assignments
 
             sleep 0.1
             @sync_status[:current_task] = "#{short_name} - Syncing Quizzes..."
+            quiz_path = "/d2l/api/le/#{@api_version}/#{course_id}/quizzes/"
             quizzes = get_quizzes(course_id)
             sync_quizzes(course_id, quizzes) if quizzes
+            archive_cache(quiz_path) if quizzes
             
             sleep 0.1
             
             @sync_status[:current_task] = "#{short_name} - Syncing Discussions..."
             # Sync Discussions
+            disc_path = "/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/"
             forums = get_discussions(course_id) || []
             sync_discussions(course_id, forums) if forums.any?
+            archive_cache(disc_path) if forums.any?
             
             sleep 0.1
             
             @sync_status[:current_task] = "#{short_name} - Syncing Grades..."
             # Sync Grades
+            grades_path = "/d2l/api/le/#{@api_version}/#{course_id}/grades/values/myGradeValues/"
             grades_raw = get_grades(course_id)
             sync_grades(course_id, grades_raw) if grades_raw.is_a?(Array)
+            archive_cache(grades_path) if grades_raw.is_a?(Array)
 
             current_step += 1
             @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
@@ -147,13 +161,17 @@ class BrilliantClient
     # Sync courses to normalized table
     ActiveRecord::Base.transaction do
       courses.each do |c|
+        next if c.nil? || c['OrgUnit'].nil?
+
         # Intelligent merge: skip if the response for the course name/code seems degraded
         new_name = c['OrgUnit']['Name']
         new_code = c['OrgUnit']['Code']
         next if new_name.nil? || new_name.empty?
 
         course = Course.find_or_initialize_by(org_unit_id: c['OrgUnit']['Id'].to_s)
-        course.name = c['OrgUnit']['Name']
+        
+        # Protection: Don't overwrite robust name with numeric ID
+        course.name = new_name if new_name.present? && !new_name.match?(/^\d+$/)
         course.code = c['OrgUnit']['Code']
         course.is_pinned = !c['PinDate'].nil?
         course.last_accessed_at = (Time.parse(c.dig('Access', 'LastAccessed')) rescue nil)
@@ -172,20 +190,32 @@ class BrilliantClient
         course.save!
       end
     end
+    # archive enrollments cache after syncing to course table
+    archive_cache("/d2l/api/lp/#{@api_version}/enrollments/myenrollments/")
 
     # Get unified feed first (broad coverage)
+    feed_path = "/d2l/api/lp/#{@api_version}/feed/"
+    feed_path += "?since=#{URI.encode_www_form_component(last_sync_time)}" if last_sync_time
     feed_items = get_unified_feed(courses, since: last_sync_time)
     ActiveRecord::Base.transaction do
       feed_items.each do |item|
         upsert_notification(item)
       end
     end
+    archive_cache(feed_path)
 
     # Get per-course News/Announcements explicitly
     courses.take(full_sync ? courses.size : 15).each do |c|
+      next if c.nil? || c['OrgUnit'].nil?
       course_id = c['OrgUnit']['Id']
+      if course_id.nil?
+        puts "[Brilliant API] Skipping course with nil OrgUnit Id: #{c.inspect}"
+        next
+      end
       
       # News/Announcements
+      news_path = "/d2l/api/le/#{@api_version}/#{course_id}/news/"
+      news_path += "?since=#{URI.encode_www_form_component(last_sync_time)}" if last_sync_time
       news_data = get_news(course_id, since: last_sync_time)
       items = if news_data.is_a?(Array)
                 news_data
@@ -215,8 +245,10 @@ class BrilliantClient
             url: "/course/#{course_id}/announcements"
           })
         end
+        archive_cache(news_path)
 
         # Course Overview (requested specifically by user)
+        overview_path = "/d2l/api/le/#{@api_version}/#{course_id}/overview"
         overview = get_overview(course_id)
         if overview && (overview['Description']&.fetch('Text', nil) || overview['Title'])
           upsert_notification({
@@ -231,6 +263,7 @@ class BrilliantClient
             is_personal: false,
             url: "/course/#{course_id}"
           })
+          archive_cache(overview_path)
         end
       end
     end
@@ -275,6 +308,7 @@ class BrilliantClient
     
     ActiveRecord::Base.connection_pool.with_connection do
       Assignment.where("due_date > ? AND due_date <= ?", Time.now, upcoming_limit).each do |a|
+        next if a.nil?
         course = courses.find { |c| c['OrgUnit']['Id'].to_s == a.course_id.to_s }
         course_name = course ? course['OrgUnit']['Name'] : (Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course")
 
@@ -303,6 +337,7 @@ class BrilliantClient
     all_updates = []
     # Only check recent courses to avoid long sync
     courses.take(20).each do |c|
+      next if c.nil? || c['OrgUnit'].nil?
       course_id = c['OrgUnit']['Id']
       
       path = "/d2l/api/le/#{@api_version}/#{course_id}/content/updates"
@@ -327,6 +362,7 @@ class BrilliantClient
           url: "/course/#{course_id}"
         }
       end
+      archive_cache(path)
     end
     all_updates
   end
@@ -684,64 +720,83 @@ class BrilliantClient
   end
 
   def sync_course_content(course_id, toc)
-    return unless toc.is_a?(Array)
+    modules = toc.is_a?(Hash) ? (toc['Modules'] || []) : toc
+    puts "[Sync] Beginning sync for #{modules.size} modules in course #{course_id}"
+    return unless modules.is_a?(Array)
     
-    toc.each_with_index do |mod, index|
-      m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
-      m.title = mod['Title']
-      # Intelligent protection: don't overwrite description with nil/empty if we have one
-      new_desc = mod.dig('Description', 'Text')
-      m.description = new_desc if new_desc && !new_desc.empty?
-      m.sort_order = index
-      m.save!
-      
-      # Sync topics/items
-      (mod['Topics'] || []).each_with_index do |topic, t_index|
-        item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'].to_s, module_id: mod['ModuleId'].to_s)
-        item.title = topic['Title']
-        item.item_type = topic['TypeIdentifier'] || topic['Type'] || 'Topic'
-        item.url = topic['Url']
-        item.is_hidden = topic['IsHidden'] || false
-        item.sort_order = t_index
-        item.save!
+    ActiveRecord::Base.transaction do
+      modules.each_with_index do |mod, index|
+        begin
+          m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
+          m.title = mod['Title']
+          new_desc = mod.dig('Description', 'Html') || mod.dig('Description', 'Text')
+          m.description = new_desc if new_desc && !new_desc.empty?
+          m.sort_order = index
+          m.save!
+          
+          # Sync topics/items
+          (mod['Topics'] || []).each_with_index do |topic, t_index|
+            # Correctly handle both Identifier and TopicId
+            t_id = (topic['Identifier'] || topic['TopicId'] || topic['Id']).to_s
+            item = ContentItem.find_or_initialize_by(brightspace_id: t_id, module_id: mod['ModuleId'].to_s)
+            item.title = topic['Title']
+            item.item_type = (topic['TypeIdentifier'] || topic['Type']).to_s
+            item.url = topic['Url']
+            item.is_hidden = topic['IsHidden'] || false
+            item.sort_order = t_index
+            item.save!
+          end
+          
+          # Recursively sync sub-modules
+          sync_sub_modules(course_id, mod['ModuleId'].to_s, mod['Modules']) if mod['Modules']
+        rescue => e
+          puts "[Sync] Error syncing module #{mod['ModuleId']}: #{e.message}"
+        end
       end
-      
-      # Recursively sync sub-modules
-      sync_sub_modules(course_id, mod['ModuleId'].to_s, mod['Modules']) if mod['Modules']
     end
   end
 
   def sync_sub_modules(course_id, parent_id, sub_modules)
-    return unless sub_modules.is_a?(Array)
+    modules = sub_modules.is_a?(Hash) ? (sub_modules['Modules'] || []) : sub_modules
+    return unless modules.is_a?(Array)
     
-    sub_modules.each_with_index do |mod, index|
-      m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
-      m.title = mod['Title']
-      new_desc = mod.dig('Description', 'Text')
-      m.description = new_desc if new_desc && !new_desc.empty?
-      m.sort_order = index
-      m.parent_id = parent_id
-      m.save!
-      
-      (mod['Topics'] || []).each_with_index do |topic, t_index|
-        item = ContentItem.find_or_initialize_by(brightspace_id: topic['Identifier'].to_s, module_id: mod['ModuleId'].to_s)
-        item.title = topic['Title']
-        item.item_type = topic['TypeIdentifier'] || topic['Type'] || 'Topic'
-        item.url = topic['Url']
-        item.is_hidden = topic['IsHidden'] || false
-        item.sort_order = t_index
-        item.save!
+    modules.each_with_index do |mod, index|
+      begin
+        m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
+        m.title = mod['Title']
+        new_desc = mod.dig('Description', 'Html') || mod.dig('Description', 'Text')
+        m.description = new_desc if new_desc && !new_desc.empty?
+        m.sort_order = index
+        m.parent_id = parent_id
+        m.save!
+        
+        (mod['Topics'] || []).each_with_index do |topic, t_index|
+          t_id = (topic['Identifier'] || topic['TopicId'] || topic['Id']).to_s
+          item = ContentItem.find_or_initialize_by(brightspace_id: t_id, module_id: mod['ModuleId'].to_s)
+          item.title = topic['Title']
+          item.item_type = (topic['TypeIdentifier'] || topic['Type']).to_s
+          item.url = topic['Url']
+          item.is_hidden = topic['IsHidden'] || false
+          item.sort_order = t_index
+          item.save!
+        end
+        
+        sync_sub_modules(course_id, mod['ModuleId'].to_s, mod['Modules']) if mod['Modules']
+      rescue => e
+        puts "[Sync] Error syncing sub-module #{mod['ModuleId']}: #{e.message}"
       end
-      
-      sync_sub_modules(course_id, mod['ModuleId'].to_s, mod['Modules']) if mod['Modules']
     end
   end
 
   def sync_assignments(course_id, assignments)
     items = ensure_array(assignments)
     
+    return if items.empty?
+
     items.each do |a|
-      assignment = Assignment.find_or_initialize_by(brightspace_id: a['Id'].to_s, course_id: course_id.to_s)
+      next if a.nil?
+      t_id = (a['Id'] || a['Identifier'] || a['TopicId']).to_s
+      assignment = Assignment.find_or_initialize_by(brightspace_id: t_id, course_id: course_id.to_s)
       
       # Protection: Don't overwrite robust name with thin data (archived courses sometimes return numeric IDs as names)
       new_name = a['Name']
@@ -762,9 +817,13 @@ class BrilliantClient
   def sync_quizzes(course_id, quizzes)
     items = ensure_array(quizzes)
     
+    return if items.empty?
+
     items.each do |q|
+      next if q.nil?
+      t_id = (q['QuizId'] || q['Id'] || q['Identifier']).to_s
       # We use the Assignment model for Quizzes too, but mark the type
-      assignment = Assignment.find_or_initialize_by(brightspace_id: "quiz_#{q['QuizId']}", course_id: course_id.to_s)
+      assignment = Assignment.find_or_initialize_by(brightspace_id: "quiz_#{t_id}", course_id: course_id.to_s)
       
       assignment.name = q['Name']
       assignment.assignment_type = 'quiz'
@@ -785,7 +844,9 @@ class BrilliantClient
     return unless forums.is_a?(Array)
     
     forums.each do |f|
-      forum = DiscussionForum.find_or_initialize_by(brightspace_id: f['ForumId'].to_s, course_id: course_id.to_s)
+      next if f.nil?
+      f_id = (f['ForumId'] || f['Id'] || f['Identifier']).to_s
+      forum = DiscussionForum.find_or_initialize_by(brightspace_id: f_id, course_id: course_id.to_s)
       forum.name = f['Name'] if f['Name']
       new_desc = f.dig('Description', 'Text')
       forum.description = new_desc if new_desc && !new_desc.empty?
@@ -793,7 +854,7 @@ class BrilliantClient
       
       topics_data = get_discussion_topics(course_id, f['ForumId'])
       topics = ensure_array(topics_data)
-      sync_discussion_topics(course_id, f['ForumId'].to_s, topics) if topics
+      sync_discussion_topics(course_id, f_id, topics) if topics
     end
   end
 
@@ -801,7 +862,9 @@ class BrilliantClient
     return unless topics.is_a?(Array)
     
     topics.each_with_index do |t, index|
-      topic = DiscussionTopic.find_or_initialize_by(brightspace_id: t['TopicId'].to_s, forum_id: forum_id.to_s)
+      next if t.nil?
+      t_id = (t['TopicId'] || t['Id'] || t['Identifier']).to_s
+      topic = DiscussionTopic.find_or_initialize_by(brightspace_id: t_id, forum_id: forum_id.to_s)
       topic.course_id = course_id.to_s
       topic.name = t['Name']
       new_desc = t.dig('Description', 'Html') || t.dig('Description', 'Text')
@@ -827,15 +890,17 @@ class BrilliantClient
     
     ActiveRecord::Base.transaction do
       posts.each do |p|
+        next if p.nil?
+        p_id = (p['PostId'] || p['Id'] || p['Identifier']).to_s
         post = DiscussionPost.find_or_initialize_by(
-          brightspace_id: p['PostId'].to_s,
+          brightspace_id: p_id,
           topic_id: topic_id.to_s,
           thread_id: p['ThreadId'].to_s
         )
         post.parent_post_id = p['ParentPostId'].to_s if p['ParentPostId']
         post.subject = p['Subject']
         
-        new_body = p.dig('Body', 'Html') || p.dig('Body', 'Text') || p['Body']
+        new_body = p.dig('Body', 'Html') || p.dig('Body', 'Text') || (p['Body'].is_a?(Hash) ? p.dig('Body', 'Html') : p['Body'])
         post.body = new_body if new_body && !new_body.empty?
         
         post.author_name = p['PostingUserDisplayName']
@@ -860,7 +925,10 @@ class BrilliantClient
   end
 
   def sync_discussion_thread(course_id, topic_id, thread)
-    t = DiscussionThread.find_or_initialize_by(brightspace_id: thread['ThreadId'].to_s, topic_id: topic_id.to_s)
+    return if thread.nil?
+
+    th_id = (thread['ThreadId'] || thread['Id'] || thread['Identifier']).to_s
+    t = DiscussionThread.find_or_initialize_by(brightspace_id: th_id, topic_id: topic_id.to_s)
     t.course_id = course_id.to_s
     t.subject = thread['Subject'] || thread['Title']
     
@@ -891,12 +959,13 @@ class BrilliantClient
     
     weights_map = {}
     metadata.each do |m|
-      weights_map[m['Id'].to_s] = m['Weight']
+      weights_map[(m['Id'] || m['Identifier']).to_s] = m['Weight']
     end
 
     ActiveRecord::Base.transaction do
       grade_values.each do |g|
-        obj_id = g['GradeObjectIdentifier'].to_s
+        next if g.nil?
+        obj_id = (g['GradeObjectIdentifier'] || g['Identifier'] || g['Id']).to_s
         grade = Grade.find_or_initialize_by(brightspace_id: obj_id, course_id: course_id.to_s)
         
         # Protection: archived courses often return numeric names
@@ -907,8 +976,8 @@ class BrilliantClient
         new_displayed = g['DisplayedGrade']
         grade.displayed_grade = new_displayed if new_displayed.present?
         
-        grade.numerator = g.dig('PointsNumerator') if g.dig('PointsNumerator')
-        grade.denominator = g.dig('PointsDenominator') if g.dig('PointsDenominator')
+        grade.numerator = g['PointsNumerator'] || g['Numerator'] if g['PointsNumerator'] || g['Numerator']
+        grade.denominator = g['PointsDenominator'] || g['Denominator'] if g['PointsDenominator'] || g['Denominator']
         
         new_weight = weights_map[obj_id] || g.dig('Weight')
         grade.weight = new_weight if new_weight
@@ -932,6 +1001,7 @@ class BrilliantClient
   def get_recent_grades_notifications(courses)
     alerts = []
     courses.each do |c|
+      next if c.nil? || c['OrgUnit'].nil?
       course_id = c['OrgUnit']['Id']
       grades_raw = get_grades(course_id)
       grades = if grades_raw.is_a?(Array)
@@ -966,6 +1036,7 @@ class BrilliantClient
     relevant_courses = courses.take(10) 
 
     relevant_courses.each do |c|
+      next if c.nil? || c['OrgUnit'].nil?
       course_id = c['OrgUnit']['Id']
       topics = get_all_topics(course_id) || []
       
@@ -1024,8 +1095,9 @@ class BrilliantClient
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/overview")
   end
 
-  def download_file(path)
+  def download_file(path, limit = 5)
     return nil unless authenticated?
+    raise "Too many redirects" if limit == 0
     
     # Handle absolute URLs gracefully
     if path.start_with?('http')
@@ -1047,7 +1119,14 @@ class BrilliantClient
     http.use_ssl = true
     
     begin
-      http.request(request)
+      response = http.request(request)
+      if response.code == '302' || response.code == '301' || response.code == '307' || response.code == '308'
+        location = response['location']
+        # If redirect is relative, join it with current uri
+        new_uri = URI.join(uri.to_s, location)
+        return download_file(new_uri.to_s, limit - 1)
+      end
+      response
     rescue => e
       puts "Download connection error for #{path}: #{e.message}"
       nil
@@ -1064,9 +1143,10 @@ class BrilliantClient
     when :course_home
       "#{base_url}/home/#{course_id}"
     when :assignment
-      "#{base_url}/lms/dropbox/user/folder_submit_files.d2l?db=#{id}&ou=#{course_id}"
+      # Uses QuickLink to handle auth context better and avoid 403s on certain courses
+      "#{base_url}/common/dialogs/quickLink/quickLink.d2l?ou=#{course_id}&type=dropbox&id=#{id}"
     when :quiz
-      "#{base_url}/lms/quizzing/user/quiz_summary.d2l?qi=#{id}&ou=#{course_id}"
+      "#{base_url}/common/dialogs/quickLink/quickLink.d2l?ou=#{course_id}&type=quiz&id=#{id}"
     when :discussion_topic
       "#{base_url}/lms/discussions/admin/forum_topics_list.d2l?ou=#{course_id}"
     when :discussion_thread
@@ -1090,7 +1170,7 @@ class BrilliantClient
   private
 
   def read_cache(path)
-    cache = ApiCache.find_by(path: path)
+    cache = ApiCache.active.find_by(path: path)
     return nil unless cache
     JSON.parse(cache.data)
   rescue => e
@@ -1105,26 +1185,50 @@ class BrilliantClient
 
     cache = ApiCache.find_or_initialize_by(path: path)
     cache.data = data.to_json
+    cache.is_archived = false # Ensure it's active when updated
     cache.save!
   rescue => e
     puts "Cache write error: #{e.message}"
   end
 
-  def do_get(path, force_refresh: false)
-    cached_data = read_cache(path)
-    cache_record = ApiCache.find_by(path: path)
-    
-    is_fresh = cache_record && (Time.now - cache_record.updated_at < 600) # 10 mins
+  def archive_cache(path)
+    ApiCache.where(path: path).update_all(is_archived: true, updated_at: Time.now)
+  rescue => e
+    puts "Cache archive error: #{e.message}"
+  end
 
+  def do_get(path, force_refresh: false)
+    # Perform a single database lookup for both data and freshness
+    # We allow reading from archived data if that's all we have and we aren't refreshing,
+    # but prefer active records.
+    cache_record = ApiCache.active.find_by(path: path) || ApiCache.find_by(path: path)
+    cached_data = nil
+    begin
+      cached_data = JSON.parse(cache_record.data) if cache_record
+    rescue => e
+      puts "Cache parse error for #{path}: #{e.message}"
+    end
+    
+    # 10 minute freshness window - only considered fresh if NOT archived
+    is_fresh = cache_record && !cache_record.is_archived && (Time.now - cache_record.updated_at < 600)
+
+    # Return immediately if fresh or if we have data but aren't logged in (no choice)
     if !force_refresh && cached_data && (is_fresh || !authenticated?)
       return cached_data
     end
 
+    # If we have data but it's stale, return it now but refresh in background
     if !force_refresh && cached_data && authenticated?
-      Thread.new { fetch_and_cache(path) }
+      # Ensure background threads have their own DB connection
+      Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do
+          fetch_and_cache(path)
+        end
+      end
       return cached_data
     end
 
+    # No cache or forced refresh, fetch synchronously
     fetch_and_cache(path)
   end
 
@@ -1206,9 +1310,20 @@ class BrilliantClient
         data = JSON.parse(response.body)
         write_cache(path, data)
         data
-      elsif response.code == '401' || response.code == '403'
-        puts "[!] AUTH ERROR #{response.code}: Cookie/Token likely expired. Entering Degraded Mode."
+      elsif response.code == '401'
+        puts "[!] AUTH ERROR 401: Token expired. Session is invalid."
         @degraded_mode = true
+        read_cache(path)
+      elsif response.code == '403'
+        # Distinguish between global 403 (session dead) and resource 403 (archive/restricted)
+        # If we hit 403 on a specific course resource, we shouldn't kill the whole app's ability to sync.
+        is_global = ['/users/whoami', '/enrollments/myenrollments/'].any? { |p| path.include?(p) }
+        if is_global
+          puts "[!] AUTH ERROR 403: Forbidden on global resource. Entering Degraded Mode."
+          @degraded_mode = true
+        else
+          puts "[!] ACCESS FORBIDDEN 403: #{path}. Course might be archived or restricted."
+        end
         read_cache(path)
       elsif response.code == '404'
         puts "[!] 404 NOT FOUND: #{path}" unless is_notoriously_noisy

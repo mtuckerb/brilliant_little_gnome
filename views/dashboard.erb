@@ -175,14 +175,31 @@
     <% if @upcoming_assignments && !@upcoming_assignments.empty? %>
       <h2 class="title is-4"><i class="fas fa-calendar-check mr-2"></i> Upcoming Assignments</h2>
       <% @upcoming_assignments.each do |a| %>
-        <div class="box mb-4 has-background-warning-light" onclick="window.location='/course/<%= a.course_id %>/assignments/<%= a.brightspace_id %>'" style="cursor:pointer; border: 1px solid #ffdd57;">
-          <p class="is-size-7 has-text-weight-bold mb-1">
-            <%= Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course" %>
-          </p>
-          <h6 class="title is-6 mb-1"><%= a.name %></h6>
-          <p class="is-size-7 has-text-danger">
-            Due: <%= format_date(a.due_date, "%A, %b %d at %I:%M %p") %>
-          </p>
+        <div class="box mb-4 has-background-warning-light p-4" onclick="window.location='/course/<%= a.course_id %>/assignments/<%= a.brightspace_id %>'" style="cursor:pointer; border: 1px solid #ffdd57; position: relative;">
+          <div class="columns is-mobile is-vcentered">
+            <div class="column is-narrow">
+              <div class="control" onclick="event.stopPropagation()">
+                <label class="checkbox">
+                  <input type="checkbox" class="assignment-checkbox" data-id="<%= a.id %>" <%= 'checked' if a.completed %> onchange="toggleAssignment(this)">
+                </label>
+              </div>
+            </div>
+            <div class="column">
+              <p class="is-size-7 has-text-weight-bold mb-0">
+                <%= Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course" %>
+              </p>
+              <h6 class="title is-6 mb-0"><%= a.name %></h6>
+              <p class="is-size-7 has-text-danger mb-0" onclick="event.stopPropagation()">
+                Due: 
+                <span class="due-date-display is-clickable" onclick="editDueDate(this, '<%= a.id %>')" title="Click to edit date">
+                  <%= format_date(a.due_date, "%A, %b %d at %I:%M %p") %>
+                </span>
+                <input type="date" class="due-date-input is-hidden input is-small py-0 px-1" 
+                       value="<%= a.due_date&.strftime('%Y-%m-%d') %>"
+                       onblur="saveDueDate(this, '<%= a.id %>')" style="width: 130px; display: none;">
+              </p>
+            </div>
+          </div>
         </div>
       <% end %>
       <hr>
@@ -302,5 +319,58 @@ document.addEventListener('DOMContentLoaded', function() {
   // Initial call and start timer
   checkSyncStatus();
   resetTimer();
+
+  window.toggleAssignment = function(checkbox) {
+    const id = checkbox.getAttribute('data-id');
+    const box = checkbox.closest('.box');
+    
+    fetch(`/assignments/${id}/toggle_complete`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'ok' && data.completed) {
+        box.style.opacity = '0.5';
+        box.style.pointerEvents = 'none';
+        // After a moment, we could remove it from view as it's no longer "upcoming"
+        setTimeout(() => { box.style.display = 'none'; }, 1000);
+      }
+    })
+    .catch(err => console.error("Error toggling assignment:", err));
+  };
+
+  window.editDueDate = function(span, assignmentId) {
+    const container = span.parentElement;
+    const input = container.querySelector('.due-date-input');
+    span.classList.add('is-hidden');
+    span.style.display = 'none';
+    input.classList.remove('is-hidden');
+    input.style.display = 'inline-block';
+    input.focus();
+  };
+
+  window.saveDueDate = function(input, assignmentId) {
+    const container = input.parentElement;
+    const span = container.querySelector('.due-date-display');
+    const newDate = input.value;
+
+    fetch(`/assignments/${assignmentId}/update_due_date`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `due_date=${newDate}`
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'ok') {
+        window.location.reload();
+      }
+    });
+
+    input.classList.add('is-hidden');
+    input.style.display = 'none';
+    span.classList.remove('is-hidden');
+    span.style.display = 'inline-block';
+  };
 });
 </script>

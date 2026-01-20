@@ -11,7 +11,14 @@
           <div class="is-size-6 has-text-grey">
             <i class="fas fa-calendar-alt mr-1"></i> Due: <%= @assignment['DueDate'] ? format_date(@assignment["DueDate"]) : "No due date" %>
           </div>
-          <a href="<%= $client.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id}) %>" class="button is-small is-link is-light" target="_blank">
+          <% 
+             portal_url = if @assignment['Synthetic'] && (ext_url = @assignment['ExternalUrl'])
+                            ext_url.start_with?('/') ? "https://#{$client.host}#{ext_url}" : ext_url
+                          else
+                            $client.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id})
+                          end
+          %>
+          <a href="<%= portal_url %>" class="button is-small is-link is-light" target="_blank">
             <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
             <span>Open in Brightspace</span>
           </a>

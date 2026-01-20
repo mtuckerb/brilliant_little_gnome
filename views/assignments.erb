@@ -20,12 +20,13 @@
         <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
+              <th width="40"></th>
               <th>Assignment</th>
               <th class="has-text-right">Action</th>
             </tr>
           </thead>
           <tbody>
-            <% @assignments.each do |a| %>
+            <% @assignments.order(completed: :asc, due_date: :asc).each do |a| %>
               <%
                 id = a.is_a?(Hash) ? a['Id'] : a.brightspace_id
                 name = a.is_a?(Hash) ? a['Name'] : a.name
@@ -40,15 +41,27 @@
                 
                 base_url = is_quiz ? "/course/#{@course_id}/quizzes" : "/course/#{@course_id}/assignments"
                 view_url = "#{base_url}/#{link_id}"
+                is_completed = a.respond_to?(:completed) && a.completed
               %>
-              <tr>
+              <tr class="<%= 'is-completed' if is_completed %>" style="<%= 'opacity: 0.6; background-color: #fafafa;' if is_completed %>">
+                <td class="is-vcentered">
+                  <div class="control">
+                    <input type="checkbox" class="assignment-checkbox" data-id="<%= a.is_a?(Assignment) ? a.id : '' %>" <%= 'checked' if is_completed %> onchange="toggleAssignment(this)" <%= 'disabled' if a.is_a?(Hash) %>>
+                  </div>
+                </td>
                 <td>
                   <div class="mb-1">
-                    <strong><a href="<%= view_url %>"><%= name %></a></strong>
+                    <strong style="<%= 'text-decoration: line-through;' if is_completed %>"><a href="<%= view_url %>"><%= name %></a></strong>
                     <% if is_quiz %><span class="tag is-info is-light is-small ml-2">Quiz</span><% end %>
                   </div>
                   <div class="is-size-7 has-text-grey">
-                    <i class="fas fa-calendar-alt mr-1"></i> Due: <%= due_date ? format_date(due_date) : "No due date" %>
+                    <i class="fas fa-calendar-alt mr-1"></i> Due: 
+                    <span class="due-date-display is-clickable" onclick="editDueDate(this, '<%= a.is_a?(Assignment) ? a.id : '' %>')" title="Click to edit date">
+                      <%= due_date ? format_date(due_date) : "No due date" %>
+                    </span>
+                    <input type="date" class="due-date-input is-hidden input is-small py-0 px-1" 
+                           value="<%= due_date ? (due_date.is_a?(String) ? Time.parse(due_date) : due_date).strftime('%Y-%m-%d') : '' %>"
+                           onblur="saveDueDate(this, '<%= a.is_a?(Assignment) ? a.id : '' %>')" style="width: 130px; display: none;">
                   </div>
                 </td>
                 <td class="has-text-right">
@@ -64,3 +77,67 @@
     </div>
   </div>
 </div>
+
+<script>
+function toggleAssignment(checkbox) {
+  const id = checkbox.getAttribute('data-id');
+  if (!id) return;
+  
+  const row = checkbox.closest('tr');
+  const titleLink = row.querySelector('strong');
+  
+  fetch(`/assignments/${id}/toggle_complete`, {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.status === 'ok') {
+      if (data.completed) {
+        row.style.opacity = '0.6';
+        row.style.backgroundColor = '#fafafa';
+        if (titleLink) titleLink.style.textDecoration = 'line-through';
+      } else {
+        row.style.opacity = '1';
+        row.style.backgroundColor = 'transparent';
+        if (titleLink) titleLink.style.textDecoration = 'none';
+      }
+    }
+  })
+  .catch(err => console.error("Error toggling assignment:", err));
+}
+
+function editDueDate(span, assignmentId) {
+  if (!assignmentId) return;
+  const container = span.parentElement;
+  const input = container.querySelector('.due-date-input');
+  span.classList.add('is-hidden');
+  span.style.display = 'none';
+  input.classList.remove('is-hidden');
+  input.style.display = 'inline-block';
+  input.focus();
+}
+
+function saveDueDate(input, assignmentId) {
+  const container = input.parentElement;
+  const span = container.querySelector('.due-date-display');
+  const newDate = input.value;
+
+  fetch(`/assignments/${assignmentId}/update_due_date`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `due_date=${newDate}`
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === 'ok') {
+      window.location.reload(); // Simplest to reload to get formatted date, but could update span text
+    }
+  });
+
+  input.classList.add('is-hidden');
+  input.style.display = 'none';
+  span.classList.remove('is-hidden');
+  span.style.display = 'inline-block';
+}
+</script>

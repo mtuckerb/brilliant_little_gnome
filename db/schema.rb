@@ -10,12 +10,13 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_01_15_121000) do
+ActiveRecord::Schema[7.2].define(version: 2026_01_19_170000) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
-    t.datetime "created_at", precision: nil
-    t.datetime "updated_at", precision: nil
+    t.datetime "created_at", precision: nil, null: false
+    t.datetime "updated_at", precision: nil, null: false
+    t.boolean "is_archived", default: false
     t.index ["path"], name: "index_api_caches_on_path"
   end
 
@@ -29,6 +30,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_15_121000) do
     t.datetime "created_at", precision: nil, null: false
     t.datetime "updated_at", precision: nil, null: false
     t.string "grade_item_id"
+    t.string "assignment_type", default: "dropbox"
+    t.boolean "completed", default: false
+    t.datetime "completed_at"
     t.index ["brightspace_id"], name: "index_assignments_on_brightspace_id"
     t.index ["course_id"], name: "index_assignments_on_course_id"
     t.index ["grade_item_id"], name: "index_assignments_on_grade_item_id"
@@ -73,6 +77,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_15_121000) do
     t.datetime "updated_at", precision: nil, null: false
     t.integer "units", default: 3
     t.float "target_grade", default: 93.0
+    t.string "banner_url"
     t.index ["org_unit_id"], name: "index_courses_on_org_unit_id"
   end
 
@@ -129,11 +134,11 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_15_121000) do
     t.string "name"
     t.text "description"
     t.integer "sort_order"
-    t.datetime "created_at", precision: nil, null: false
-    t.datetime "updated_at", precision: nil, null: false
     t.integer "thread_count", default: 0
     t.integer "post_count", default: 0
     t.datetime "last_post_date", precision: nil
+    t.datetime "created_at", precision: nil, null: false
+    t.datetime "updated_at", precision: nil, null: false
     t.index ["brightspace_id"], name: "index_discussion_topics_on_brightspace_id"
     t.index ["course_id"], name: "index_discussion_topics_on_course_id"
     t.index ["forum_id"], name: "index_discussion_topics_on_forum_id"
@@ -191,5 +196,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_15_121000) do
     t.string "default_semester"
     t.string "last_notification_sync_at"
     t.string "force_full_sync", default: "false"
+    t.string "api_key"
+    t.boolean "api_enabled", default: false
+    t.boolean "api_listen_all", default: false
   end
 end

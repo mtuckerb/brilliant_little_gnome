@@ -43,6 +43,7 @@ class DownloadJob
         Zip::File.open(@zip_path, Zip::File::CREATE) do |zipfile|
           @files.each do |f|
             file_body = nil
+            detected_extension = nil
             
             if f[:content]
               file_body = f[:content]
@@ -50,12 +51,49 @@ class DownloadJob
               resp = @client.download_file(f[:path])
               if resp && resp.code == '200'
                 file_body = resp.body
+                
+                # Try to guess extension from Content-Type if possible
+                ct = resp['Content-Type']
+                if ct
+                  if ct.include?('word') || ct.include?('officedocument.word')
+                    detected_extension = ".docx"
+                  elsif ct.include?('pdf')
+                    detected_extension = ".pdf"
+                  elsif ct.include?('excel') || ct.include?('officedocument.spreadsheet')
+                    detected_extension = ".xlsx"
+                  elsif ct.include?('powerpoint') || ct.include?('officedocument.presentation')
+                    detected_extension = ".pptx"
+                  elsif ct.include?('zip')
+                    detected_extension = ".zip"
+                  elsif ct.include?('text/plain')
+                    detected_extension = ".txt"
+                  elsif ct.include?('text/html')
+                    detected_extension = ".html"
+                  elsif ct.include?('image/jpeg')
+                    detected_extension = ".jpg"
+                  elsif ct.include?('image/png')
+                    detected_extension = ".png"
+                  end
+                end
               end
             end
 
             if file_body
               safe_name = f[:title].gsub(/[^0-9A-Za-z.\- ]/, '_')
-              safe_name += ".pdf" unless safe_name.include?('.') || f[:content]
+              
+              # If we have a detected extension and the current name doesn't have one, or has the wrong one (like .pdf for word)
+              if detected_extension
+                current_ext = File.extname(safe_name).downcase
+                if current_ext.empty?
+                  safe_name += detected_extension
+                elsif current_ext == ".pdf" && detected_extension != ".pdf"
+                  # Special case: user requested .pdf but it's actually something else (common in our overview logic)
+                  safe_name = File.basename(safe_name, current_ext) + detected_extension
+                end
+              else
+                # Fallback to .pdf only if no extension at all
+                safe_name += ".pdf" unless safe_name.include?('.') || f[:content]
+              end
 
               # Construct path within zip using the folder metadata
               zip_entry_path = if f[:folder]

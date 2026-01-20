@@ -10,7 +10,7 @@
           <h4 class="title is-4 mb-2"><%= @module['Title'] %></h4>
           <% 
              # Count downloadable files
-             download_count = collect_all_files(@module, "").size
+             download_count = collect_all_files(@course_id, @module, "").size
           %>
           <% if download_count > 1 %>
             <div class="is-flex is-justify-content-end">
@@ -25,11 +25,20 @@
         <%# --- DESCRIPTION --- %>
         <% 
            desc = @module['Description']
-           desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
+           desc_text = ""
+           if desc.is_a?(Hash)
+             desc_text = (desc['Html'] || desc['Text'] || "").to_s
+           else
+             desc_text = desc.to_s
+           end
+           synthetic_tasks = synthesize_tasks(@module)
+           course_info = extract_course_info(@course_name)
         %>
+        
+        <%# --- DESCRIPTION SECTION --- %>
         <% unless desc_text.strip.empty? %>
           <div class="mb-5">
-            <details class="section-details">
+            <details class="section-details" open>
               <summary class="is-clickable p-2 has-background-light" style="list-style: none; outline: none; border-radius: 4px;">
                 <div class="is-flex is-justify-content-space-between is-align-items-center">
                   <h5 class="title is-5 mb-0"><i class="fas fa-align-left mr-2 has-text-primary"></i> Description</h5>
@@ -39,14 +48,84 @@
                 </div>
               </summary>
               <div class="content p-4 has-background-white border-light">
-                <%= desc_text %>
+                <div class="description-body">
+                  <%= desc_text %>
+                </div>
               </div>
             </details>
           </div>
         <% end %>
 
+        <%# --- SYNTHESIZED TASKS SECTION --- %>
+        <% if synthetic_tasks.any? %>
+          <div class="box has-background-white-bis mb-5">
+            <form action="/course/<%= @course_id %>/module/<%= @module_id %>/create_tasks" method="POST">
+              <input type="hidden" name="module_title" value="<%= @module['Title'] %>">
+              <div class="level is-mobile mb-4">
+                 <div class="level-left">
+                    <h5 class="title is-5 mb-0"><i class="fas fa-magic mr-2 has-text-info"></i> Synthesized Tasks Found</h5>
+                 </div>
+                 <div class="level-right">
+                    <button type="submit" class="button is-info is-small">
+                      <span class="icon is-small"><i class="fas fa-plus"></i></span>
+                      <span>Add Selected to Assignments</span>
+                    </button>
+                 </div>
+              </div>
+              
+              <div class="table-container">
+                <table class="table is-fullwidth is-narrow is-hoverable is-size-7">
+                  <thead>
+                    <tr>
+                      <th width="40"><input type="checkbox" onclick="toggleAllTasks(this)"></th>
+                      <th width="100">Type</th>
+                      <th>Name</th>
+                      <th width="120">Due Date</th>
+                      <th>Context</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <% synthetic_tasks.each_with_index do |task, idx| %>
+                      <tr>
+                        <td>
+                          <input type="checkbox" name="tasks[]" value="<%= idx %>" checked>
+                          <input type="hidden" name="task_names_<%= idx %>" value="<%= task[:name] %>">
+                          <input type="hidden" name="task_types_<%= idx %>" value="<%= task[:type] %>">
+                          <input type="hidden" name="task_urls_<%= idx %>" value="<%= task[:url] %>">
+                          <input type="hidden" name="task_module_ids_<%= idx %>" value="<%= task[:module_id] %>">
+                        </td>
+                        <td><span class="tag is-primary is-light"><%= task[:type] %></span></td>
+                        <td><%= task[:name] %></td>
+                        <td>
+                          <input type="date" name="task_dates_<%= idx %>" 
+                                 class="input is-narrow is-small pt-0 pb-0" 
+                                 value="<%= task[:due_date]&.strftime('%Y-%m-%d') %>"
+                                 style="width: 130px; line-height: 1;">
+                        </td>
+                        <td>
+                          <div class="is-size-7 has-text-grey">
+                            <%= course_info[:course_display] %> (<%= course_info[:semester] %>)
+                          </div>
+                        </td>
+                      </tr>
+                    <% end %>
+                  </tbody>
+                </table>
+              </div>
+            </form>
+          </div>
+          
+          <script>
+            function toggleAllTasks(master) {
+              const checkboxes = document.querySelectorAll('input[name="tasks[]"]');
+              checkboxes.forEach(c => c.checked = master.checked);
+            }
+          </script>
+        <% end %>
+
         <% if @module['Topics'] && !@module['Topics'].empty? %>
           <div class="list is-hoverable mb-5">
+            <h5 class="subtitle is-5 border-bottom pb-2">Module Items</h5>
             <% @module['Topics'].each do |topic| %>
               <div class="list-item p-3">
                 <div class="is-flex is-justify-content-space-between is-align-items-center">
@@ -107,7 +186,88 @@
         .section-details[open] summary .fa-chevron-down { transform: rotate(180deg); }
         .section-details summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
         .border-light { border: 1px solid #eee; border-top: none; border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }
+
+        #selection-popover {
+          position: absolute;
+          display: none;
+          z-index: 1000;
+          background: white;
+          border: 1px solid #dbdbdb;
+          border-radius: 4px;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+          padding: 4px;
+        }
       </style>
+
+      <div id="selection-popover" class="has-background-white">
+        <button class="button is-small is-info is-light" onclick="createTaskFromSelection()">
+          <span class="icon is-small"><i class="fas fa-magic"></i></span>
+          <span>Create Task</span>
+        </button>
+      </div>
+
+      <script>
+        let lastSelection = "";
+        document.addEventListener('mouseup', function(e) {
+          const popover = document.getElementById('selection-popover');
+          if (popover.contains(e.target)) return;
+
+          const selection = window.getSelection();
+          const text = selection.toString().trim();
+          
+          if (text.length > 2 && text.length < 200) {
+            lastSelection = text;
+            const range = selection.getRangeAt(0);
+            const rect = range.getBoundingClientRect();
+            
+            popover.style.display = 'block';
+            popover.style.top = (rect.top + window.scrollY - 40) + 'px';
+            popover.style.left = (rect.left + window.scrollX + (rect.width/2) - 40) + 'px';
+          } else {
+            popover.style.display = 'none';
+          }
+        });
+
+        function createTaskFromSelection() {
+          const popover = document.getElementById('selection-popover');
+          const selectionText = lastSelection;
+          
+          // Hide immediately so it doesn't linger during prompts
+          popover.style.display = 'none';
+          if (!selectionText) return;
+          
+          const name = prompt("Confirm Task Name:", selectionText);
+          if (!name) return;
+          
+          const dateInput = prompt("Due Date (YYYY-MM-DD) - Leave blank for end-of-week default:", "");
+          if (dateInput === null) return; // User cancelled
+
+          const course_id = "<%= @course_id %>";
+          
+          fetch('/api/v1/synthetic_tasks', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-API-KEY': '<%= @user_prefs.api_key %>'
+            },
+            body: JSON.stringify({
+              course_id: course_id,
+              name: name,
+              due_date: dateInput,
+              description: "Manually highlighted from module: <%= @module['Title'] %>"
+            })
+          })
+          .then(res => res.json())
+          .then(data => {
+            window.getSelection().removeAllRanges();
+            alert("Synthetic task created!");
+          })
+          .catch(err => {
+            console.error(err);
+            alert("Error creating task. Check console.");
+          });
+        }
+      </script>
     <% else %>
       <div class="notification is-danger">Module not found.</div>
     <% end %>
