@@ -1503,7 +1503,7 @@ get '/course/:id/module/:module_id/download_all' do
   end
 
   safe_title = mod['Title'].gsub(/[^0-9a-z]/i, '_')
-  files = collect_all_files(mod, safe_title)
+  files = collect_all_files(@course_id, mod, safe_title)
   
   if files.empty?
     return "No downloadable files found in this module."

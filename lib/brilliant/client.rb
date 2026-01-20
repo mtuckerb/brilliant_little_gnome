@@ -1095,8 +1095,9 @@ class BrilliantClient
     do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/overview")
   end
 
-  def download_file(path)
+  def download_file(path, limit = 5)
     return nil unless authenticated?
+    raise "Too many redirects" if limit == 0
     
     # Handle absolute URLs gracefully
     if path.start_with?('http')
@@ -1118,7 +1119,14 @@ class BrilliantClient
     http.use_ssl = true
     
     begin
-      http.request(request)
+      response = http.request(request)
+      if response.code == '302' || response.code == '301' || response.code == '307' || response.code == '308'
+        location = response['location']
+        # If redirect is relative, join it with current uri
+        new_uri = URI.join(uri.to_s, location)
+        return download_file(new_uri.to_s, limit - 1)
+      end
+      response
     rescue => e
       puts "Download connection error for #{path}: #{e.message}"
       nil

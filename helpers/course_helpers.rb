@@ -68,34 +68,46 @@ module CourseHelpers
   end
 
   # Recursively collects all files from a module tree
-  def collect_all_files(module_obj, folder_name, files = [])
+  def collect_all_files(course_id, module_obj, folder_name, files = [])
     return files unless module_obj
 
     # Add topics that are files
     if module_obj['Topics']
       module_obj['Topics'].each do |t|
-        if t['Url'] && t['Url'].start_with?('/content/enforced/')
+        # 1. Direct Content Files (Enforced)
+        if t['Url'] && (t['Url'].start_with?('/content/enforced/') || t['Url'].include?('/viewContent/'))
           files << { 
             id: (t['Id'] || t['TopicId']), 
             title: t['Title'], 
-            path: "/d2l/api/le/1.40/#{@course_id}/content/topics/#{t['Id'] || t['TopicId']}/file",
+            path: "/d2l/api/le/1.40/#{course_id}/content/topics/#{t['Id'] || t['TopicId']}/file",
             folder: folder_name
           }
-        elsif t['Url'] && t['Type'] == 3 # Link type topic
+        # 2. External Links / LTI
+        elsif t['Url'] && (t['Type'] == 3 || t['Type'] == "Link")
           safe_title = t['Title'].gsub(/[^0-9a-z]/i, '_')
           files << {
             title: "#{safe_title}.url",
             content: "[InternetShortcut]\r\nURL=#{t['Url']}\r\n",
             folder: folder_name
           }
+        # 3. Catch-all for other potentially downloadable types (Type 1 is often file, Type 3 is link)
+        elsif t['Url'] && t['Type'] != 3
+           files << { 
+            id: (t['Id'] || t['TopicId']), 
+            title: t['Title'], 
+            path: "/d2l/api/le/1.40/#{course_id}/content/topics/#{t['Id'] || t['TopicId']}/file",
+            folder: folder_name
+          }
         end
       end
     end
 
-    # Recurse into sub-modules but keep the top-level folder name for grouping
+    # Recurse into sub-modules
     if module_obj['Modules']
       module_obj['Modules'].each do |sub|
-        collect_all_files(sub, folder_name, files)
+        # Create subfolder path
+        sub_folder = "#{folder_name}/#{sub['Title'].gsub(/[^0-9a-z]/i, '_')}"
+        collect_all_files(course_id, sub, sub_folder, files)
       end
     end
 
@@ -109,11 +121,14 @@ module CourseHelpers
     # 1. Syllabus/Overview
     overview = client.get_overview(course_id)
     if overview
+      # Main attachment (The one appearing in the header)
       files << {
-        title: "Syllabus_Overview.pdf",
+        title: "Syllabus_Overview", # DownloadJob will append correct extension
         path: "/d2l/api/le/1.40/#{course_id}/overview/attachment",
         folder: "Syllabus_Overview"
       }
+      
+      # Additional attachments (archived structure)
       if overview['Attachments']
         overview['Attachments'].each do |att|
           files << {
