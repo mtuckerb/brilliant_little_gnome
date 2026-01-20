@@ -775,6 +775,8 @@ get '/course/:id/assignments/:assignment_id' do
   if @assignment_id.start_with?('syn_')
     # Synthetic Assignment Detail
     rec = Assignment.find_by(brightspace_id: @assignment_id, course_id: @course_id)
+    puts "[DEBUG] Route: /course/#{@course_id}/assignments/#{@assignment_id}"
+    puts "[DEBUG] Found record: #{rec.inspect}"
     halt 404, "Task not found" unless rec
     
     @assignment = {
@@ -1770,7 +1772,7 @@ helpers do
 
     case method
     when 'initialize'
-      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.4.2" } } }
+      { jsonrpc: "2.0", id: id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "Brilliant-MCP", version: "1.4.3" } } }
     when 'tools/list'
       { jsonrpc: "2.0", id: id, result: { tools: [
         { 

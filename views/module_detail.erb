@@ -10,7 +10,7 @@
           <h4 class="title is-4 mb-2"><%= @module['Title'] %></h4>
           <% 
              # Count downloadable files
-             download_count = collect_all_files(@module, "").size
+             download_count = collect_all_files(@course_id, @module, "").size
           %>
           <% if download_count > 1 %>
             <div class="is-flex is-justify-content-end">

@@ -222,7 +222,7 @@ module CourseHelpers
     if toc && toc['Modules']
       toc['Modules'].each do |m|
         folder_name = "Table_of_Contents/#{m['Title'].gsub(/[^0-9a-z]/i, '_')}"
-        collect_all_files(m, folder_name, files)
+        collect_all_files(course_id, m, folder_name, files)
       end
     end
 
