@@ -188,24 +188,26 @@ jobs:
             fi
           done
 
-          # Second pass: cross-fix all ids and links
+          # Second pass: cross-fix all ids and links. Keep it quiet to avoid log truncation.
           find "$LIB_DIR" bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" -o -name "ruby" \) | while read -r f; do
             if (file "$f" 2>/dev/null || true) | grep -q "Mach-O"; then
-              echo "Fixing linkage for $(basename "$f")..."
-              # Fix ID if it's a dylib
               if [[ "$f" == *.dylib ]]; then
                 install_name_tool -id "@rpath/$(basename "$f")" "$f" 2>/dev/null || true
               fi
 
-              # Fix all hardcoded links and libruby
-              otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local|libruby" | awk '{print $1}' | while read -r dep; do
+              otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
                 base=$(basename "$dep")
                 if [ -f "$LIB_DIR/$base" ]; then
                   install_name_tool -change "$dep" "@rpath/$base" "$f" 2>/dev/null || true
                 fi
               done
+              # Fix libruby separately to ensure we catch it even if not matching above prefix
+              L_LINK=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1) || true
+              if [ -n "$L_LINK" ] && [[ "$L_LINK" != @rpath* ]]; then
+                 install_name_tool -change "$L_LINK" "@rpath/$(basename "$L_LINK")" "$f" 2>/dev/null || true
+              fi
             fi
-          done
+          done > repair_log.txt 2>&1 || (cat repair_log.txt && exit 1)
 
           # 7. Verification Test
           echo "Running smoke test..."
@@ -220,8 +222,14 @@ jobs:
             otool -L "$SQLITE_BUNDLE"
           fi
 
+          echo "Checking bundled libraries in $LIB_DIR:"
+          ls -l "$LIB_DIR" | grep libruby || echo "WARNING: libruby not found in $LIB_DIR"
+
           "$RUBY_BIN" -v || (echo "Ruby binary failed to run!"; exit 1)
-          "$RUBY_BIN" -e "begin; require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'; rescue LoadError => e; puts e.message; puts e.backtrace; exit 1; end" || (echo "Smoke test failed!"; exit 1)
+          
+          # Print DYLD info if it fails
+          echo "Executing require 'sqlite3'..."
+          "$RUBY_BIN" -e "begin; require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'; rescue LoadError => e; puts 'ERROR: ' + e.message; exit 1; end" || (echo "Smoke test failed!"; otool -L "$SQLITE_BUNDLE"; exit 1)
 
           # 8. Production Signing
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
