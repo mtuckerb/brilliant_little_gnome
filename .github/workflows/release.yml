@@ -96,12 +96,13 @@ jobs:
           
           # 2. Use the portable ruby to install gems
           # This ensures native extensions are built against the correct Ruby headers/ABI
+          # Use the ruby binary DIRECTLY to invoke gem/bundle to avoid shebang issues
           export PATH="$PORTABLE_RUBY_DIR/bin:$PATH"
-          gem install bundler --no-document
+          "$PORTABLE_RUBY_BIN" -S gem install bundler --no-document
           
-          bundle config set --local path 'vendor/bundle'
-          bundle config set --local deployment 'true'
-          bundle install
+          "$PORTABLE_RUBY_BIN" -S bundle config set --local path 'vendor/bundle'
+          "$PORTABLE_RUBY_BIN" -S bundle config set --local deployment 'true'
+          "$PORTABLE_RUBY_BIN" -S bundle install
           
           # Clean up gem extended attributes
           xattr -cr vendor/bundle
