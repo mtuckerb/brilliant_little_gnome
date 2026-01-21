@@ -110,11 +110,13 @@ jobs:
           export PATH="$PORTABLE_RUBY_DIR/bin:$PATH"
           export DYLD_LIBRARY_PATH="$LIB_DEST:$DYLD_LIBRARY_PATH"
           
+          echo "Installing bundler..."
           "$PORTABLE_RUBY_BIN" -S gem install bundler --no-document
           
+          echo "Installing Gems via portable ruby..."
           bundle config set --local path 'vendor/bundle'
           bundle config set --local deployment 'true'
-          bundle install || (echo 'Retrying bundle install'; bundle install)
+          bundle install
           
           xattr -cr vendor/bundle
 
@@ -125,7 +127,6 @@ jobs:
           if [ -f "$GMP_PATH" ]; then
             cp "$GMP_PATH" "$LIB_DEST/"
             chmod 644 "$LIB_DEST/libgmp.10.dylib"
-            # Unsign libgmp before modifying its ID
             codesign --remove-signature "$LIB_DEST/libgmp.10.dylib" || true
             install_name_tool -id "@rpath/libgmp.10.dylib" "$LIB_DEST/libgmp.10.dylib"
           fi
@@ -134,64 +135,64 @@ jobs:
           if [ -f "$YAML_PATH" ]; then
             cp "$YAML_PATH" "$LIB_DEST/"
             chmod 644 "$LIB_DEST/libyaml-0.2.dylib"
-             # Unsign libyaml before modifying its ID
             codesign --remove-signature "$LIB_DEST/libyaml-0.2.dylib" || true
             install_name_tool -id "@rpath/libyaml-0.2.dylib" "$LIB_DEST/libyaml-0.2.dylib"
           fi
 
-          # 4. Comprehensive Patch Strategy
+          # 4. Patch all native components
           echo "Applying RPath fixes to all native files..."
           
-          fix_file() {
-            local f="$1"
+          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r f; do
             echo "Processing $f"
             chmod +w "$f"
             codesign --remove-signature "$f" 2>/dev/null || true
             
-            # Standard app-relative rpaths
+            # Add final destination rpaths
             install_name_tool -add_rpath "@loader_path/../lib" "$f" 2>/dev/null || true
+            # For native gems which are very deep
+            install_name_tool -add_rpath "@loader_path/../../../../../../../lib" "$f" 2>/dev/null || true
             install_name_tool -add_rpath "@loader_path/../../../../../../lib" "$f" 2>/dev/null || true
+            install_name_tool -add_rpath "@loader_path/../../../../../lib" "$f" 2>/dev/null || true
             
-            # Patch hardcoded paths to relative @rpath
+            # Fix hardcoded paths
             otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
-              local base=$(basename "$dep")
+              base=$(basename "$dep")
               if [ -f "$LIB_DEST/$base" ]; then
                 install_name_tool -change "$dep" "@rpath/$base" "$f" 2>/dev/null || true
               fi
             done
             
             # Standardize libruby
-            local CUR=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1)
-            if [ ! -z "$CUR" ]; then
-               install_name_tool -change "$CUR" "@rpath/$(basename "$CUR")" "$f" 2>/dev/null || true
+            CL=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1)
+            if [ ! -z "$CL" ]; then
+               install_name_tool -change "$CL" "@rpath/$(basename "$CL")" "$f" 2>/dev/null || true
             fi
-          }
-
-          export -f fix_file
-          export LIB_DEST
-          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) -exec bash -c 'fix_file "$0"' {} \;
+          done
 
           # 5. Verification
-          echo "Verifying environment..."
+          echo "Verifying environment with portable ruby..."
           "$PORTABLE_RUBY_BIN" -v
           export GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$(pwd)/bin/ruby_dist/macos-arm64/lib/ruby/gems/3.4.0"
-          "$PORTABLE_RUBY_BIN" -e "require 'sqlite3'; puts '✅ native gems ok'"
+          "$PORTABLE_RUBY_BIN" -e "require 'sqlite3'; puts '✅ native gems loaded successfully'"
 
-          # 6. Final Signing
+          # 6. Final Signing for Hardened Runtime
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
           ENTITLEMENTS="build/entitlements.mac.plist"
           
           echo "Re-signing everything with identity: $IDENTITY"
           
-          # Sign all extensions/dylibs
+          # Bottom-up signing: dylibs and bundles first
           find vendor/bundle bin/ruby_dist/macos-arm64 -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r file; do
              codesign --force --options runtime --timestamp -s "$IDENTITY" "$file"
           done
           
-          # Final Ruby binary signing
+          # Main Ruby binary last with entitlements
           codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$PORTABLE_RUBY_BIN"
           
-          echo "Native dependencies complete."
+          echo "Verifying hardened runtime signature..."
+          codesign -vvv --deep --strict "$PORTABLE_RUBY_BIN"
+
+          echo "Native dependencies completed successfully."
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'
