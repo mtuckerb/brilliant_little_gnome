@@ -153,22 +153,33 @@ jobs:
               
               # Add variety of RPaths to find our lib folder from various depths
               # e.g. vendor/bundle/ruby/3.4.0/gems/sqlite3-2.5.0-arm64-darwin/lib/sqlite3/3.4/sqlite3_native.bundle
+              install_name_tool -add_rpath "@executable_path/../lib" "$f" 2>/dev/null || true
               install_name_tool -add_rpath "@loader_path/../lib" "$f" 2>/dev/null || true
-              for d in 3 4 5 6 7 8 9 10; do
+              # Use a standard sequence for older bash
+              for d in 2 3 4 5 6 7 8 9 10; do
                 up=""
-                for i in $(seq 1 $d); do up+="../"; done
+                counter=0
+                while [ $counter -lt $d ]; do
+                  up+="../"
+                  counter=$((counter+1))
+                done
                 install_name_tool -add_rpath "@loader_path/${up}lib" "$f" 2>/dev/null || true
                 install_name_tool -add_rpath "@loader_path/${up}bin/ruby_dist/macos-arm64/lib" "$f" 2>/dev/null || true
               done
 
               # Link hardcoded brewer paths to @rpath
-              
-              # Libruby repair
+              otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep_link; do
+                base=$(basename "$dep_link")
+                if [ -f "$LIB_DIR/$base" ]; then
+                  install_name_tool -change "$dep_link" "@rpath/$base" "$f" 2>/dev/null || true
+                fi
+              done
+
               curr_ruby=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1) || true
               if [ -n "$curr_ruby" ]; then
                  install_name_tool -change "$curr_ruby" "@rpath/$(basename "$curr_ruby")" "$f" 2>/dev/null || true
               fi
-              # Libruby repair
+
               # Ad-hoc sign for runner sanity
               codesign -s - "$f" 2>/dev/null || true
             fi
