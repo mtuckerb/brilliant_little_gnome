@@ -70,41 +70,48 @@ jobs:
           chmod -R +x "$PORTABLE_DIR/bin"
           xattr -cr "$PORTABLE_DIR" || true
 
-          # 2. Bundle Internal Dependencies
-          echo "Bundling internal dylibs..."
-          # Find libruby specifically
-          LIBRUBY_SRC=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | head -n 1)
+          # 2. Extract and Bundle Critical Dependencies
+          echo "Identifying and bundling system libraries..."
+          mkdir -p "$LIB_DIR"
+          
+          # Find libruby specifically and ensure it's in lib/
+          LIBRUBY_SRC=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | head -n 1) || true
           if [ -n "$LIBRUBY_SRC" ] && [ ! -f "$LIB_DIR/$(basename "$LIBRUBY_SRC")" ]; then
              cp "$LIBRUBY_SRC" "$LIB_DIR/"
           fi
 
-          # Scan for system/homebrew deps and pull them into our lib folder
-          # Now that gems are installed, scan THEM for dependencies too
-          echo "Scanning gems for additional dependencies..."
-          find vendor/bundle -type f \( -name "*.bundle" -o -name "*.so" \) | while read -r f; do
-            otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | sort -u | while read -r dep; do
-              if [ -f "$dep" ]; then
-              base=$(basename "$dep")
-              if [ ! -f "$LIB_DIR/$base" ]; then
-                echo "Found gem dependency: $dep -> bundling"
-                cp "$dep" "$LIB_DIR/"
-                chmod +w "$LIB_DIR/$base"
-                codesign --remove-signature "$LIB_DIR/$base" 2>/dev/null || true
-              fi
-              fi
-            done || true
-          done || true
+          # Function to bundle a dependency if found on system
+          bundle_dep() {
+            local name=$1
+            local path
+            path=$(brew --prefix "$name" 2>/dev/null)/lib
+            if [ -d "$path" ]; then
+              find "$path" -name "*.dylib" -maxdepth 1 -type f | while read -r src; do
+                local base
+                base=$(basename "$src")
+                if [ ! -f "$LIB_DIR/$base" ]; then
+                  echo "Bundling $base from $name..."
+                  cp "$src" "$LIB_DIR/"
+                  chmod +w "$LIB_DIR/$base"
+                  codesign --remove-signature "$LIB_DIR/$base" 2>/dev/null || true
+                fi
+              done
+            fi
+          }
 
-          # 5. Global Portability Repair (Final Pass)
-          echo "Performing global portability repair..."
-          find "$PORTABLE_DIR" vendor/bundle -type f | while read -r f; do
-            # Quick check if it's a Mach-O file
-            if (file "$f" 2>/dev/null || true) | grep -q "Mach-O"; then
-              chmod +w "$f" 2>/dev/null || true
+          bundle_dep gmp
+          bundle_dep libyaml
+
+          # 3. Initial Patching of the Lib Folder
+          echo "Patching libraries in $LIB_DIR..."
+          find "$LIB_DIR" -name "*.dylib" -type f | while read -r dylib; do
+            chmod +w "$dylib"
+            codesign --remove-signature "$dylib" || true
             install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" || true
             
-            # Cross-fix links to other bundled dylibs
+            # Cross-fix links within our lib folder
             otool -L "$dylib" | grep -E "/opt/homebrew|/usr/local|libruby" | awk '{print $1}' | while read -r dep_link; do
+              local base
               base=$(basename "$dep_link")
               if [ -f "$LIB_DIR/$base" ]; then
                 install_name_tool -change "$dep_link" "@rpath/$base" "$dylib" || true
@@ -123,56 +130,47 @@ jobs:
           bundle install --jobs 4 --retry 3
           xattr -cr vendor/bundle || true
 
-          # 5. Global Portability Repair (Final Pass)
-          echo "Performing global portability repair..."
-          find bin/ruby_dist/macos-arm64 vendor/bundle -type f | while read -r f; do
-            # Quick check if it's a Mach-O file
+          # 5. Global Portability Repair
+          echo "Repairing all native objects for portability..."
+          find "$PORTABLE_DIR" vendor/bundle -type f | while read -r f; do
             if (file "$f" 2>/dev/null || true) | grep -q "Mach-O"; then
               chmod +w "$f" 2>/dev/null || true
               codesign --remove-signature "$f" 2>/dev/null || true
               
-              # Add RPaths (1 to 10 levels deep)
-              install_name_tool -add_rpath "@loader_path/../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../../../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../../../../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../../../../../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../../../../../../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../../../../../../../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../../../../../../../../lib" "$f" 2>/dev/null || true
-              install_name_tool -add_rpath "@loader_path/../../../../../../../../../../lib" "$f" 2>/dev/null || true
+              # Add variety of RPaths to find our lib/ directory from various depths
+              # e.g. @loader_path/../lib, @loader_path/../../lib, etc.
+              for depth in 1 2 3 4 5 6 7 8 9 10; do
+                prefix="@loader_path/"
+                for ((i=0; i<depth; i++)); do prefix+="../"; done
+                install_name_tool -add_rpath "${prefix}lib" "$f" 2>/dev/null || true
+              done
               
-              # Fix all linkages to our bundled lib folder
+              # Fix all linkages to use our bundled lib folder
               otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local|libruby" | awk '{print $1}' | while read -r dep; do
+                local base
                 base=$(basename "$dep")
                 if [ -f "$LIB_DIR/$base" ]; then
                    install_name_tool -change "$dep" "@rpath/$base" "$f" 2>/dev/null || true
                 fi
               done || true
             fi
-          done || true
+          done
 
-          # 6. Verification Test
+          # 6. Verification Smoke Test
           echo "Running smoke test..."
           unset DYLD_LIBRARY_PATH
           export GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$PORTABLE_DIR/lib/ruby/gems/3.4.0"
           
-          # Debug: what's in lib?
-          echo "Bundled libraries:"
-          ls "$LIB_DIR"
-          
-          # Debug: check sqlite3 linkage specifically
-          SQLITE_BUNDLE=$(find vendor/bundle -name "sqlite3_native.bundle" | head -n 1)
+          echo "Checking sqlite3 linkage..."
+          SQLITE_BUNDLE=$(find vendor/bundle -name "sqlite3_native.bundle" | head -n 1) || true
           if [ -n "$SQLITE_BUNDLE" ]; then
-            echo "Linkage for $SQLITE_BUNDLE:"
             otool -L "$SQLITE_BUNDLE"
           fi
 
           "$RUBY_BIN" -v
-          "$RUBY_BIN" -e "begin; require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'; rescue LoadError => e; puts 'FAIL: ' + e.message; exit 1; end"
+          "$RUBY_BIN" -e "begin; require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'; rescue LoadError => e; puts e.message; exit 1; end"
 
-          # 7. Production Signing
+          # 7. Final Production Signing
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
           ENTITLEMENTS="build/entitlements.mac.plist"
           if [ -n "$IDENTITY" ]; then
@@ -181,7 +179,6 @@ jobs:
                codesign --force --options runtime --timestamp -s "$IDENTITY" "$item" || true
              done
              codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$RUBY_BIN" || true
-             codesign -vvv --deep --strict "$RUBY_BIN" || true
           fi
 
       - name: Setup Native Dependencies (Windows)
