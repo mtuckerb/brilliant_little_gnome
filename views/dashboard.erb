@@ -55,7 +55,7 @@
              <% info = extract_course_info(sg[:course].name) %>
              <div class="column is-4">
                <div class="box is-clickable p-0 has-background-white overflow-hidden" 
-                    onclick="window.location='/course/<%= sg[:course].org_unit_id %>/grades'"
+                    onclick="window.location='/course/<%= sg[:course].org_unit_id %>'"
                     style="border: 1px solid #eee; transition: all 0.2s; height: 100%; border-radius: 8px; overflow: hidden;">
                  
                  <% if sg[:course].banner_url %>
