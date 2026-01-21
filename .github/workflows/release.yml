@@ -75,7 +75,7 @@ jobs:
 
           # 2. Fix Ruby Binary Base
           echo "Patching Ruby binary..."
-          chmod +w "$RUBY_BIN"
+          chmod +wx "$RUBY_BIN"
           codesign --remove-signature "$RUBY_BIN" || true
           
           # Fix libruby link in the main ruby binary
@@ -99,7 +99,7 @@ jobs:
                 base=$(basename "$src")
                 echo "Copying $base to bundled lib/"
                 cp "$src" "$LIB_DIR/"
-                chmod +w "$LIB_DIR/$base"
+                chmod +wx "$LIB_DIR/$base"
                 codesign --remove-signature "$LIB_DIR/$base" 2>/dev/null || true
                 install_name_tool -id "@rpath/$base" "$LIB_DIR/$base" || true
               done
@@ -111,7 +111,7 @@ jobs:
           # 4. Patch all dylibs in lib/
           echo "Patching dylibs in $LIB_DIR..."
           find "$LIB_DIR" -name "*.dylib" -type f | while read -r dylib; do
-            chmod +w "$dylib"
+            chmod +wx "$dylib"
             codesign --remove-signature "$dylib" || true
             install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" || true
             
@@ -138,17 +138,17 @@ jobs:
           gem install bundler --no-document
           bundle config set --local path 'vendor/bundle'
           bundle config set --local deployment 'true'
-          bundle install
+          bundle install --jobs 4 --retry 3
           xattr -cr vendor/bundle || true
 
           # 6. Global Portability Repair
           # Fix everything including gems
           echo "Repairing all native objects (Gems and Bundle)..."
-          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" -o -perm +111 \) | while read -r f; do
+          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" -o -name "ruby" \) | while read -r f; do
             # Use 'file' to check if it's Mach-O but don't exit if grep fails
             F_INFO=$(file "$f" 2>/dev/null || echo "")
             if echo "$F_INFO" | grep -q "Mach-O"; then
-              chmod +w "$f" 2>/dev/null || true
+              chmod +wx "$f" 2>/dev/null || true
               codesign --remove-signature "$f" 2>/dev/null || true
               
               # Add variety of RPaths to find our lib folder from various depths
@@ -178,7 +178,6 @@ jobs:
               curr_ruby=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1) || true
               if [ -n "$curr_ruby" ]; then
                  install_name_tool -change "$curr_ruby" "@rpath/$(basename "$curr_ruby")" "$f" 2>/dev/null || true
-              fi
 
               # Ad-hoc sign for runner sanity
               codesign -s - "$f" 2>/dev/null || true
@@ -189,6 +188,7 @@ jobs:
           echo "Running smoke test..."
           unset DYLD_LIBRARY_PATH
           # Point bundle to the right path for testing
+          chmod +x "$RUBY_BIN"
           export GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$PORTABLE_DIR/lib/ruby/gems/3.4.0"
           "$RUBY_BIN" -v || (echo "Ruby binary failed to run!"; exit 1)
           "$RUBY_BIN" -e "require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'" || (echo "Smoke test failed!"; exit 1)
