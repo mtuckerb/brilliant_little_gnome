@@ -94,18 +94,23 @@ jobs:
           PORTABLE_RUBY_DIR="$(pwd)/bin/ruby_dist/macos-arm64"
           LIB_DEST="$PORTABLE_RUBY_DIR/lib"
 
-          # CRITICAL: Fix the ruby binary immediately so it can run on the runner
-          # It usually looks for libruby in a hardcoded path from the build machine
-          echo "Fixing portable Ruby interpreter links for the build runner..."
-          CURRENT_LIBRUBY=$(otool -L "$PORTABLE_RUBY_BIN" | grep libruby | awk '{print $1}' | head -n 1)
-          if [ ! -z "$CURRENT_LIBRUBY" ]; then
-             install_name_tool -change "$CURRENT_LIBRUBY" "@executable_path/../lib/libruby.3.4.dylib" "$PORTABLE_RUBY_BIN"
+          # CRITICAL: Fix the ruby binary signature and links immediately
+          echo "Preparing portable Ruby for the build runner..."
+          chmod +w "$PORTABLE_RUBY_BIN"
+          # Remove signature to avoid Abort trap: 6 when modifying binary
+          codesign --remove-signature "$PORTABLE_RUBY_BIN" || true
+          
+          # Find the existing libruby link (it likely points to a non-existent path on the runner)
+          OLD_LIBRUBY=$(otool -L "$PORTABLE_RUBY_BIN" | grep libruby | awk '{print $1}' | head -n 1)
+          if [ ! -z "$OLD_LIBRUBY" ]; then
+             echo "Changing $OLD_LIBRUBY to @executable_path/../lib/libruby.3.4.dylib"
+             install_name_tool -change "$OLD_LIBRUBY" "@executable_path/../lib/libruby.3.4.dylib" "$PORTABLE_RUBY_BIN"
           fi
           install_name_tool -add_rpath "@executable_path/../lib" "$PORTABLE_RUBY_BIN" || true
           
           # 2. Use the portable ruby to install gems
-          # This ensures native extensions are built against the correct Ruby headers/ABI
-          # Use the ruby binary DIRECTLY to invoke gem/bundle to avoid shebang issues
+          # Set DYLD_LIBRARY_PATH for the runner scripts just in case
+          export DYLD_LIBRARY_PATH="$LIB_DEST:$DYLD_LIBRARY_PATH"
           export PATH="$PORTABLE_RUBY_DIR/bin:$PATH"
           "$PORTABLE_RUBY_BIN" -S gem install bundler --no-document
           
