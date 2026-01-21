@@ -30,6 +30,7 @@ jobs:
           K_PASS: "buildpassword123"
         run: |
           KEYCHAIN="build_action.keychain"
+          if [ -z "$CERTIFICATE_P12" ]; then echo "Error: P12 secret missing"; exit 1; fi
           echo "$CERTIFICATE_P12" | tr -d '\n ' | base64 --decode > certificate.p12
           security create-keychain -p "$K_PASS" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
@@ -52,122 +53,173 @@ jobs:
 
       - name: Setup and Sign Native Dependencies (macOS)
         if: matrix.os == 'macos-14'
-        shell: /bin/bash {0}
+        shell: bash
         run: |
           set -e
-          set -x
+          set -o pipefail
+          
+          echo "Starting native dependencies setup..."
           
           # 1. Provision portable ruby
           mkdir -p bin/ruby_dist/macos-arm64
           URL="https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz"
-          echo "Fetching Ruby from $URL"
+          echo "Downloading Ruby from $URL"
           curl -L "$URL" | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
           
+          # Clean up any extended attributes
           xattr -cr bin/ruby_dist/macos-arm64 || true
           
           PORTABLE_RUBY_DIR="$(pwd)/bin/ruby_dist/macos-arm64"
           PORTABLE_RUBY_BIN="$PORTABLE_RUBY_DIR/bin/ruby"
           LIB_DEST="$PORTABLE_RUBY_DIR/lib"
           
-          # 2. Initial Patching: Make Ruby executable on the runner
+          if [ ! -f "$PORTABLE_RUBY_BIN" ]; then
+            echo "Error: Ruby binary not found after extraction at $PORTABLE_RUBY_BIN"
+            ls -R bin/ruby_dist/macos-arm64
+            exit 1
+          fi
+
+          # 2. Initial Patching: Make Ruby binary portable
           echo "Fixing Ruby binary linkage..."
           chmod +w "$PORTABLE_RUBY_BIN"
           codesign --remove-signature "$PORTABLE_RUBY_BIN" || true
           
-          CURRENT_LIBRUBY=$(otool -L "$PORTABLE_RUBY_BIN" | grep libruby | awk '{print $1}' | head -n 1) || true
-          if [[ -n "$CURRENT_LIBRUBY" ]]; then
-             install_name_tool -add_rpath "@executable_path/../lib" "$PORTABLE_RUBY_BIN" || true
-             install_name_tool -change "$CURRENT_LIBRUBY" "@rpath/$(basename "$CURRENT_LIBRUBY")" "$PORTABLE_RUBY_BIN" || true
+          # Patch internal ID and rpath
+          install_name_tool -add_rpath "@executable_path/../lib" "$PORTABLE_RUBY_BIN" || true
+          
+          LIBRUBY_NAME=$(ls "$LIB_DEST" | grep libruby | head -n 1)
+          if [ -n "$LIBRUBY_NAME" ]; then
+             echo "Detected library: $LIBRUBY_NAME"
+             # Extract current hardcoded path from otool output
+             CURRENT_LINK=$(otool -L "$PORTABLE_RUBY_BIN" | grep "$LIBRUBY_NAME" | awk '{print $1}' | head -n 1)
+             if [ -n "$CURRENT_LINK" ]; then
+                echo "Changing link: $CURRENT_LINK -> @rpath/$LIBRUBY_NAME"
+                install_name_tool -change "$CURRENT_LINK" "@rpath/$LIBRUBY_NAME" "$PORTABLE_RUBY_BIN" || true
+             fi
           fi
 
-          if [ -d "$LIB_DEST" ]; then
-            find "$LIB_DEST" -name "*.dylib" -type f | while read -r dylib; do
-              chmod +w "$dylib"
-              codesign --remove-signature "$dylib" || true
-              install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" || true
-              otool -L "$dylib" | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
-                install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$dylib" || true
-              done
-            done
-          fi
-
-          # 3. Provision libgmp and libyaml
-          echo "Bundling external shared libraries..."
-          for libname in libgmp.10.dylib libyaml-0.2.dylib; do
-            # Search in common homebrew locations
-            SEARCH_PATHS=("/opt/homebrew/opt/gmp/lib/$libname" "/opt/homebrew/opt/libyaml/lib/$libname" "/usr/local/lib/$libname" "/opt/homebrew/lib/$libname")
-            for p in "${SEARCH_PATHS[@]}"; do
-              if [ -f "$p" ]; then
-                echo "Found $libname at $p"
-                cp "$p" "$LIB_DEST/"
-                chmod 644 "$LIB_DEST/$libname"
-                install_name_tool -id "@rpath/$libname" "$LIB_DEST/$libname" || true
-                break
+          # Patch dylibs in lib/
+          find "$LIB_DEST" -name "*.dylib" -type f | while read -r dylib; do
+            chmod +w "$dylib"
+            codesign --remove-signature "$dylib" || true
+            install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" || true
+            
+            # Patch links to other libraries in the same folder
+            otool -L "$dylib" | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
+              base=$(basename "$dep")
+              if [ -f "$LIB_DEST/$base" ]; then
+                install_name_tool -change "$dep" "@rpath/$base" "$dylib" || true
               fi
             done
           done
+
+          # 3. Provision libgmp and libyaml from Homebrew
+          echo "Bundling external dependencies..."
+          for lib in gmp:libgmp.10.dylib libyaml:libyaml-0.2.dylib; do
+             pkg=${lib%%:*}
+             file=${lib#*:}
+             # Try to find the actual path
+             PATH_ON_RUNNER=$(brew --prefix "$pkg" 2>/dev/null)/lib/"$file" || true
+             if [ -f "$PATH_ON_RUNNER" ]; then
+                echo "Copying $file from $PATH_ON_RUNNER"
+                cp "$PATH_ON_RUNNER" "$LIB_DEST/"
+                chmod 644 "$LIB_DEST/$file"
+                install_name_tool -id "@rpath/$file" "$LIB_DEST/$file" || true
+             else
+                echo "Warning: Component $pkg ($file) not found via brew"
+             fi
+          done
           
           # 4. Preparation for Gem installation
+          # We need DYLD_LIBRARY_PATH in subshell to test and run bundle
           export DYLD_LIBRARY_PATH="$LIB_DEST"
           export PATH="$PORTABLE_RUBY_DIR/bin:$PATH"
           
-          "$PORTABLE_RUBY_BIN" -v
+          echo "Sanity check: $( "$PORTABLE_RUBY_BIN" -v )"
+          
+          echo "Installing bundler..."
           "$PORTABLE_RUBY_BIN" -S gem install bundler --no-document
           
-          echo "Installing Gems..."
+          echo "Installing Gems via portable Ruby..."
           "$PORTABLE_RUBY_BIN" -S bundle config set --local path 'vendor/bundle'
           "$PORTABLE_RUBY_BIN" -S bundle config set --local deployment 'true'
           "$PORTABLE_RUBY_BIN" -S bundle install
           
+          # Remove attributes that might interfere with signing
           xattr -cr vendor/bundle || true
 
-          # 5. Deep Repair for Portability
-          echo "Repairing all Mach-O files..."
-          while read -r f; do
-            if file "$f" | grep -q "Mach-O"; then
-              echo "Repairing $f"
-              chmod +w "$f" || true
-              codesign --remove-signature "$f" || true
-              
-              # Add rpaths to find bin/ruby_dist/macos-arm64/lib from various depths
-              # We use @loader_path relative to where gems are typically located
-              for depth in {3..10}; do
-                prefix=$(printf '../%.0s' $(seq 1 $depth))
-                install_name_tool -add_rpath "@loader_path/${prefix}bin/ruby_dist/macos-arm64/lib" "$f" 2>/dev/null || true
-              done
-              install_name_tool -add_rpath "@loader_path/../lib" "$f" 2>/dev/null || true
-              
-              # Standard links -> @rpath
-              otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
-                base=$(basename "$dep")
-                if [ -f "$LIB_DEST/$base" ]; then
-                  install_name_tool -change "$dep" "@rpath/$base" "$f" 2>/dev/null || true
-                fi
-              done
-              
-              curr_ruby=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1) || true
-              if [[ -n "$curr_ruby" ]]; then
-                 install_name_tool -change "$curr_ruby" "@rpath/$(basename "$curr_ruby")" "$f" 2>/dev/null || true
-              fi
+          # 5. Deep Repair Loop: Every Mach-O file gets universal RPaths
+          echo "Starting recursive load-path repair on all native files..."
+          # Function defined inside the script to avoid export issues
+          repair() {
+            local target="$1"
+            local libs="$2"
+            
+            # Identify if it's a Mach-O file
+            if file "$target" | grep -q "Mach-O"; then
+               echo "Repairing: $target"
+               chmod +w "$target" 2>/dev/null || true
+               codesign --remove-signature "$target" 2>/dev/null || true
+               
+               # Add massive range of RPaths to covering shallow and deep paths
+               # vendor/bundle/ruby/X/gems/Y/ext/Z/native.so -> 8 levels up to Resources/
+               # bin/ruby_dist/macos-arm64/lib -> relative to Resources/
+               for d in $(seq 1 12); do
+                  p=$(printf '../%.0s' $(seq 1 $d))
+                  install_name_tool -add_rpath "@loader_path/${p}lib" "$target" 2>/dev/null || true
+                  install_name_tool -add_rpath "@loader_path/${p}bin/ruby_dist/macos-arm64/lib" "$target" 2>/dev/null || true
+               done
+               
+               # Fix hardcoded library links
+               otool -L "$target" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
+                 base=$(basename "$dep")
+                 if [ -f "$libs/$base" ]; then
+                   install_name_tool -change "$dep" "@rpath/$base" "$target" 2>/dev/null || true
+                 fi
+               done
+               
+               curr_ruby=$(otool -L "$target" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1) || true
+               if [ -n "$curr_ruby" ]; then
+                  install_name_tool -change "$curr_ruby" "@rpath/$(basename "$curr_ruby")" "$target" 2>/dev/null || true
+               fi
+               
+               # Re-sign with ad-hoc so it's runnable on the runner during verification if needed
+               codesign -s - "$target" 2>/dev/null || true
             fi
-          done < <(find bin/ruby_dist vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" -o -perm +111 \))
+          }
 
-          # 6. Verification
-          echo "Testing portability..."
+          # Iterate over all files in portable ruby and vendor bundle
+          # We use a simple loop to be safe with shell compatibility
+          for f in $(find bin/ruby_dist vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" -o -perm +111 \)); do
+             repair "$f" "$LIB_DEST"
+          done
+
+          # 6. Verification: Ensure it works WITHOUT DYLD_LIBRARY_PATH help
+          echo "Final Portability Check..."
           unset DYLD_LIBRARY_PATH
           "$PORTABLE_RUBY_BIN" -v
-          export GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$(pwd)/bin/ruby_dist/macos-arm64/lib/ruby/gems/3.4.0"
-          "$PORTABLE_RUBY_BIN" -e "require 'sqlite3'; puts 'SUCCESS: native gems load'"
+          # Set temporary GEM_PATH for the test
+          V_GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$(pwd)/bin/ruby_dist/macos-arm64/lib/ruby/gems/3.4.0"
+          GEM_PATH="$V_GEM_PATH" "$PORTABLE_RUBY_BIN" -e "require 'sqlite3'; puts 'SUCCESS: native gems load reliably'"
 
-          # 7. Signing
+          # 7. Production Code Signing
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
           ENTITLEMENTS="build/entitlements.mac.plist"
           
-          find vendor/bundle bin/ruby_dist/macos-arm64 -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r file; do
-             codesign --force --options runtime --timestamp -s "$IDENTITY" "$file"
-          done
-          codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$PORTABLE_RUBY_BIN"
-          
+          if [ -n "$IDENTITY" ]; then
+            echo "Signing native files with: $IDENTITY"
+            # Bottom-up signing: Dylibs and bundles first
+            find vendor/bundle bin/ruby_dist/macos-arm64 -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r file; do
+               codesign --force --options runtime --timestamp -s "$IDENTITY" "$file"
+            done
+            # Main binary last
+            codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$PORTABLE_RUBY_BIN"
+            echo "Checking signature status..."
+            codesign -vvv --deep --strict "$PORTABLE_RUBY_BIN"
+          else
+            echo "Warning: APPLE_DEVELOPER_IDENTITY missing; skipping production signing."
+          fi
+
           echo "macOS native dependencies setup complete."
 
       - name: Setup Native Dependencies (Windows)
@@ -175,7 +227,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          set -x
           mkdir -p bin/ruby_dist/win-x64
           URL="https://github.com/oneclick/rubyinstaller2/releases/download/RubyInstaller-3.4.1-1/rubyinstaller-3.4.1-1-x64.7z"
           curl -L "$URL" -o ruby.7z
@@ -198,6 +249,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
+
+      - name: List Build Output
+        run: ls -R dist/
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -234,6 +288,7 @@ jobs:
           name: Brilliant v${{ steps.pkg_version.outputs.version }}
           body: |
             ## Brilliant Release v${{ steps.pkg_version.outputs.version }}
-            Properly Signed and Notarized macOS build.
+            Automated production build for macOS (Silicon/Intel) and Windows. 
+            Includes unified dash-to-overview navigation.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
