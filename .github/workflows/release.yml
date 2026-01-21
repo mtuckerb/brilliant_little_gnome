@@ -90,17 +90,60 @@ jobs:
           # Clean up any extended attributes
           xattr -cr bin/ruby_dist/macos-arm64
           
-          PORTABLE_RUBY_BIN="$(pwd)/bin/ruby_dist/macos-arm64/bin/ruby"
           PORTABLE_RUBY_DIR="$(pwd)/bin/ruby_dist/macos-arm64"
+          PORTABLE_RUBY_BIN="$PORTABLE_RUBY_DIR/bin/ruby"
           LIB_DEST="$PORTABLE_RUBY_DIR/lib"
           
-          # 2. Preparation for execution on runner
-          # We need to make it loadable on the runner to build gems
-          # We'll use DYLD_LIBRARY_PATH temporarily during gem building
+          # 2. Initial Patching: Make Ruby executable on the runner
+          # Standard ruby-builder builds use absolute paths or relative paths that might not match
+          echo "Applying initial patches to Ruby binary..."
+          chmod +w "$PORTABLE_RUBY_BIN"
+          codesign --remove-signature "$PORTABLE_RUBY_BIN" || true
+          
+          # Find and fix libruby link in the main binary
+          CURRENT_LIBRUBY=$(otool -L "$PORTABLE_RUBY_BIN" | grep libruby | awk '{print $1}' | head -n 1)
+          if [ ! -z "$CURRENT_LIBRUBY" ]; then
+             # Add rpath for the standard location and patch link
+             install_name_tool -add_rpath "@executable_path/../lib" "$PORTABLE_RUBY_BIN" || true
+             install_name_tool -change "$CURRENT_LIBRUBY" "@rpath/$(basename "$CURRENT_LIBRUBY")" "$PORTABLE_RUBY_BIN" || true
+          fi
+
+          # Patch the dylibs themselves
+          find "$LIB_DEST" -name "*.dylib" | while read -r dylib; do
+            chmod +w "$dylib"
+            codesign --remove-signature "$dylib" || true
+            install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" || true
+            
+            # Fix cross-links (e.g. libruby linking to libgmp)
+            otool -L "$dylib" | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
+              install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$dylib" || true
+            done
+          done
+
+          # 3. Provision external dependencies (libgmp, libyaml) 
+          # These are often required by Ruby but not bundled in the builder tarball
+          echo "Bundling missing dependencies..."
+          # Use 'brew --prefix' to find libs, then copy to our lib folder
+          GMP_PATH=$(brew --prefix gmp 2>/dev/null)/lib/libgmp.10.dylib || true
+          if [ -f "$GMP_PATH" ]; then
+            cp "$GMP_PATH" "$LIB_DEST/"
+            chmod 644 "$LIB_DEST/libgmp.10.dylib"
+            install_name_tool -id "@rpath/libgmp.10.dylib" "$LIB_DEST/libgmp.10.dylib" || true
+          fi
+          
+          YAML_PATH=$(brew --prefix libyaml 2>/dev/null)/lib/libyaml-0.2.dylib || true
+          if [ -f "$YAML_PATH" ]; then
+            cp "$YAML_PATH" "$LIB_DEST/"
+            chmod 644 "$LIB_DEST/libyaml-0.2.dylib"
+            install_name_tool -id "@rpath/libyaml-0.2.dylib" "$LIB_DEST/libyaml-0.2.dylib" || true
+          fi
+          
+          # 4. Preparation for execution and Gem installation
+          # We'll use DYLD_LIBRARY_PATH temporarily during building to be safe
           export DYLD_LIBRARY_PATH="$LIB_DEST:$DYLD_LIBRARY_PATH"
           export PATH="$PORTABLE_RUBY_DIR/bin:$PATH"
           
-          echo "Initial library links for Ruby binary:"
+          echo "Ruby binary linkage after initial patch:"
           otool -L "$PORTABLE_RUBY_BIN"
           
           # Smoke test
@@ -116,22 +159,7 @@ jobs:
           
           xattr -cr vendor/bundle
 
-          # 3. Handle external dependencies (libgmp, libyaml)
-          echo "Bundling missing dependencies..."
-          
-          GMP_PATH=$(brew --prefix gmp)/lib/libgmp.10.dylib
-          if [ -f "$GMP_PATH" ]; then
-            cp "$GMP_PATH" "$LIB_DEST/"
-            chmod 644 "$LIB_DEST/libgmp.10.dylib"
-          fi
-          
-          YAML_PATH=$(brew --prefix libyaml)/lib/libyaml-0.2.dylib
-          if [ -f "$YAML_PATH" ]; then
-            cp "$YAML_PATH" "$LIB_DEST/"
-            chmod 644 "$LIB_DEST/libyaml-0.2.dylib"
-          fi
-
-          # 4. Patch ALL native components for perfect portability
+          # 5. Deep Repair for Perfect Portability
           echo "Repairing load paths for all native extensions and binaries..."
           
           # Define repair function
@@ -145,13 +173,14 @@ jobs:
             codesign --remove-signature "$f" 2>/dev/null || true
             
             # 1. Add rpaths covering various depths to find /lib relatively
-            install_name_tool -add_rpath "@loader_path/../lib" "$f" 2>/dev/null || true
-            install_name_tool -add_rpath "@loader_path/../../lib" "$f" 2>/dev/null || true
-            install_name_tool -add_rpath "@loader_path/../../../lib" "$f" 2>/dev/null || true
-            install_name_tool -add_rpath "@loader_path/../../../../lib" "$f" 2>/dev/null || true
-            install_name_tool -add_rpath "@loader_path/../../../../../lib" "$f" 2>/dev/null || true
-            install_name_tool -add_rpath "@loader_path/../../../../../../lib" "$f" 2>/dev/null || true
-            install_name_tool -add_rpath "@loader_path/../../../../../../../lib" "$f" 2>/dev/null || true
+            # These levels allow gems deep in vendor/bundle to find bin/ruby_dist/.../lib
+            # by traversing up and then back down.
+            for depth in {1..12}; do
+              prefix=$(printf '../%.0s' $(seq 1 $depth))
+              # Try to find lib relative to sidecar root (bin/ruby_dist/macos-arm64/lib)
+              install_name_tool -add_rpath "@loader_path/${prefix}bin/ruby_dist/macos-arm64/lib" "$f" 2>/dev/null || true
+              install_name_tool -add_rpath "@loader_path/${prefix}lib" "$f" 2>/dev/null || true
+            done
             
             # 2. Patch hardcoded Homebrew/system paths to use @rpath
             otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
@@ -172,20 +201,21 @@ jobs:
 
           # Export for find's child shells
           export -f repair_binary
-          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) -exec bash -c 'repair_binary "$0" "$1"' {} "$LIB_DEST" \;
+          # Optimized find - search for Mach-O files explicitly
+          find bin/ruby_dist vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" -o -perm +111 \) -exec bash -c 'file "$0" | grep -q "Mach-O" && repair_binary "$0" "$1"' {} "$LIB_DEST" \;
 
-          # Extra step: ensure all bundled dylibs in lib/ have correct internal ID
+          # Final check: ensure all bundled dylibs in lib/ have correct internal ID (again)
           find "$LIB_DEST" -name "*.dylib" | while read -r dylib; do
             install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" 2>/dev/null || true
           done
 
-          # 5. Verification Check (No DYLD environment help)
+          # 6. Verification Check (No DYLD environment help)
           echo "Running final portability test..."
           DYLD_LIBRARY_PATH="" "$PORTABLE_RUBY_BIN" -v
           export GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$(pwd)/bin/ruby_dist/macos-arm64/lib/ruby/gems/3.4.0"
           DYLD_LIBRARY_PATH="" "$PORTABLE_RUBY_BIN" -e "require 'sqlite3'; puts '✅ native gems load without DYLD_LIBRARY_PATH'"
 
-          # 6. Code Signing for Hardened Runtime
+          # 7. Code Signing for Hardened Runtime
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
           ENTITLEMENTS="build/entitlements.mac.plist"
           
