@@ -58,10 +58,8 @@ function createWindow() {
     }
   });
 
-  // Splash screen or loading state
-  mainWindow.loadFile(path.join(__dirname, 'public', 'splash.html')).catch(() => {
-    // If splash doesn't exist, just wait
-  });
+  // Load a placeholder while waiting
+  mainWindow.loadFile(path.join(__dirname, 'public', 'splash.html')).catch(() => {});
 
   // Attempt to load the URL with retries
   let retryCount = 0;
@@ -74,8 +72,11 @@ function createWindow() {
     }
     
     if (retryCount > 60) { 
-      console.log("[Electron] Timeout reached. Opening DevTools for manual inspection.");
-      mainWindow.webContents.openDevTools();
+      console.log("[Electron] Timeout reached. Sidecar may have failed to start.");
+      if (isPackaged) {
+          dialog.showErrorBox("Startup Error", "The Brilliant backend failed to respond in time.");
+      }
+      return;
     }
 
     axios.get(healthUrl, { timeout: 1000 })
@@ -162,18 +163,27 @@ function startRubyApp() {
     BOOTSNAP_CACHE_DIR: cacheDir,
     DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
     PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`,
-    // Ensure Ruby knows where its own library is for native extensions
-    DYLD_LIBRARY_PATH: process.platform === 'darwin' 
-      ? `${path.join(rubyBase, 'lib')}${pathSeparator}${process.env.DYLD_LIBRARY_PATH || ''}` 
-      : undefined
+    // Critical: ignore any global system ruby configurations
+    RUBYOPT: "", 
+    RUBYLIB: "",
+    // Diagnostic logging
+    DEBUG: "true"
   };
+
+  // On macOS, some native extensions might need help finding our distributed libraries 
+  // if they didn't respect @rpath during build.
+  if (process.platform === 'darwin') {
+    env.DYLD_FALLBACK_LIBRARY_PATH = `${path.join(rubyBase, 'lib')}${pathSeparator}${process.env.DYLD_FALLBACK_LIBRARY_PATH || ''}`;
+  }
 
   console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
   
   let logFd;
   try {
     logFd = fs.openSync(logFile, 'a');
-    fs.writeSync(logFd, `\n--- Startup at ${new Date().toISOString()} ---\n`);
+    fs.writeSync(logFd, `\n--- SIDE CAR STARTUP AT ${new Date().toISOString()} ---\n`);
+    fs.writeSync(logFd, `Binary: ${rubyBinary}\n`);
+    fs.writeSync(logFd, `CWD: ${baseDir}\n`);
   } catch (err) {
     console.error("Failed to open log file:", err);
   }
@@ -200,14 +210,20 @@ function startRubyApp() {
     });
   }
 
-  rubyApp.on('exit', (code) => {
-    if (logFd) fs.closeSync(logFd);
+  rubyApp.on('error', (err) => {
+    console.error(`[Electron] Spawn Error: ${err}`);
+    if (logFd) fs.writeSync(logFd, `Spawn Error: ${err.message}\n`);
+  });
+
+  rubyApp.on('exit', (code, signal) => {
     if (code !== 0 && !app.isQuitting) {
-      console.error(`[Electron] Ruby process exited with code ${code}`);
+      console.error(`[Electron] Ruby process exited unexpectedly: Code ${code}, Signal ${signal}`);
+      if (logFd) fs.writeSync(logFd, `EXITED UNEXPECTEDLY: Code ${code}, Signal ${signal}\n`);
       if (isPackaged) {
-        dialog.showErrorBox("Ruby Sidecar Crash", `The Ruby application exited unexpectedly with code ${code}. Check logs at ${logFile}`);
+        dialog.showErrorBox("Ruby Sidecar Crash", `The Brilliant backend crashed (Exit Code: ${code}).\nCheck the log at: ${logFile}`);
       }
     }
+    if (logFd) fs.closeSync(logFd);
   });
 }
 
@@ -227,7 +243,9 @@ app.on('window-all-closed', () => {
 app.isQuitting = false;
 app.on('before-quit', () => {
   app.isQuitting = true;
-  if (rubyApp) rubyApp.kill('SIGTERM');
+  if (rubyApp) {
+      try { rubyApp.kill('SIGTERM'); } catch (e) {}
+  }
 });
 
 ipcMain.on('start-login', (event, host) => {

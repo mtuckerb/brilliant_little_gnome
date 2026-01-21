@@ -92,6 +92,7 @@ jobs:
           
           PORTABLE_RUBY_BIN="$(pwd)/bin/ruby_dist/macos-arm64/bin/ruby"
           PORTABLE_RUBY_DIR="$(pwd)/bin/ruby_dist/macos-arm64"
+          LIB_DEST="$PORTABLE_RUBY_DIR/lib"
           
           # 2. Use the portable ruby to install gems
           # This ensures native extensions are built against the correct Ruby headers/ABI
@@ -105,71 +106,61 @@ jobs:
           # Clean up gem extended attributes
           xattr -cr vendor/bundle
 
-          # 3. Handle external dependencies (libgmp and libyaml)
-          echo "Bundling and Hardening missing dependencies..."
-          LIB_DEST="$PORTABLE_RUBY_DIR/lib"
+          # 3. Handle external dependencies (libgmp, libyaml)
+          echo "Bundling missing dependencies into portable lib/ folder..."
           
+          # Bundle libgmp
           GMP_PATH=$(brew --prefix gmp)/lib/libgmp.10.dylib
           if [ -f "$GMP_PATH" ]; then
             cp "$GMP_PATH" "$LIB_DEST/"
             chmod 644 "$LIB_DEST/libgmp.10.dylib"
-            install_name_tool -id "@loader_path/libgmp.10.dylib" "$LIB_DEST/libgmp.10.dylib"
           fi
           
+          # Bundle libyaml
           YAML_PATH=$(brew --prefix libyaml)/lib/libyaml-0.2.dylib
           if [ -f "$YAML_PATH" ]; then
             cp "$YAML_PATH" "$LIB_DEST/"
             chmod 644 "$LIB_DEST/libyaml-0.2.dylib"
-            install_name_tool -id "@loader_path/libyaml-0.2.dylib" "$LIB_DEST/libyaml-0.2.dylib"
           fi
 
-          # 4. Deep RPath and Linker fixup
-          echo "Fixing RPaths and internal links for portability..."
+          # 4. Deep RPath and Linker Fixup Strategy
+          echo "Applying robust RPath strategy..."
           
-          # Helper to fix a single binary/dylib
-          fix_links() {
-            local target="$1"
-            echo "Fixing $target"
+          # A. Set internal ID of dylibs to use @rpath
+          find "$LIB_DEST" -name "*.dylib" | while read -r dylib; do
+            name=$(basename "$dylib")
+            install_name_tool -id "@rpath/$name" "$dylib" 2>/dev/null || true
+          done
+          
+          # B. Update all binaries, dylibs, and bundles to use @rpath and add search paths
+          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r target; do
+            # Add @executable_path/../lib to rpath. 
+            # This works because the executable is the sidecar ruby binary.
+            install_name_tool -add_rpath "@executable_path/../lib" "$target" 2>/dev/null || true
             
-            # Fix self-id if it's a dylib
-            if [[ "$target" == *.dylib ]]; then
-              local name=$(basename "$target")
-              install_name_tool -id "@loader_path/$name" "$target" 2>/dev/null || true
-            fi
-            
-            # Update dependencies to use relative paths
+            # Map any hardcoded homebrew/system paths to @rpath for our bundled dylibs
             otool -L "$target" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
-              local dep_base=$(basename "$dep")
-              # If it's a known dependency we've bundled
+              dep_base=$(basename "$dep")
               if [ -f "$LIB_DEST/$dep_base" ]; then
-                # Prefer relative to executable if in bin/, else relative to current folder
-                if [[ "$target" == */bin/* ]]; then
-                  install_name_tool -change "$dep" "@executable_path/../lib/$dep_base" "$target" 2>/dev/null || true
-                else
-                  install_name_tool -change "$dep" "@loader_path/../lib/$dep_base" "$target" 2>/dev/null || \
-                  install_name_tool -change "$dep" "@loader_path/$dep_base" "$target" 2>/dev/null || true
-                fi
+                install_name_tool -change "$dep" "@rpath/$dep_base" "$target" 2>/dev/null || true
               fi
             done
             
             # Standardize libruby path for binary and ruby extensions
             local CURRENT_LIBRUBY=$(otool -L "$target" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1)
             if [ ! -z "$CURRENT_LIBRUBY" ]; then
-               if [[ "$target" == "$PORTABLE_RUBY_BIN" ]]; then
-                 install_name_tool -change "$CURRENT_LIBRUBY" "@executable_path/../lib/libruby.3.4.dylib" "$target" 2>/dev/null || true
-               else
-                 install_name_tool -change "$CURRENT_LIBRUBY" "@loader_path/../../../../bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib" "$target" 2>/dev/null || \
-                 install_name_tool -change "$CURRENT_LIBRUBY" "@loader_path/../lib/libruby.3.4.dylib" "$target" 2>/dev/null || true
-               fi
+               install_name_tool -change "$CURRENT_LIBRUBY" "@rpath/$(basename "$CURRENT_LIBRUBY")" "$target" 2>/dev/null || true
             fi
-          }
-
-          # Scan and fix all binaries and dylibs
-          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r binary; do
-            fix_links "$binary"
           done
 
-          # 5. Sign EVERYTHING properly with Hardened Runtime
+          # 5. Verify portability on the runner
+          echo "Verifying portable Ruby functionality..."
+          "$PORTABLE_RUBY_BIN" -v
+          # Use local GEM_PATH to test if sqlite3 (most common native gem failing) loads
+          export GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$(pwd)/bin/ruby_dist/macos-arm64/lib/ruby/gems/3.4.0"
+          "$PORTABLE_RUBY_BIN" -e "require 'sqlite3'; puts '✅ sqlite3 extension loaded successfully'"
+
+          # 6. Sign EVERYTHING properly with Hardened Runtime
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
           ENTITLEMENTS="build/entitlements.mac.plist"
           
@@ -182,8 +173,8 @@ jobs:
           # Finally sign the Ruby executable with entitlements
           codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$PORTABLE_RUBY_BIN"
           
-          # 6. Verify
-          echo "Verifying Ruby signature..."
+          # 7. Final Deep Verification
+          echo "Verifying Ruby signature and hardened runtime..."
           codesign -vvv --deep --strict "$PORTABLE_RUBY_BIN"
 
           echo "Native dependencies setup complete."
