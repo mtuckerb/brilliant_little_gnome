@@ -181,8 +181,9 @@ jobs:
               # Add many depths of RPath manually to avoid any shell loop issues
               for depth in 1 2 3 4 5 6 7 8 9 10; do
                 up=""
-                for i in $(seq 1 $depth); do up+="../"; done
+                for i in $(seq 1 $depth); do up="$up../"; done
                 install_name_tool -add_rpath "@loader_path/${up}lib" "$f" 2>/dev/null || true
+                install_name_tool -add_rpath "@loader_path/${up}bin/ruby_dist/macos-arm64/lib" "$f" 2>/dev/null || true
               done
             fi
           done
@@ -210,11 +211,12 @@ jobs:
           echo "Running smoke test..."
           unset DYLD_LIBRARY_PATH
           export GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$PORTABLE_DIR/lib/ruby/gems/3.4.0"
-          echo "GEM_PATH: $GEM_PATH"
+          echo "Testing with GEM_PATH: $GEM_PATH"
           # Find and debug sqlite3 native bundle
           SQLITE_BUNDLE=$(find vendor/bundle -name "sqlite3_native.bundle" | head -n 1)
           if [ -n "$SQLITE_BUNDLE" ]; then
             echo "Linkage for $SQLITE_BUNDLE:"
+            otool -l "$SQLITE_BUNDLE" | grep -A 2 RPATH || true
             otool -L "$SQLITE_BUNDLE"
           fi
 
