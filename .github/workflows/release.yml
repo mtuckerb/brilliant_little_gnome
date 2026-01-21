@@ -90,6 +90,17 @@ jobs:
           install_name_tool -add_rpath "@executable_path/../lib" "$RUBY_BIN" 2>/dev/null || true
           install_name_tool -add_rpath "@loader_path/../lib" "$RUBY_BIN" 2>/dev/null || true
 
+          # Detect all local/homebrew dependencies from the Ruby binary and its libs
+          echo "Identifying required system libraries..."
+          find "$PORTABLE_DIR" -type f \( -name "*.dylib" -o -name "ruby" \) | xargs otool -L | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | sort -u | while read -r dep; do
+            if [ -f "$dep" ]; then
+              echo "Found dependency: $dep -> bundling"
+              cp "$dep" "$LIB_DIR/"
+              chmod +w "$LIB_DIR/$(basename "$dep")"
+              codesign --remove-signature "$LIB_DIR/$(basename "$dep")" 2>/dev/null || true
+            fi
+          done
+
           # 3. Pull in homebrew dependencies
           echo "Gathering Homebrew dependencies..."
           brew install gmp libyaml || true
@@ -144,6 +155,20 @@ jobs:
           bundle install --jobs 4 --retry 3
           xattr -cr vendor/bundle || true
 
+          # Now that gems are installed, scan THEM for dependencies too
+          echo "Scanning gems for additional dependencies..."
+          find vendor/bundle -name "*.bundle" -o -name "*.so" | xargs otool -L | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | sort -u | while read -r dep; do
+            if [ -f "$dep" ]; then
+              base=$(basename "$dep")
+              if [ ! -f "$LIB_DIR/$base" ]; then
+                echo "Found gem dependency: $dep -> bundling"
+                cp "$dep" "$LIB_DIR/"
+                chmod +w "$LIB_DIR/$base"
+                codesign --remove-signature "$LIB_DIR/$base" 2>/dev/null || true
+              fi
+            fi
+          done
+
           # 6. Global Portability Repair
           # Fix everything including gems
           echo "Repairing all native objects (Gems and Bundle)..."
@@ -159,23 +184,25 @@ jobs:
                 for i in $(seq 1 $depth); do up+="../"; done
                 install_name_tool -add_rpath "@loader_path/${up}lib" "$f" 2>/dev/null || true
               done
-              
-              # Special case for binary to its own lib
-              install_name_tool -add_rpath "@executable_path/../lib" "$f" 2>/dev/null || true
+            fi
+          done
 
-              # Link hardcoded brewer paths to @rpath
-              otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep_link; do
-                base=$(basename "$dep_link")
+          # Second pass: cross-fix all ids and links
+          find "$LIB_DIR" bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" -o -name "ruby" \) | while read -r f; do
+            if (file "$f" 2>/dev/null || true) | grep -q "Mach-O"; then
+              echo "Fixing linkage for $(basename "$f")..."
+              # Fix ID if it's a dylib
+              if [[ "$f" == *.dylib ]]; then
+                install_name_tool -id "@rpath/$(basename "$f")" "$f" 2>/dev/null || true
+              fi
+
+              # Fix all hardcoded links and libruby
+              otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local|libruby" | awk '{print $1}' | while read -r dep; do
+                base=$(basename "$dep")
                 if [ -f "$LIB_DIR/$base" ]; then
-                  echo "Fixing hardcoded link $dep_link -> @rpath/$base in $f"
-                  install_name_tool -change "$dep_link" "@rpath/$base" "$f" 2>/dev/null || true
+                  install_name_tool -change "$dep" "@rpath/$base" "$f" 2>/dev/null || true
                 fi
               done
-
-              curr_ruby=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1) || true
-              if [ -n "$curr_ruby" ]; then
-                 install_name_tool -change "$curr_ruby" "@rpath/$(basename "$curr_ruby")" "$f" 2>/dev/null || true
-              fi
             fi
           done
 
