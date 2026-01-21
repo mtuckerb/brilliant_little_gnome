@@ -81,35 +81,34 @@ jobs:
         run: |
           set -e
           set -x
+          
+          # 1. Provision portable ruby
           mkdir -p bin/ruby_dist/macos-arm64
-          # Provision portable ruby
           URL="https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz"
           curl -L "$URL" | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
           
-          # Clean up any extended attributes before signing
+          # Clean up any extended attributes
           xattr -cr bin/ruby_dist/macos-arm64
           
-          RB_BIN="bin/ruby_dist/macos-arm64/bin/ruby"
-          RB_LIB="bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib"
+          PORTABLE_RUBY_BIN="$(pwd)/bin/ruby_dist/macos-arm64/bin/ruby"
+          PORTABLE_RUBY_DIR="$(pwd)/bin/ruby_dist/macos-arm64"
           
-          # Fix rpath for portability
-          echo "Updating rpaths..."
-          CURRENT_LIB=$(otool -L "$RB_BIN" | grep libruby | awk '{print $1}' | head -n 1)
-          if [ ! -z "$CURRENT_LIB" ]; then
-            install_name_tool -change "$CURRENT_LIB" "@executable_path/../lib/libruby.3.4.dylib" "$RB_BIN"
-          fi
-          install_name_tool -add_rpath "@executable_path/../lib" "$RB_BIN" || true
-
-          # Use system ruby to install gems into the app's vendor folder
+          # 2. Use the portable ruby to install gems
+          # This ensures native extensions are built against the correct Ruby headers/ABI
+          export PATH="$PORTABLE_RUBY_DIR/bin:$PATH"
+          gem install bundler --no-document
+          
           bundle config set --local path 'vendor/bundle'
-          bundle install --deployment || bundle install
+          bundle config set --local deployment 'true'
+          bundle install
+          
           # Clean up gem extended attributes
           xattr -cr vendor/bundle
 
-          echo "Bundling and Fixup missing dependencies (libgmp and libyaml)..."
-          LIB_DEST="bin/ruby_dist/macos-arm64/lib"
+          # 3. Handle external dependencies (libgmp and libyaml)
+          echo "Bundling and Hardening missing dependencies..."
+          LIB_DEST="$PORTABLE_RUBY_DIR/lib"
           
-          # Bundle libgmp
           GMP_PATH=$(brew --prefix gmp)/lib/libgmp.10.dylib
           if [ -f "$GMP_PATH" ]; then
             cp "$GMP_PATH" "$LIB_DEST/"
@@ -117,7 +116,6 @@ jobs:
             install_name_tool -id "@loader_path/libgmp.10.dylib" "$LIB_DEST/libgmp.10.dylib"
           fi
           
-          # Bundle libyaml
           YAML_PATH=$(brew --prefix libyaml)/lib/libyaml-0.2.dylib
           if [ -f "$YAML_PATH" ]; then
             cp "$YAML_PATH" "$LIB_DEST/"
@@ -125,40 +123,70 @@ jobs:
             install_name_tool -id "@loader_path/libyaml-0.2.dylib" "$LIB_DEST/libyaml-0.2.dylib"
           fi
 
-          # Standardize dependencies for ALL native files
-          echo "Standardizing native library paths..."
-          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r binary; do
-            # Standardize Homebrew paths to relative paths
-            otool -L "$binary" 2>/dev/null | grep "/opt/homebrew" | awk '{print $1}' | while read -r old_path; do
-              lib_name=$(basename "$old_path")
-              if [ -f "$LIB_DEST/$lib_name" ]; then
+          # 4. Deep RPath and Linker fixup
+          echo "Fixing RPaths and internal links for portability..."
+          
+          # Helper to fix a single binary/dylib
+          fix_links() {
+            local target="$1"
+            echo "Fixing $target"
+            
+            # Fix self-id if it's a dylib
+            if [[ "$target" == *.dylib ]]; then
+              local name=$(basename "$target")
+              install_name_tool -id "@loader_path/$name" "$target" 2>/dev/null || true
+            fi
+            
+            # Update dependencies to use relative paths
+            otool -L "$target" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
+              local dep_base=$(basename "$dep")
+              # If it's a known dependency we've bundled
+              if [ -f "$LIB_DEST/$dep_base" ]; then
                 # Prefer relative to executable if in bin/, else relative to current folder
-                if [[ "$binary" == */bin/* ]]; then
-                  install_name_tool -change "$old_path" "@executable_path/../lib/$lib_name" "$binary" 2>/dev/null || true
+                if [[ "$target" == */bin/* ]]; then
+                  install_name_tool -change "$dep" "@executable_path/../lib/$dep_base" "$target" 2>/dev/null || true
                 else
-                  install_name_tool -change "$old_path" "@loader_path/../lib/$lib_name" "$binary" 2>/dev/null || \
-                  install_name_tool -change "$old_path" "@loader_path/$lib_name" "$binary" 2>/dev/null || true
+                  install_name_tool -change "$dep" "@loader_path/../lib/$dep_base" "$target" 2>/dev/null || \
+                  install_name_tool -change "$dep" "@loader_path/$dep_base" "$target" 2>/dev/null || true
                 fi
               fi
             done
+            
+            # Standardize libruby path for binary and ruby extensions
+            local CURRENT_LIBRUBY=$(otool -L "$target" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1)
+            if [ ! -z "$CURRENT_LIBRUBY" ]; then
+               if [[ "$target" == "$PORTABLE_RUBY_BIN" ]]; then
+                 install_name_tool -change "$CURRENT_LIBRUBY" "@executable_path/../lib/libruby.3.4.dylib" "$target" 2>/dev/null || true
+               else
+                 install_name_tool -change "$CURRENT_LIBRUBY" "@loader_path/../../../../bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib" "$target" 2>/dev/null || \
+                 install_name_tool -change "$CURRENT_LIBRUBY" "@loader_path/../lib/libruby.3.4.dylib" "$target" 2>/dev/null || true
+               fi
+            fi
+          }
+
+          # Scan and fix all binaries and dylibs
+          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -perm +111 -o -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r binary; do
+            fix_links "$binary"
           done
 
-          # Final verification and pre-signing
+          # 5. Sign EVERYTHING properly with Hardened Runtime
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
           ENTITLEMENTS="build/entitlements.mac.plist"
           
-          echo "Pre-signing native binaries with Hardened Runtime..."
+          echo "Signing native components..."
           
-          # One pass to sign ALL dependencies including our new bundled ones
-          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r file; do
-             codesign --force --options runtime --timestamp -s "$IDENTITY" "$file"
-          done
+          # Sign ALL dependencies including our new bundled ones (bottom-up)
+          find bin/ruby_dist/macos-arm64 vendor/bundle -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) \
+            -exec codesign --force --options runtime --timestamp -s "$IDENTITY" {} \;
           
-          # Sign the main Ruby executable last with entitlements
-          codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$RB_BIN"
+          # Finally sign the Ruby executable with entitlements
+          codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$PORTABLE_RUBY_BIN"
           
+          # 6. Verify
           echo "Verifying Ruby signature..."
-          codesign -vvv --deep --strict "$RB_BIN"
+          codesign -vvv --deep --strict "$PORTABLE_RUBY_BIN"
+
+          echo "Native dependencies setup complete."
 
       - name: Setup Native Dependencies (Windows)
         if: matrix.os == 'windows-latest'

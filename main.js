@@ -58,6 +58,11 @@ function createWindow() {
     }
   });
 
+  // Splash screen or loading state
+  mainWindow.loadFile(path.join(__dirname, 'public', 'splash.html')).catch(() => {
+    // If splash doesn't exist, just wait
+  });
+
   // Attempt to load the URL with retries
   let retryCount = 0;
   const healthUrl = 'http://127.0.0.1:4567/health';
@@ -139,21 +144,28 @@ function startRubyApp() {
   const platformDir = process.platform === 'darwin' ? `macos-${arch}` : 'win-x64';
   const rubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
   const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', '3.4.0');
+  const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
   const pathSeparator = process.platform === 'win32' ? ';' : ':';
 
+  // Build a robust environment for Ruby
   const env = { 
     ...process.env, 
     PORT: '4567', 
     BUNDLE_GEMFILE: path.join(baseDir, 'Gemfile'),
     BUNDLE_DEPLOYMENT: 'true', 
     BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
-    GEM_PATH: vendorGems,
+    GEM_PATH: `${vendorGems}${pathSeparator}${internalGems}`,
     GEM_HOME: vendorGems,
     RUBY_PLATFORM_DIR: platformDir,
     BRILLIANT_DATA_DIR: userDataPath,
     BRILLIANT_ENV: 'electron',
+    BOOTSNAP_CACHE_DIR: cacheDir,
     DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
-    PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`
+    PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`,
+    // Ensure Ruby knows where its own library is for native extensions
+    DYLD_LIBRARY_PATH: process.platform === 'darwin' 
+      ? `${path.join(rubyBase, 'lib')}${pathSeparator}${process.env.DYLD_LIBRARY_PATH || ''}` 
+      : undefined
   };
 
   console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
@@ -191,7 +203,10 @@ function startRubyApp() {
   rubyApp.on('exit', (code) => {
     if (logFd) fs.closeSync(logFd);
     if (code !== 0 && !app.isQuitting) {
-      dialog.showErrorBox("Ruby Sidecar Crash", "The Ruby application exited unexpectedly.");
+      console.error(`[Electron] Ruby process exited with code ${code}`);
+      if (isPackaged) {
+        dialog.showErrorBox("Ruby Sidecar Crash", `The Ruby application exited unexpectedly with code ${code}. Check logs at ${logFile}`);
+      }
     }
   });
 }
@@ -215,17 +230,40 @@ app.on('before-quit', () => {
   if (rubyApp) rubyApp.kill('SIGTERM');
 });
 
-ipcMain.on('login-window', (event, { host }) => {
-  const loginWindow = new BrowserWindow({ width: 800, height: 600 });
+ipcMain.on('start-login', (event, host) => {
+  const loginWindow = new BrowserWindow({
+    width: 600,
+    height: 800,
+    parent: mainWindow,
+    modal: true,
+    title: "Brilliant Login",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+
   loginWindow.loadURL(`https://${host}/d2l/lp/auth/login/login.d2l`);
-  
+
+  loginWindow.webContents.on('dom-ready', () => {
+    const script = "window.alert = function(){}; window.confirm = function(){return true;}; window.prompt = function(){return null;};";
+    loginWindow.webContents.executeJavaScript(script);
+  });
+
   loginWindow.webContents.on('did-navigate', (event, url) => {
     if (url.includes("/d2l/home") || url.includes("/d2l/lp/homepage")) {
-      session.defaultSession.cookies.get({ domain: host }).then((cookies) => {
-        const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-        mainWindow.webContents.send('login-complete', { host, cookies: cookieString });
-        setTimeout(() => loginWindow.close(), 1000);
-      });
+      session.defaultSession.cookies.get({ domain: host })
+        .then((cookies) => {
+          const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+          mainWindow.webContents.send('login-complete', { host, cookies: cookieString });
+          
+          setTimeout(() => {
+            loginWindow.close();
+          }, 1000);
+        })
+        .catch((error) => {
+          console.error("Failed to get cookies:", error);
+        });
     }
   });
 });
