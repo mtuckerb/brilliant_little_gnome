@@ -79,26 +79,28 @@ jobs:
           fi
 
           # Scan for system/homebrew deps and pull them into our lib folder
-          # We do this for the ruby binary and all existing dylibs
-          find "$PORTABLE_DIR" -type f \( -name "*.dylib" -o -name "ruby" \) | while read -r f; do
-            otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep; do
+          # Now that gems are installed, scan THEM for dependencies too
+          echo "Scanning gems for additional dependencies..."
+          find vendor/bundle -type f \( -name "*.bundle" -o -name "*.so" \) | while read -r f; do
+            otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | sort -u | while read -r dep; do
               if [ -f "$dep" ]; then
-                base=$(basename "$dep")
-                if [ ! -f "$LIB_DIR/$base" ]; then
-                  echo "Bundling $dep..."
-                  cp "$dep" "$LIB_DIR/"
-                  chmod +w "$LIB_DIR/$base"
-                  codesign --remove-signature "$LIB_DIR/$base" 2>/dev/null || true
-                fi
+              base=$(basename "$dep")
+              if [ ! -f "$LIB_DIR/$base" ]; then
+                echo "Found gem dependency: $dep -> bundling"
+                cp "$dep" "$LIB_DIR/"
+                chmod +w "$LIB_DIR/$base"
+                codesign --remove-signature "$LIB_DIR/$base" 2>/dev/null || true
               fi
-            done
-          done
+              fi
+            done || true
+          done || true
 
-          # 3. Patch IDs and links in our lib folder
-          echo "Fixing internal dylib links..."
-          find "$LIB_DIR" -name "*.dylib" -type f | while read -r dylib; do
-            chmod +w "$dylib"
-            codesign --remove-signature "$dylib" || true
+          # 5. Global Portability Repair (Final Pass)
+          echo "Performing global portability repair..."
+          find "$PORTABLE_DIR" vendor/bundle -type f | while read -r f; do
+            # Quick check if it's a Mach-O file
+            if (file "$f" 2>/dev/null || true) | grep -q "Mach-O"; then
+              chmod +w "$f" 2>/dev/null || true
             install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" || true
             
             # Cross-fix links to other bundled dylibs
@@ -107,7 +109,7 @@ jobs:
               if [ -f "$LIB_DIR/$base" ]; then
                 install_name_tool -change "$dep_link" "@rpath/$base" "$dylib" || true
               fi
-            done
+            done || true
           done
 
           # 4. Install Gems
@@ -147,9 +149,9 @@ jobs:
                 if [ -f "$LIB_DIR/$base" ]; then
                    install_name_tool -change "$dep" "@rpath/$base" "$f" 2>/dev/null || true
                 fi
-              done
+              done || true
             fi
-          done
+          done || true
 
           # 6. Verification Test
           echo "Running smoke test..."
