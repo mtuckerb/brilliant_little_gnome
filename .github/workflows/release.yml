@@ -93,6 +93,15 @@ jobs:
           PORTABLE_RUBY_BIN="$(pwd)/bin/ruby_dist/macos-arm64/bin/ruby"
           PORTABLE_RUBY_DIR="$(pwd)/bin/ruby_dist/macos-arm64"
           LIB_DEST="$PORTABLE_RUBY_DIR/lib"
+
+          # CRITICAL: Fix the ruby binary immediately so it can run on the runner
+          # It usually looks for libruby in a hardcoded path from the build machine
+          echo "Fixing portable Ruby interpreter links for the build runner..."
+          CURRENT_LIBRUBY=$(otool -L "$PORTABLE_RUBY_BIN" | grep libruby | awk '{print $1}' | head -n 1)
+          if [ ! -z "$CURRENT_LIBRUBY" ]; then
+             install_name_tool -change "$CURRENT_LIBRUBY" "@executable_path/../lib/libruby.3.4.dylib" "$PORTABLE_RUBY_BIN"
+          fi
+          install_name_tool -add_rpath "@executable_path/../lib" "$PORTABLE_RUBY_BIN" || true
           
           # 2. Use the portable ruby to install gems
           # This ensures native extensions are built against the correct Ruby headers/ABI
