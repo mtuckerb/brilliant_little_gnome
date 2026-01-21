@@ -173,13 +173,6 @@ jobs:
               done
 
               curr_ruby=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1) || true
-              otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}' | while read -r dep_link; do
-                base=$(basename "$dep_link")
-                if [ -f "$LIB_DIR/$base" ]; then
-                  install_name_tool -change "$dep_link" "@rpath/$base" "$f" 2>/dev/null || true
-                fi
-              done
-              curr_ruby=$(otool -L "$f" 2>/dev/null | grep libruby | awk '{print $1}' | head -n 1) || true
               if [ -n "$curr_ruby" ]; then
                  install_name_tool -change "$curr_ruby" "@rpath/$(basename "$curr_ruby")" "$f" 2>/dev/null || true
               fi
@@ -187,12 +180,19 @@ jobs:
           done
 
           # 7. Verification Test
-          # 7. Verification Test
           echo "Running smoke test..."
           unset DYLD_LIBRARY_PATH
           export GEM_PATH="$(pwd)/vendor/bundle/ruby/3.4.0:$PORTABLE_DIR/lib/ruby/gems/3.4.0"
+          echo "GEM_PATH: $GEM_PATH"
+          # Find and debug sqlite3 native bundle
+          SQLITE_BUNDLE=$(find vendor/bundle -name "sqlite3_native.bundle" | head -n 1)
+          if [ -n "$SQLITE_BUNDLE" ]; then
+            echo "Linkage for $SQLITE_BUNDLE:"
+            otool -L "$SQLITE_BUNDLE"
+          fi
+
           "$RUBY_BIN" -v || (echo "Ruby binary failed to run!"; exit 1)
-          "$RUBY_BIN" -e "require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'" || (echo "Smoke test failed!"; exit 1)
+          "$RUBY_BIN" -e "begin; require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'; rescue LoadError => e; puts e.message; puts e.backtrace; exit 1; end" || (echo "Smoke test failed!"; exit 1)
 
           # 8. Production Signing
           IDENTITY="${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
