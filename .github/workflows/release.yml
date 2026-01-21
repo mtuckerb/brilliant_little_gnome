@@ -131,18 +131,24 @@ jobs:
           # 3. Provision external dependencies (libgmp, libyaml) 
           echo "Bundling missing dependencies..."
           # Use 'brew --prefix' to find libs, then copy to our lib folder
-          GMP_PATH=$(brew --prefix gmp 2>/dev/null)/lib/libgmp.10.dylib || true
+          GMP_PREFIX=$(brew --prefix gmp 2>/dev/null || echo "/opt/homebrew/opt/gmp")
+          GMP_PATH="$GMP_PREFIX/lib/libgmp.10.dylib"
           if [ -f "$GMP_PATH" ]; then
             cp "$GMP_PATH" "$LIB_DEST/"
             chmod 644 "$LIB_DEST/libgmp.10.dylib"
             install_name_tool -id "@rpath/libgmp.10.dylib" "$LIB_DEST/libgmp.10.dylib" || true
+          else
+            echo "Warning: libgmp not found at $GMP_PATH"
           fi
           
-          YAML_PATH=$(brew --prefix libyaml 2>/dev/null)/lib/libyaml-0.2.dylib || true
+          YAML_PREFIX=$(brew --prefix libyaml 2>/dev/null || echo "/opt/homebrew/opt/libyaml")
+          YAML_PATH="$YAML_PREFIX/lib/libyaml-0.2.dylib"
           if [ -f "$YAML_PATH" ]; then
             cp "$YAML_PATH" "$LIB_DEST/"
             chmod 644 "$LIB_DEST/libyaml-0.2.dylib"
             install_name_tool -id "@rpath/libyaml-0.2.dylib" "$LIB_DEST/libyaml-0.2.dylib" || true
+          else
+            echo "Warning: libyaml not found at $YAML_PATH"
           fi
           
           # 4. Preparation for execution and Gem installation
@@ -166,7 +172,7 @@ jobs:
           # 5. Deep Repair for Perfect Portability
           echo "Repairing load paths for all native extensions and binaries..."
           
-          repair_binary() {
+          function repair_binary() {
             local f="$1"
             local lib_folder="$2"
             echo "Processing: $f"
@@ -176,10 +182,9 @@ jobs:
             
             # 1. Add rpaths covering various depths to find /lib relatively
             # Resources/vendor/bundle/... -> Resources/bin/ruby_dist/.../lib
-            # Targeted depths corresponding to gem extension paths
             for depth in 3 4 5 6 7 8 9 10; do
               prefix=""
-              for ((i=0; i<depth; i++)); do prefix+="../"; done
+              for ((i=0; i<$depth; i++)); do prefix+="../"; done
               install_name_tool -add_rpath "@loader_path/${prefix}bin/ruby_dist/macos-arm64/lib" "$f" 2>/dev/null || true
             done
             # Also standard lib relative depth
