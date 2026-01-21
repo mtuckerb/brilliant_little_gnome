@@ -111,6 +111,9 @@ jobs:
           export PATH="$PORTABLE_RUBY_DIR/bin:$PATH"
           export DYLD_LIBRARY_PATH="$LIB_DEST:$DYLD_LIBRARY_PATH"
           
+          # CRITICAL: Verify ruby can run BEFORE gem install
+          "$PORTABLE_RUBY_BIN" -v || (echo "Binary failed even after patching links"; exit 1)
+
           echo "Installing bundler..."
           "$PORTABLE_RUBY_BIN" -S gem install bundler --no-document
           
