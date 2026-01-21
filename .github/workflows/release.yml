@@ -60,7 +60,6 @@ jobs:
           # 1. Unpack Portable Ruby
           mkdir -p bin/ruby_dist/macos-arm64
           URL="https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz"
-          echo "Fetching Ruby from $URL..."
           curl -L "$URL" | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1
           
           PORTABLE_DIR="$(pwd)/bin/ruby_dist/macos-arm64"
@@ -94,7 +93,7 @@ jobs:
           # Cleanup homebrew dylibs in our lib folder
           find "$LIB_DIR" -name "*.dylib" -type f | while read -r d; do
             chmod +w "$d"
-            codesign --remove-signature "$d" || true
+            codesign --remove-signature "$d" 2>/dev/null || true
             install_name_tool -id "@rpath/$(basename "$d")" "$d" || true
           done
 
@@ -111,15 +110,15 @@ jobs:
 
           # 4. Deep Portability Repair
           echo "Repairing all Mach-O files..."
-          # Fix everything in dist and bundle
-          find "$PORTABLE_DIR" vendor/bundle -type f | while read -r f; do
-            # Use 'file' to check if it's Mach-O but be very safe
+          # Fix everything in dist and bundle. Use -print0 for safety.
+          find "$PORTABLE_DIR" vendor/bundle -type f -print0 | while IFS= read -r -d '' f; do
+            # Use 'file' and check for Mach-O
             if file "$f" 2>/dev/null | grep -q "Mach-O"; then
               chmod +w "$f" 2>/dev/null || true
               codesign --remove-signature "$f" 2>/dev/null || true
               
               # Add RPaths for various depths
-              # We do this directly to avoid complex bash loops
+              # We do these as list to avoid any shell complexity
               install_name_tool -add_rpath "@loader_path/../lib" "$f" 2>/dev/null || true
               install_name_tool -add_rpath "@loader_path/../../lib" "$f" 2>/dev/null || true
               install_name_tool -add_rpath "@loader_path/../../../lib" "$f" 2>/dev/null || true
@@ -130,6 +129,7 @@ jobs:
               install_name_tool -add_rpath "@loader_path/../../../../../../../../lib" "$f" 2>/dev/null || true
               
               # Relink all hardcoded dependencies and libruby
+              # Filter for dependencies that we bundled
               otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local|libruby" | awk '{print $1}' | while read -r dep; do
                 base=$(basename "$dep")
                 if [ -f "$LIB_DIR/$base" ] && [[ "$dep" != "@rpath"* ]]; then
@@ -145,13 +145,6 @@ jobs:
           export GEM_HOME="$(pwd)/vendor/bundle/ruby/3.4.0"
           export GEM_PATH="$GEM_HOME:$PORTABLE_DIR/lib/ruby/gems/3.4.0"
           
-          # Debug linkage of sqlite3 if possible
-          S_B=$(find vendor/bundle -name "sqlite3_native.bundle" | head -n 1) || true
-          if [ -n "$S_B" ]; then
-             echo "Sqlite3 linkage:"
-             otool -L "$S_B"
-          fi
-
           "$RUBY_BIN" -v
           "$RUBY_BIN" -e "require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'"
 
@@ -160,9 +153,13 @@ jobs:
           ENTITLEMENTS="build/entitlements.mac.plist"
           if [ -n "$IDENTITY" ]; then
              echo "Performing production signing..."
-             find vendor/bundle bin/ruby_dist/macos-arm64 -type f \( -name "*.dylib" -o -name "*.bundle" -o -name "*.so" \) | while read -r item; do
-               codesign --force --options runtime --timestamp -s "$IDENTITY" "$item" || true
+             # Sign all native objects first
+             find bin/ruby_dist/macos-arm64 vendor/bundle -type f -print0 | while IFS= read -r -d '' item; do
+               if file "$item" 2>/dev/null | grep -q "Mach-O"; then
+                 codesign --force --options runtime --timestamp -s "$IDENTITY" "$item" || true
+               fi
              done
+             # Sign interpreter last with entitlements
              codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$RUBY_BIN" || true
           fi
 
