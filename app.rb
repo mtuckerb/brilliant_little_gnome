@@ -1172,6 +1172,7 @@ end
 # Grades
 get '/course/:id/grades' do
   @active_tab = 'grades'
+  @course ||= Course.find_by(org_unit_id: params[:id].to_s)
   @breadcrumb_trail = [{ title: 'Grades', url: "/course/#{@course_id}/grades" }]
   
   # Trigger refresh and sync

@@ -17,7 +17,7 @@
               <label class="is-size-7 mr-2">Course Units (Credits):</label>
               <div class="field has-addons">
                 <div class="control">
-                  <input class="input is-small" type="number" name="units" value="<%= @course.units || 3 %>" style="width: 50px;">
+                  <input class="input is-small" type="number" name="units" value="<%= @course&.units || 3 %>" style="width: 50px;">
                 </div>
                 <div class="control">
                   <button type="submit" class="button is-small is-primary">Save</button>
@@ -28,7 +28,7 @@
               <label class="is-size-7 mr-2">Target Grade (%):</label>
               <div class="field has-addons">
                 <div class="control">
-                  <input class="input is-small" type="number" step="0.1" name="target_grade" value="<%= @course.target_grade || 93.0 %>" style="width: 60px;">
+                  <input class="input is-small" type="number" step="0.1" name="target_grade" value="<%= @course&.target_grade || 93.0 %>" style="width: 60px;">
                 </div>
                 <div class="control">
                   <button type="submit" class="button is-small is-info is-light">Set Goal</button>
