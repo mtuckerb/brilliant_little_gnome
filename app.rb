@@ -704,17 +704,20 @@ end
 get '/course/:id/assignments' do
   @active_tab = 'assignments'
   @breadcrumb_trail = [{ title: 'Assignments', url: "/course/#{@course_id}" }]
-  @assignments = Assignment.where(course_id: @course_id).order(due_date: :asc)
   
-  # Fallback if empty
-  if @assignments.empty?
-    # Immediate fallback to API to avoid blank screen
-    raw = $client.get_assignments(@course_id)
-    @assignments = $client.ensure_array(raw) if raw
-    
-    # Trigger background sync to populate DB for next time
-    Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_assignments(@course_id, raw) } } if raw
+  # Load real assignments (not synthetic) to check if we need to sync
+  real_assignments = Assignment.where(course_id: @course_id, synthetic: false)
+  
+  if real_assignments.empty?
+     # Immediate fallback to API to avoid blank screen
+     raw = $client.get_assignments(@course_id)
+     sync_data = $client.ensure_array(raw)
+     # If we got raw data, trigger the background sync
+     Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_assignments(@course_id, raw) } } if raw
   end
+
+  # Load ALL assignments (real + synthetic) for the view
+  @assignments = Assignment.where(course_id: @course_id).order(due_date: :asc)
 
   erb :assignments
 end
@@ -1684,7 +1687,8 @@ post '/api/v1/synthetic_tasks' do
     name: payload['name'],
     due_date: due_date,
     description: payload['description'],
-    assignment_type: 'synthetic'
+    assignment_type: 'synthetic',
+    synthetic: true
   )
   
   if task.persisted?
@@ -1697,6 +1701,36 @@ end
 patch '/api/v1/synthetic_tasks/:id' do
   task = Assignment.find_by(brightspace_id: params[:id], assignment_type: 'synthetic')
   halt 404, { error: "Task not found" }.to_json unless task
+
+# Dedicated route for internal synthetic task creation (blocks highlighting)
+post '/course/:id/synthetic_tasks' do
+  content_type :json
+  payload = JSON.parse(request.body.read) rescue {}
+  
+  due_date = nil
+  if payload['due_date'].present?
+    due_date = Time.parse(payload['due_date'].to_s) rescue nil
+  end
+  due_date ||= (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+
+  task = Assignment.create(
+    course_id: params[:id],
+    brightspace_id: "syn_man_#{SecureRandom.hex(4)}",
+    name: payload['name'],
+    due_date: due_date,
+    description: payload['description'],
+    assignment_type: 'synthetic',
+    synthetic: true
+  )
+  
+  if task.persisted?
+    task.to_json
+  else
+    status 422
+    { errors: task.errors.full_messages }.to_json
+  end
+end
+
   
   payload = JSON.parse(request.body.read) rescue {}
   if task.update(payload.slice('name', 'due_date', 'description', 'completed'))

@@ -866,7 +866,7 @@ class BrilliantClient
       end
 
       assignment.is_graded = a['IsGraded'] || false
-      assignment.external_url = a.dig('CustomInstructions', 'Html')&.match(/href="([^"]+)"/)&.at(1) if assignment.external_url.nil?
+      assignment.external_url = a.dig('CustomInstructions', 'Html')&.match(/href="([^"]+)"/)&.[](1) if assignment.external_url.nil?
       
       assignment.grade_item_id = a['GradeItemId'].to_s if a['GradeItemId']
       assignment.save!

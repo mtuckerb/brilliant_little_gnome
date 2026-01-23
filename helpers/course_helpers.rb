@@ -25,6 +25,14 @@ module CourseHelpers
     false
   end
 
+  def fix_links(html)
+    return html if html.nil? || html.empty?
+    
+    # Prepend host to relative links starting with /
+    host = $client.host
+    html.gsub(/href="(\/[^"]*)"/i, "href=\"https://#{host}\\1\"")
+  end
+
 
   def find_module(modules, id)
     return nil unless modules
@@ -507,6 +515,7 @@ module CourseHelpers
           
           # Extract first URL found in the line if any
           extracted_url = line.match(/https?:\/\/[^\s<"']+/)&.to_s
+          extracted_url ||= line.match(/\(((\/[^\s<"')]+))\)/)&.captures&.first
 
           tasks << { 
             name: content.strip, 

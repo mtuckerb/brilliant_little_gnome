@@ -63,7 +63,7 @@
                  desc = t_desc
                  desc_html = desc.is_a?(Hash) ? (desc['Html'] || desc['Text']) : desc
               %>
-              <%= desc_html && !desc_html.strip.empty? ? desc_html : "<p class='has-text-grey italic'>No description provided.</p>" %>
+              <%= desc_html && !desc_html.strip.empty? ? fix_links(desc_html) : "<p class='has-text-grey italic'>No description provided.</p>" %>
            </div>
         </div>
 
@@ -107,7 +107,7 @@
             <div id="feedback-content" class="<%= 'is-hidden' if @feedback_collapsed %>">
               <% if @evaluation['Feedback'] %>
                 <div class="content mt-2">
-                  <%= @evaluation['Feedback']['Html'] || @evaluation['Feedback']['Text'] %>
+                  <%= fix_links(@evaluation['Feedback']['Html'] || @evaluation['Feedback']['Text']) %>
                 </div>
               <% end %>
               <% if @evaluation['Score'] %>
@@ -130,7 +130,7 @@
 
             <div id="feedback-content" class="<%= 'is-hidden' if @feedback_collapsed %>">
               <div class="content mt-2">
-                <%= @topic['Feedback']['Html'] || @topic['Feedback']['Text'] %>
+                <%= fix_links(@topic['Feedback']['Html'] || @topic['Feedback']['Text']) %>
               </div>
             </div>
           </div>

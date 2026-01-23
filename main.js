@@ -187,8 +187,14 @@ function startRubyApp() {
     rubyExec = 'ruby.exe';
   }
 
-  const rubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
-  const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
+  const portableRubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
+  let rubyBinary = path.join(portableRubyBase, 'bin', rubyExec);
+
+  // Fallback to system Ruby if portable distribution is missing
+  if (!fs.existsSync(rubyBinary)) {
+    console.log(`[Electron] Portable Ruby not found at ${rubyBinary}. Falling back to system Ruby.`);
+    rubyBinary = rubyExec; 
+  }
 
   // Detect Ruby version directory in vendor/bundle/ruby/
   let rubyVersionDir = '3.4.0'; // Default fallback
@@ -202,7 +208,6 @@ function startRubyApp() {
   }
 
   const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', rubyVersionDir);
-  const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', rubyVersionDir);
   
   const cacheDir = path.join(userDataPath, 'bootsnap');
   const dbDir = path.join(userDataPath, 'db');
@@ -221,7 +226,7 @@ function startRubyApp() {
   }
 
   try { 
-    if (process.platform !== 'win32') fs.chmodSync(rubyBinary, 0o755); 
+    if (process.platform !== 'win32' && fs.existsSync(rubyBinary)) fs.chmodSync(rubyBinary, 0o755); 
   } catch(e) {}
   const pathSeparator = process.platform === 'win32' ? ';' : ':';
 
@@ -239,7 +244,7 @@ function startRubyApp() {
     BRILLIANT_ENV: 'electron',
     BOOTSNAP_CACHE_DIR: cacheDir,
     DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
-    PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`
+    PATH: fs.existsSync(portableRubyBase) ? `${path.join(portableRubyBase, 'bin')}${pathSeparator}${process.env.PATH}` : process.env.PATH
   };
 
   console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);

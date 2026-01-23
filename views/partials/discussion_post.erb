@@ -17,7 +17,7 @@
       <div class="post-date"><%= format_date(post["DatePosted"]) %></div>
     </div>
     <div class="post-body content">
-       <%= post['Message'] ? (post['Message']['Html'] || post['Message']['Text']) : "" %>
+       <%= post['Message'] ? fix_links(post['Message']['Html'] || post['Message']['Text']) : "" %>
     </div>
   </div>
   <% if post['Replies'] && post['Replies'].any? %>

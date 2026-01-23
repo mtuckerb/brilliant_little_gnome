@@ -49,7 +49,7 @@
               </summary>
               <div class="content p-4 has-background-white border-light">
                 <div class="description-body">
-                  <%= desc_text %>
+                  <%= fix_links(desc_text) %>
                 </div>
               </div>
             </details>
@@ -268,11 +268,10 @@
 
           const course_id = "<%= @course_id %>";
           
-          fetch('/api/v1/synthetic_tasks', {
+          fetch('/course/' + course_id + '/synthetic_tasks', {
             method: 'POST',
             headers: {
-              'Content-Type': 'application/json',
-              'X-API-KEY': '<%= @user_prefs.api_key %>'
+              'Content-Type': 'application/json'
             },
             body: JSON.stringify({
               course_id: course_id,

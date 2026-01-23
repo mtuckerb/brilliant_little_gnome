@@ -8,10 +8,17 @@ const platformDir = 'macos-arm64';
 const rubyExec = 'ruby';
 
 const rubyBase = path.join(baseDir, 'bin', 'ruby_dist', platformDir);
-const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
-const bundleBinary = path.join(rubyBase, 'bin', 'bundle');
+let rubyBinary = path.join(rubyBase, 'bin', rubyExec);
+let bundleBinary = path.join(rubyBase, 'bin', 'bundle');
 
-// Detect Ruby version directory
+// Fallback to system Ruby if portable is missing
+if (!fs.existsSync(rubyBinary)) {
+  console.log(`Warning: Portable Ruby not found at ${rubyBinary}. Falling back to system Ruby.`);
+  rubyBinary = 'ruby';
+  bundleBinary = 'bundle';
+}
+
+// Detect Ruby version directory in vendor/bundle/ruby/
 let rubyVersionDir = '3.4.0';
 const vendorRubyRoot = path.join(baseDir, 'vendor/bundle/ruby');
 if (fs.existsSync(vendorRubyRoot)) {
@@ -52,7 +59,11 @@ console.log("Starting Ruby Debug Session...");
 console.log(`Working Dir: ${baseDir}`);
 console.log(`Database: ${env.DATABASE_URL}`);
 
-const rubyApp = spawn(rubyBinary, [bundleBinary, 'exec', 'ruby', 'app.rb'], {
+const spawnArgs = (rubyBinary === 'ruby') 
+  ? ['exec', 'ruby', 'app.rb'] 
+  : [bundleBinary, 'exec', 'ruby', 'app.rb'];
+
+const rubyApp = spawn(rubyBinary, (rubyBinary === 'ruby' ? ['-S', 'bundle'] : [bundleBinary]).concat(['exec', 'ruby', 'app.rb']), {
   cwd: baseDir,
   env: env
 });

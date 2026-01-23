@@ -69,7 +69,7 @@
                 <% if post['Title'] && post['Title'] != @thread['Title'] && depth > 0 %>
                   <p class="is-size-7 has-text-grey-light mb-2">Re: <%= post['Title'] %></p>
                 <% end %>
-                <%= post['Message']['Html'] || post['Message']['Text'] %>
+                <%= fix_links(post['Message']['Html'] || post['Message']['Text']) %>
               </div>
             </div>
 

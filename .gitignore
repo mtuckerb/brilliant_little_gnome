@@ -1,3 +1,5 @@
+tmp/
+
 public/banners/
 logs/
 dist/

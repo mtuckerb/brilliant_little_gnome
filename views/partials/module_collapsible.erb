@@ -17,7 +17,7 @@
            desc = mod['Description']
            desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
         %>
-        <%= desc_text unless desc_text.empty? %>
+        <%= fix_links(desc_text) unless desc_text.empty? %>
       </div>
     <% end %>
 
@@ -36,7 +36,19 @@
                     <i class="fas fa-info-circle"></i>
                   <% end %>
                 </span>
-                <span class="has-text-weight-medium"><%= topic['Title'] %></span>
+                <span class="has-text-weight-medium">
+                  <% if topic['Url'] %>
+                    <% 
+                      full_url = topic['Url']
+                      if full_url.start_with?("/") 
+                        full_url = "https://#{$client.host}#{full_url}"
+                      end
+                    %>
+                    <a href="<%= full_url %>" target="_blank"><%= topic['Title'] %></a>
+                  <% else %>
+                    <%= topic['Title'] %>
+                  <% end %>
+                </span>
               </div>
               <% if topic['Url'] && topic['Url'].start_with?('/content/enforced/') %>
                 <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] %>/download" class="button is-small is-ghost px-1" target="_blank">

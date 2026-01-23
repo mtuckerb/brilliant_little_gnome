@@ -6,12 +6,14 @@
 BASE_DIR=$(cd "$(dirname "$0")" && pwd)
 PLATFORM_DIR="macos-arm64"
 PORTABLE_ROOT="$BASE_DIR/bin/ruby_dist/$PLATFORM_DIR"
-PORTABLE_RUBY="$PORTABLE_ROOT/bin/ruby"
-BUNDLE_BIN="$PORTABLE_ROOT/bin/bundle"
+RUBY_CMD="$PORTABLE_ROOT/bin/ruby"
+BUNDLE_CMD="$PORTABLE_ROOT/bin/bundle"
 
-if [ ! -f "$PORTABLE_RUBY" ]; then
-    echo "Error: Portable Ruby not found at $PORTABLE_RUBY"
-    exit 1
+# Fallback to system Ruby if portable is missing
+if [ ! -f "$RUBY_CMD" ]; then
+    echo "Warning: Portable Ruby not found at $RUBY_CMD. Falling back to system Ruby."
+    RUBY_CMD="ruby"
+    BUNDLE_CMD="bundle"
 fi
 
 # 1. Clear out system Ruby variables to prevent leaks
@@ -52,20 +54,31 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
+# Helper to run bundle
+bundle_exec() {
+    if [ "$RUBY_CMD" = "ruby" ]; then
+        # System fallback
+        exec bundle "$@"
+    else
+        # Portable mode
+        exec "$RUBY_CMD" "$BUNDLE_CMD" "$@"
+    fi
+}
+
 COMMAND=$1
 shift
 
 case "$COMMAND" in
     rake)
-        exec "$PORTABLE_RUBY" "$BUNDLE_BIN" exec rake "$@"
+        bundle_exec exec rake "$@"
         ;;
     bundle)
-        exec "$PORTABLE_RUBY" "$BUNDLE_BIN" "$@"
+        bundle_exec "$@"
         ;;
     ruby)
-        exec "$PORTABLE_RUBY" "$@"
+        exec "$RUBY_CMD" "$@"
         ;;
     *)
-        exec "$PORTABLE_RUBY" "$BUNDLE_BIN" exec "$COMMAND" "$@"
+        bundle_exec exec "$COMMAND" "$@"
         ;;
 esac
