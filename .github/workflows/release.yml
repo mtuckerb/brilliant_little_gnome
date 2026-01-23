@@ -79,19 +79,18 @@ jobs:
           if [ -n "$L_SRC" ] && [ "$L_SRC" != "$LIB_DIR/libruby.3.4.dylib" ]; then
              echo "Copying $L_SRC to $LIB_DIR"
              cp "$L_SRC" "$LIB_DIR/"
-          fi
-          
-          if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
-             FILE_PATH="$LIB_DIR/libruby.3.4.dylib"
+         fi
+         
+         if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
+             L_FILE="$LIB_DIR/libruby.3.4.dylib"
              # Remove signature before modifying headers
-             if file "$FILE_PATH" | grep -q "Mach-O"; then
-                codesign --remove-signature "$FILE_PATH" || true
+             if file "$L_FILE" | grep -q "Mach-O"; then
+                codesign --remove-signature "$L_FILE" || true
                 # Ad-hoc sign to fix layout issues (prevents 'file not in an order that can be processed' error)
-                codesign -s - "$FILE_PATH" || true
+                codesign -f -s - "$L_FILE" || true
              fi
-
-             chmod +w "$FILE_PATH" || true
-             install_name_tool -id "@rpath/libruby.3.4.dylib" "$FILE_PATH" || true
+             chmod +w "$L_FILE" || true
+             install_name_tool -id "@rpath/$(basename "$L_FILE")" "$L_FILE" || true
           fi
 
           # Bundle Homebrew dependencies
@@ -113,27 +112,22 @@ jobs:
             chmod +w "$d"
             if file "$d" | grep -q "Mach-O"; then
                codesign --remove-signature "$d" || true
-               codesign -s - "$d" || true
+               codesign -f -s - "$d" || true
             fi
             install_name_tool -id "@rpath/$(basename "$d")" "$d" || true
           done
 
           # 3. Build Gems
           echo "Installing Gems..."
-
-          # Fix shebangs more robustly (handle symlinks and point to env ruby)
-          # We loop through entries to ensure we hit everything that is a ruby script
-          for b in "$PORTABLE_DIR/bin"/*; do
-            if [ -f "$b" ] && head -n 1 "$b" | grep -q "ruby"; then
-               sed -i '' "1s|^#!.*|#!/usr/bin/env ruby|" "$b"
-            fi
-          done
-
-          export DYLD_LIBRARY_PATH="$LIB_DIR"
-          "$RUBY_BIN" -S gem install bundler -v 2.6.2 --no-document
-          "$RUBY_BIN" -S bundle config set --local path 'vendor/bundle'
-          "$RUBY_BIN" -S bundle config set --local deployment 'true'
-          "$RUBY_BIN" -S bundle install --jobs 4 --retry 3
+          export GEM_HOME="$(pwd)/vendor/bundle/ruby/3.4.0"
+          export GEM_PATH="$GEM_HOME"
+          unset RUBYOPT RUBYLIB
+          
+          # Call scripts via ruby interpreter directly to ignore shebangs
+          "$RUBY_BIN" "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document
+          "$RUBY_BIN" "$PORTABLE_DIR/bin/bundle" config set --local path 'vendor/bundle'
+          "$RUBY_BIN" "$PORTABLE_DIR/bin/bundle" config set --local deployment 'true'
+          "$RUBY_BIN" "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3
           xattr -cr vendor/bundle || true
 
           # 4. Deep Portability Repair
@@ -144,7 +138,7 @@ jobs:
             if file "$f" 2>/dev/null | grep -q "Mach-O"; then
               chmod +w "$f" 2>/dev/null || true
               codesign --remove-signature "$f" 2>/dev/null || true
-              codesign -s - "$f" || true
+              codesign -f -s - "$f" || true
               
               # Add RPaths for various depths
               # We do these as list to avoid any shell complexity
