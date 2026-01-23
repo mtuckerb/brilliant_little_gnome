@@ -79,12 +79,17 @@ jobs:
           if [ -n "$L_SRC" ] && [ "$L_SRC" != "$LIB_DIR/libruby.3.4.dylib" ]; then
              echo "Copying $L_SRC to $LIB_DIR"
              cp "$L_SRC" "$LIB_DIR/"
-          fi
-          
-          if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
+         fi
+         
+         if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
+             # Remove signature before modifying headers
+             if file "$LIB_DIR/libruby.3.4.dylib" | grep -q "Mach-O"; then
+                codesign --remove-signature "$LIB_DIR/libruby.3.4.dylib" || true
+             fi
+
              chmod +w "$LIB_DIR/libruby.3.4.dylib" || true
              install_name_tool -id "@rpath/libruby.3.4.dylib" "$LIB_DIR/libruby.3.4.dylib" || true
-          fi
+         fi
 
           # Bundle Homebrew dependencies
           for d in gmp libyaml openssl@3; do
@@ -97,19 +102,22 @@ jobs:
           # Cleanup homebrew dylibs in our lib folder
           find "$LIB_DIR" -name "*.dylib" -type f | while read -r d; do
             chmod +w "$d"
-            /usr/bin/codesign --remove-signature "$d" 2>/dev/null || true
+            if file "$d" | grep -q "Mach-O"; then
+               codesign --remove-signature "$d" || true
+            fi
             install_name_tool -id "@rpath/$(basename "$d")" "$d" || true
           done
 
           # 3. Build Gems
           echo "Installing Gems..."
-          export PATH="$PORTABLE_DIR/bin:$PATH"
+          # Fix shebangs in bin/ to be portable
+          find "$PORTABLE_DIR/bin" -maxdepth 1 -type f -exec sed -i '' "1s|^#!.*ruby|#!/usr/bin/env ruby|" {} +
+
           export DYLD_LIBRARY_PATH="$LIB_DIR"
-          
-          gem install bundler -v 2.6.2 --no-document
-          bundle config set --local path 'vendor/bundle'
-          bundle config set --local deployment 'true'
-          bundle install --jobs 4 --retry 3
+          "$RUBY_BIN" -S gem install bundler -v 2.6.2 --no-document
+          "$RUBY_BIN" -S bundle config set --local path 'vendor/bundle'
+          "$RUBY_BIN" -S bundle config set --local deployment 'true'
+          "$RUBY_BIN" -S bundle install --jobs 4 --retry 3
           xattr -cr vendor/bundle || true
 
           # 4. Deep Portability Repair
