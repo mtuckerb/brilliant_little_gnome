@@ -1,11 +1,11 @@
-<% if @notifications&.empty? %>
+<% if  !@notifications || @notifications.empty? %>
   <div class="box has-text-centered py-6">
     <span class="icon is-large has-text-grey-light mb-4">
       <i class="fas fa-bell-slash fa-2x"></i>
     </span>
     <p class="has-text-grey">No notifications found with these filters.</p>
   </div>
-  <% elsif @notifications.count > 0 %>
+  <% elsif @notifications && @notifications.count > 0 %>
   <div class="notification-list">
     <% @notifications.each do |n| %>
       <div class="box mb-3 notification-card p-4 <%= 'is-read' if n.is_read %>" id="notification-<%= n.id %>" style="cursor: pointer; border-left: 5px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">

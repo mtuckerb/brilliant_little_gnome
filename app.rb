@@ -121,7 +121,7 @@ configure do
     if prefs.api_listen_all
       set :bind, '0.0.0.0'
     else
-      set :bind, '127.0.0.1'
+      set :bind, '0.0.0.0'
     end
   rescue => e
     puts "Warning: Could not load API preferences during boot: #{e.message}"
