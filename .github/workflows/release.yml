@@ -75,24 +75,36 @@ jobs:
           mkdir -p "$LIB_DIR"
           
           # Bundle libruby
-          L_SRC=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | head -n 1) || true
-          if [ -n "$L_SRC" ] && [ "$L_SRC" != "$LIB_DIR/libruby.3.4.dylib" ] && [ "$L_SRC" != "libruby.3.4.dylib" ]; then
+          L_SRC=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | grep -v "$LIB_DIR" | head -n 1) || true
+          if [ -n "$L_SRC" ]; then
             echo "Copying $L_SRC to $LIB_DIR"
             cp "$L_SRC" "$LIB_DIR/"
           fi
           
           if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
             L_FILE="$LIB_DIR/libruby.3.4.dylib"
+            chmod +w "$L_FILE" || true
             # Remove signature before modifying headers
             if file "$L_FILE" | grep -q "Mach-O"; then
               codesign --remove-signature "$L_FILE" || true
               # Ad-hoc sign to fix layout issues (prevents 'file not in an order that can be processed' error)
               codesign -f -s - "$L_FILE" || true
             fi
-            chmod +w "$L_FILE" || true
-            install_name_tool -id "@rpath/$(basename "$L_FILE")" "$L_FILE" || true
+            install_name_tool -id "@rpath/libruby.3.4.dylib" "$L_FILE" || true
           fi
-          
+
+          # Fix Ruby Interpreter Links
+          echo "Fixing Ruby interpreter links..."
+          chmod +w "$RUBY_BIN"
+          codesign --remove-signature "$RUBY_BIN" || true
+          # Relink libruby to rpath
+          OLD_LIBRUBY=$(otool -L "$RUBY_BIN" | grep "libruby" | awk '{print $1}' | head -n 1)
+          if [ -n "$OLD_LIBRUBY" ]; then
+            install_name_tool -change "$OLD_LIBRUBY" "@rpath/libruby.3.4.dylib" "$RUBY_BIN" || true
+          fi
+          install_name_tool -add_rpath "@executable_path/../lib" "$RUBY_BIN" || true
+          codesign -f -s - "$RUBY_BIN" || true
+
           # Bundle Homebrew dependencies
           for d in gmp libyaml openssl@3; do
             P=$(brew --prefix $d 2>/dev/null)/lib || continue
@@ -119,6 +131,7 @@ jobs:
 
           # 3. Build Gems
           echo "Installing Gems..."
+          export PATH="$PORTABLE_DIR/bin:$PATH"
           export GEM_HOME="$(pwd)/vendor/bundle/ruby/3.4.0"
           export GEM_PATH="$GEM_HOME"
           unset RUBYOPT RUBYLIB
