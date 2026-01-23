@@ -79,9 +79,9 @@ jobs:
           if [ -n "$L_SRC" ] && [ "$L_SRC" != "$LIB_DIR/libruby.3.4.dylib" ]; then
              echo "Copying $L_SRC to $LIB_DIR"
              cp "$L_SRC" "$LIB_DIR/"
-         fi
-         
-         if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
+          fi
+          
+          if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
              # Remove signature before modifying headers
              if file "$LIB_DIR/libruby.3.4.dylib" | grep -q "Mach-O"; then
                 codesign --remove-signature "$LIB_DIR/libruby.3.4.dylib" || true
@@ -89,7 +89,7 @@ jobs:
 
              chmod +w "$LIB_DIR/libruby.3.4.dylib" || true
              install_name_tool -id "@rpath/libruby.3.4.dylib" "$LIB_DIR/libruby.3.4.dylib" || true
-         fi
+          fi
 
           # Bundle Homebrew dependencies
           for d in gmp libyaml openssl@3; do
