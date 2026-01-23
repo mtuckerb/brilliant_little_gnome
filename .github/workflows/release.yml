@@ -76,34 +76,34 @@ jobs:
           
           # Bundle libruby
           L_SRC=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | head -n 1) || true
-          if [ -n "$L_SRC" ] && [ "$L_SRC" != "$LIB_DIR/libruby.3.4.dylib" ]; then
-             echo "Copying $L_SRC to $LIB_DIR"
-             cp "$L_SRC" "$LIB_DIR/"
-         fi
-         
-         if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
-             L_FILE="$LIB_DIR/libruby.3.4.dylib"
-             # Remove signature before modifying headers
-             if file "$L_FILE" | grep -q "Mach-O"; then
-                codesign --remove-signature "$L_FILE" || true
-                # Ad-hoc sign to fix layout issues (prevents 'file not in an order that can be processed' error)
-                codesign -f -s - "$L_FILE" || true
-             fi
-             chmod +w "$L_FILE" || true
-             install_name_tool -id "@rpath/$(basename "$L_FILE")" "$L_FILE" || true
+          if [ -n "$L_SRC" ] && [ "$L_SRC" != "$LIB_DIR/libruby.3.4.dylib" ] && [ "$L_SRC" != "libruby.3.4.dylib" ]; then
+            echo "Copying $L_SRC to $LIB_DIR"
+            cp "$L_SRC" "$LIB_DIR/"
           fi
-
+          
+          if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
+            L_FILE="$LIB_DIR/libruby.3.4.dylib"
+            # Remove signature before modifying headers
+            if file "$L_FILE" | grep -q "Mach-O"; then
+              codesign --remove-signature "$L_FILE" || true
+              # Ad-hoc sign to fix layout issues (prevents 'file not in an order that can be processed' error)
+              codesign -f -s - "$L_FILE" || true
+            fi
+            chmod +w "$L_FILE" || true
+            install_name_tool -id "@rpath/$(basename "$L_FILE")" "$L_FILE" || true
+          fi
+          
           # Bundle Homebrew dependencies
           for d in gmp libyaml openssl@3; do
             P=$(brew --prefix $d 2>/dev/null)/lib || continue
             if [ -d "$P" ]; then
-               # Only copy if source and destination are different
-               for src in "$P"/*.dylib; do
-                 target="$LIB_DIR/$(basename "$src")"
-                 if [ "$src" != "$target" ]; then
-                   cp "$src" "$target" 2>/dev/null || true
-                 fi
-               done
+              # Only copy if source and destination are different
+              for src in "$P"/*.dylib; do
+                target="$LIB_DIR/$(basename "$src")"
+                if [ "$src" != "$target" ]; then
+                  cp "$src" "$target" 2>/dev/null || true
+                fi
+              done
             fi
           done
           
@@ -111,8 +111,8 @@ jobs:
           find "$LIB_DIR" -name "*.dylib" -type f | while read -r d; do
             chmod +w "$d"
             if file "$d" | grep -q "Mach-O"; then
-               codesign --remove-signature "$d" || true
-               codesign -f -s - "$d" || true
+              codesign --remove-signature "$d" || true
+              codesign -s - "$d" || true
             fi
             install_name_tool -id "@rpath/$(basename "$d")" "$d" || true
           done
