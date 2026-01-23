@@ -90,11 +90,19 @@ begin
     ActiveRecord::Base.connection.execute("PRAGMA busy_timeout=5000;")
   rescue SQLite3::NotADatabaseException => e
     puts "[Brilliant] Critical Error: Database file is not a valid SQLite database (header corrupt)."
-    if ENV['DATABASE_URL']
-       # Try to re-establish by establishing and letting context recreate
-       puts "[Brilliant] Attempting to reset connection..."
+    
+    # Self-healing: if the file is truly not a database, it is useless.
+    # We will attempt to delete it and let initialization start over once.
+    db_file = db_config[:database]
+    if db_file && File.exist?(db_file) && !@retried_init
+      puts "[Brilliant] Attempting self-healing by removing corrupted database: #{db_file}"
+      ActiveRecord::Base.remove_connection
+      File.delete(db_file) rescue nil
+      Dir.glob("#{db_file}-*").each { |f| File.delete(f) rescue nil }
+      @retried_init = true
+      retry
     end
-    raise e # Bubble up to main rescue block for logging
+    raise e
   end
   
   # Run migrations if pending
