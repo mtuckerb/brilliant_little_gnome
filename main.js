@@ -190,14 +190,20 @@ function startRubyApp() {
   const portableRubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
   let rubyBinary = path.join(portableRubyBase, 'bin', rubyExec);
 
+  let usePortable = fs.existsSync(rubyBinary);
+
   // Fallback to system Ruby if portable distribution is missing
-  if (!fs.existsSync(rubyBinary)) {
-    console.log(`[Electron] Portable Ruby not found at ${rubyBinary}. Falling back to system Ruby.`);
-    rubyBinary = rubyExec; 
+  if (!usePortable) {
+    if (isPackaged) {
+      console.warn(`[Electron] Portable Ruby not found at ${rubyBinary}. Falling back to system Ruby (Risky!).`);
+    } else {
+      console.log(`[Electron] Portable Ruby not found. Using system Ruby.`);
+    }
+    rubyBinary = rubyExec;
   }
 
   // Detect Ruby version directory in vendor/bundle/ruby/
-  let rubyVersionDir = '3.4.0'; // Default fallback
+  let rubyVersionDir = usePortable ? '3.4.0' : '3.1.0'; // Best guess fallbacks
   const vendorRubyRoot = path.join(resourceDir, 'vendor', 'bundle', 'ruby');
   if (fs.existsSync(vendorRubyRoot)) {
     const versions = fs.readdirSync(vendorRubyRoot).filter(f => fs.statSync(path.join(vendorRubyRoot, f)).isDirectory());
@@ -244,8 +250,17 @@ function startRubyApp() {
     BRILLIANT_ENV: 'electron',
     BOOTSNAP_CACHE_DIR: cacheDir,
     DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
-    PATH: fs.existsSync(portableRubyBase) ? `${path.join(portableRubyBase, 'bin')}${pathSeparator}${process.env.PATH}` : process.env.PATH
+    PATH: usePortable ? `${path.join(portableRubyBase, 'bin')}${pathSeparator}${process.env.PATH}` : process.env.PATH
   };
+
+  // Add DYLD_LIBRARY_PATH if using portable Ruby on macOS to assist with library resolution
+  // (though SIP usually blocks this for system binaries, it works for our portable ones)
+  if (process.platform === 'darwin' && usePortable) {
+    const rubyLibDir = path.join(portableRubyBase, 'lib');
+    if (fs.existsSync(rubyLibDir)) {
+       env.DYLD_LIBRARY_PATH = `${rubyLibDir}${pathSeparator}${process.env.DYLD_LIBRARY_PATH || ''}`;
+    }
+  }
 
   console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
   

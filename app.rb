@@ -229,7 +229,7 @@ before do
   @user_prefs ||= UserPreference.current
 
   # Allow access to setup and public files without being "configured"
-  return if ['/setup', '/favicon.ico', '/logo.png', '/auth/login', '/docs', '/sync/status'].include?(request.path_info) || 
+  return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/docs', '/sync/status'].include?(request.path_info) || 
             request.path_info.start_with?('/public') || 
             request.path_info.start_with?('/api/') || 
             request.path_info.start_with?('/docs/')

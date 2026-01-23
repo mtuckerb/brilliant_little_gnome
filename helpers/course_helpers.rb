@@ -499,7 +499,11 @@ module CourseHelpers
     unless desc_text.strip.empty?
       # Preserve anchor tags by converting them to a format that keeps the URL
       processed_desc = desc_text.gsub(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"[^>]*>(.*?)<\/a>/i, '\2 (\1)')
-      text = processed_desc.gsub(/<br\s*\/?>/i, "\n").gsub(/<\/p>/i, "\n").gsub(/<\/li>/i, "\n").gsub(/<[^>]+>/, ' ')
+      text = processed_desc.gsub(/<br\s*\/?>/i, "\n")
+                           .gsub(/<\/p>/i, "\n")
+                           .gsub(/<li[^>]*>/i, "\n- ")
+                           .gsub(/<\/li>/i, "\n")
+                           .gsub(/<[^>]+>/, ' ')
       lines = text.split("\n").map(&:strip).reject(&:empty?)
       
       current_category = "Task"
