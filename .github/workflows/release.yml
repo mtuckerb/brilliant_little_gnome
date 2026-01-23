@@ -79,23 +79,32 @@ jobs:
           if [ -n "$L_SRC" ] && [ "$L_SRC" != "$LIB_DIR/libruby.3.4.dylib" ]; then
              echo "Copying $L_SRC to $LIB_DIR"
              cp "$L_SRC" "$LIB_DIR/"
-          fi
-          
-          if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
+         fi
+         
+         if [ -f "$LIB_DIR/libruby.3.4.dylib" ] || [ -L "$LIB_DIR/libruby.3.4.dylib" ]; then
+             FILE_PATH="$LIB_DIR/libruby.3.4.dylib"
              # Remove signature before modifying headers
-             if file "$LIB_DIR/libruby.3.4.dylib" | grep -q "Mach-O"; then
-                codesign --remove-signature "$LIB_DIR/libruby.3.4.dylib" || true
+             if file "$FILE_PATH" | grep -q "Mach-O"; then
+                codesign --remove-signature "$FILE_PATH" || true
+                # Ad-hoc sign to fix layout issues (prevents 'file not in an order that can be processed' error)
+                codesign -s - "$FILE_PATH" || true
              fi
 
-             chmod +w "$LIB_DIR/libruby.3.4.dylib" || true
-             install_name_tool -id "@rpath/libruby.3.4.dylib" "$LIB_DIR/libruby.3.4.dylib" || true
+             chmod +w "$FILE_PATH" || true
+             install_name_tool -id "@rpath/libruby.3.4.dylib" "$FILE_PATH" || true
           fi
 
           # Bundle Homebrew dependencies
           for d in gmp libyaml openssl@3; do
             P=$(brew --prefix $d 2>/dev/null)/lib || continue
             if [ -d "$P" ]; then
-               cp "$P"/*.dylib "$LIB_DIR/" 2>/dev/null || true
+               # Only copy if source and destination are different
+               for src in "$P"/*.dylib; do
+                 target="$LIB_DIR/$(basename "$src")"
+                 if [ "$src" != "$target" ]; then
+                   cp "$src" "$target" 2>/dev/null || true
+                 fi
+               done
             fi
           done
           
@@ -104,14 +113,21 @@ jobs:
             chmod +w "$d"
             if file "$d" | grep -q "Mach-O"; then
                codesign --remove-signature "$d" || true
+               codesign -s - "$d" || true
             fi
             install_name_tool -id "@rpath/$(basename "$d")" "$d" || true
           done
 
           # 3. Build Gems
           echo "Installing Gems..."
-          # Fix shebangs in bin/ to be portable
-          find "$PORTABLE_DIR/bin" -maxdepth 1 -type f -exec sed -i '' "1s|^#!.*ruby|#!/usr/bin/env ruby|" {} +
+
+          # Fix shebangs more robustly (handle symlinks and point to env ruby)
+          # We loop through entries to ensure we hit everything that is a ruby script
+          for b in "$PORTABLE_DIR/bin"/*; do
+            if [ -f "$b" ] && head -n 1 "$b" | grep -q "ruby"; then
+               sed -i '' "1s|^#!.*|#!/usr/bin/env ruby|" "$b"
+            fi
+          done
 
           export DYLD_LIBRARY_PATH="$LIB_DIR"
           "$RUBY_BIN" -S gem install bundler -v 2.6.2 --no-document
@@ -128,6 +144,7 @@ jobs:
             if file "$f" 2>/dev/null | grep -q "Mach-O"; then
               chmod +w "$f" 2>/dev/null || true
               codesign --remove-signature "$f" 2>/dev/null || true
+              codesign -s - "$f" || true
               
               # Add RPaths for various depths
               # We do these as list to avoid any shell complexity

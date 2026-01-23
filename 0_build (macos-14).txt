@@ -1,0 +1,337 @@
+﻿2026-01-23T01:57:14.4877220Z Current runner version: '2.331.0'
+2026-01-23T01:57:14.4891440Z ##[group]Runner Image Provisioner
+2026-01-23T01:57:14.4891980Z Hosted Compute Agent
+2026-01-23T01:57:14.4892370Z Version: 20260115.477
+2026-01-23T01:57:14.4892770Z Commit: 4b342d620503cbe250a3154040964899ea7c9b00
+2026-01-23T01:57:14.4893230Z Build Date: 2026-01-15T22:32:41Z
+2026-01-23T01:57:14.4893670Z Worker ID: {f1dadbce-2701-4c31-8f0c-70db7f5fc50b}
+2026-01-23T01:57:14.4894220Z Azure Region: westus
+2026-01-23T01:57:14.4894590Z ##[endgroup]
+2026-01-23T01:57:14.4895420Z ##[group]Operating System
+2026-01-23T01:57:14.4895810Z macOS
+2026-01-23T01:57:14.4896130Z 14.8.3
+2026-01-23T01:57:14.4896450Z 23J220
+2026-01-23T01:57:14.4896790Z ##[endgroup]
+2026-01-23T01:57:14.4897130Z ##[group]Runner Image
+2026-01-23T01:57:14.4897520Z Image: macos-14-arm64
+2026-01-23T01:57:14.4897920Z Version: 20260120.0091.1
+2026-01-23T01:57:14.4898800Z Included Software: https://github.com/actions/runner-images/blob/macos-14-arm64/20260120.0091/images/macos/macos-14-arm64-Readme.md
+2026-01-23T01:57:14.4899880Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-14-arm64%2F20260120.0091
+2026-01-23T01:57:14.4900540Z ##[endgroup]
+2026-01-23T01:57:14.4901260Z ##[group]GITHUB_TOKEN Permissions
+2026-01-23T01:57:14.4902440Z Contents: write
+2026-01-23T01:57:14.4902800Z Metadata: read
+2026-01-23T01:57:14.4903160Z ##[endgroup]
+2026-01-23T01:57:14.4904440Z Secret source: Actions
+2026-01-23T01:57:14.4904870Z Prepare workflow directory
+2026-01-23T01:57:14.5111390Z Prepare all required actions
+2026-01-23T01:57:14.5136290Z Getting action download info
+2026-01-23T01:57:14.8001100Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+2026-01-23T01:57:15.1165060Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-01-23T01:57:15.2410960Z Download action repository 'ruby/setup-ruby@v1' (SHA:90be1154f987f4dc0fe0dd0feedac9e473aa4ba8)
+2026-01-23T01:57:16.5476970Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-01-23T01:57:16.7672260Z Complete job name: build (macos-14)
+2026-01-23T01:57:16.8331880Z ##[group]Run actions/checkout@v4
+2026-01-23T01:57:16.8333780Z with:
+2026-01-23T01:57:16.8334880Z   repository: mtuckerb/brilliant_little_gnome
+2026-01-23T01:57:16.8336780Z   token: ***
+2026-01-23T01:57:16.8337800Z   ssh-strict: true
+2026-01-23T01:57:16.8338810Z   ssh-user: git
+2026-01-23T01:57:16.8339800Z   persist-credentials: true
+2026-01-23T01:57:16.8340930Z   clean: true
+2026-01-23T01:57:16.8341950Z   sparse-checkout-cone-mode: true
+2026-01-23T01:57:16.8343150Z   fetch-depth: 1
+2026-01-23T01:57:16.8344170Z   fetch-tags: false
+2026-01-23T01:57:16.8345200Z   show-progress: true
+2026-01-23T01:57:16.8346320Z   lfs: false
+2026-01-23T01:57:16.8347350Z   submodules: false
+2026-01-23T01:57:16.8348450Z   set-safe-directory: true
+2026-01-23T01:57:16.8349950Z ##[endgroup]
+2026-01-23T01:57:17.2217170Z Syncing repository: mtuckerb/brilliant_little_gnome
+2026-01-23T01:57:17.2219450Z ##[group]Getting Git version info
+2026-01-23T01:57:17.2220410Z Working directory is '/Users/runner/work/brilliant_little_gnome/brilliant_little_gnome'
+2026-01-23T01:57:17.2270570Z [command]/opt/homebrew/bin/git version
+2026-01-23T01:57:17.2921090Z git version 2.52.0
+2026-01-23T01:57:17.2954850Z ##[endgroup]
+2026-01-23T01:57:17.2968370Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/049b95d4-eb62-47a9-b73a-c38d2dc67d15/.gitconfig'
+2026-01-23T01:57:17.2980300Z Temporarily overriding HOME='/Users/runner/work/_temp/049b95d4-eb62-47a9-b73a-c38d2dc67d15' before making global git config changes
+2026-01-23T01:57:17.2984360Z Adding repository directory to the temporary git global config as a safe directory
+2026-01-23T01:57:17.2988810Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/brilliant_little_gnome/brilliant_little_gnome
+2026-01-23T01:57:17.3121870Z Deleting the contents of '/Users/runner/work/brilliant_little_gnome/brilliant_little_gnome'
+2026-01-23T01:57:17.3126840Z ##[group]Initializing the repository
+2026-01-23T01:57:17.3128620Z [command]/opt/homebrew/bin/git init /Users/runner/work/brilliant_little_gnome/brilliant_little_gnome
+2026-01-23T01:57:17.3496720Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-01-23T01:57:17.3501360Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-01-23T01:57:17.3509640Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-01-23T01:57:17.3514680Z hint: call:
+2026-01-23T01:57:17.3515700Z hint:
+2026-01-23T01:57:17.3516640Z hint: 	git config --global init.defaultBranch <name>
+2026-01-23T01:57:17.3517840Z hint:
+2026-01-23T01:57:17.3518920Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-01-23T01:57:17.3520680Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-01-23T01:57:17.3522080Z hint:
+2026-01-23T01:57:17.3524590Z hint: 	git branch -m <name>
+2026-01-23T01:57:17.3529680Z hint:
+2026-01-23T01:57:17.3530790Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-01-23T01:57:17.3532960Z Initialized empty Git repository in /Users/runner/work/brilliant_little_gnome/brilliant_little_gnome/.git/
+2026-01-23T01:57:17.3536380Z [command]/opt/homebrew/bin/git remote add origin https://github.com/mtuckerb/brilliant_little_gnome
+2026-01-23T01:57:17.3628570Z ##[endgroup]
+2026-01-23T01:57:17.3634750Z ##[group]Disabling automatic garbage collection
+2026-01-23T01:57:17.3637380Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+2026-01-23T01:57:17.3694470Z ##[endgroup]
+2026-01-23T01:57:17.3698050Z ##[group]Setting up auth
+2026-01-23T01:57:17.3700980Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-01-23T01:57:17.3755460Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-01-23T01:57:17.4751980Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-01-23T01:57:17.4810100Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-01-23T01:57:17.5629920Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-01-23T01:57:17.5683100Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-01-23T01:57:17.6232960Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-01-23T01:57:17.6278550Z ##[endgroup]
+2026-01-23T01:57:17.6279640Z ##[group]Fetching the repository
+2026-01-23T01:57:17.6286590Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +f390e48197bf5232fc2689d3d9f472d8e1c1d868:refs/remotes/origin/release
+2026-01-23T01:57:18.8353420Z From https://github.com/mtuckerb/brilliant_little_gnome
+2026-01-23T01:57:18.8362030Z  * [new ref]         f390e48197bf5232fc2689d3d9f472d8e1c1d868 -> origin/release
+2026-01-23T01:57:18.8490890Z ##[endgroup]
+2026-01-23T01:57:18.8492680Z ##[group]Determining the checkout info
+2026-01-23T01:57:18.8494200Z ##[endgroup]
+2026-01-23T01:57:18.8496550Z [command]/opt/homebrew/bin/git sparse-checkout disable
+2026-01-23T01:57:18.8618250Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+2026-01-23T01:57:18.8734230Z ##[group]Checking out the ref
+2026-01-23T01:57:18.8734990Z [command]/opt/homebrew/bin/git checkout --progress --force -B release refs/remotes/origin/release
+2026-01-23T01:57:19.0403340Z Switched to a new branch 'release'
+2026-01-23T01:57:19.0407820Z branch 'release' set up to track 'origin/release'.
+2026-01-23T01:57:19.0448010Z ##[endgroup]
+2026-01-23T01:57:19.0524790Z [command]/opt/homebrew/bin/git log -1 --format=%H
+2026-01-23T01:57:19.0563020Z f390e48197bf5232fc2689d3d9f472d8e1c1d868
+2026-01-23T01:57:19.0790580Z ##[group]Run KEYCHAIN="build_action.keychain"
+2026-01-23T01:57:19.0791060Z [36;1mKEYCHAIN="build_action.keychain"[0m
+2026-01-23T01:57:19.0791490Z [36;1mecho "$CERTIFICATE_P12" | tr -d '\n ' | base64 --decode > certificate.p12[0m
+2026-01-23T01:57:19.0791950Z [36;1msecurity create-keychain -p "$K_PASS" "$KEYCHAIN"[0m
+2026-01-23T01:57:19.0792350Z [36;1msecurity set-keychain-settings -lut 21600 "$KEYCHAIN"[0m
+2026-01-23T01:57:19.0792760Z [36;1msecurity unlock-keychain -p "$K_PASS" "$KEYCHAIN"[0m
+2026-01-23T01:57:19.0793300Z [36;1msecurity import certificate.p12 -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign[0m
+2026-01-23T01:57:19.0793970Z [36;1msecurity list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | xargs)[0m
+2026-01-23T01:57:19.0794610Z [36;1msecurity set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$K_PASS" "$KEYCHAIN"[0m
+2026-01-23T01:57:19.0795150Z [36;1mrm -f certificate.p12[0m
+2026-01-23T01:57:19.0881560Z shell: /bin/bash -e {0}
+2026-01-23T01:57:19.0881880Z env:
+2026-01-23T01:57:19.0901050Z   CERTIFICATE_P12: ***
+2026-01-23T01:57:19.0901370Z   P12_PASSWORD: ***
+2026-01-23T01:57:19.0901620Z   K_PASS: buildpassword123
+2026-01-23T01:57:19.0901910Z ##[endgroup]
+2026-01-23T01:57:19.3578280Z 1 identity imported.
+2026-01-23T01:57:19.4226720Z keychain: "/Users/runner/Library/Keychains/build_action.keychain-db"
+2026-01-23T01:57:19.4235160Z version: 512
+2026-01-23T01:57:19.4240110Z class: 0x00000010 
+2026-01-23T01:57:19.4241740Z attributes:
+2026-01-23T01:57:19.4244280Z     0x00000000 <uint32>=0x00000010 
+2026-01-23T01:57:19.4244740Z     0x00000001 <blob>="Mac Developer ID Application: Tucker Bradford"
+2026-01-23T01:57:19.4245440Z     0x00000002 <blob>=<NULL>
+2026-01-23T01:57:19.4245770Z     0x00000003 <uint32>=0x00000001 
+2026-01-23T01:57:19.4265440Z     0x00000004 <uint32>=0x00000000 
+2026-01-23T01:57:19.4279710Z     0x00000005 <uint32>=0x00000000 
+2026-01-23T01:57:19.4281430Z     0x00000006 <blob>=0x61B296C61CD0C9F105CB36851CC05C0762CFCB50  "a\262\226\306\034\320\311\361\005\3136\205\034\300\134\007b\317\313P"
+2026-01-23T01:57:19.4282320Z     0x00000007 <blob>=<NULL>
+2026-01-23T01:57:19.4283270Z     0x00000008 <blob>=0x7B38373139316361322D306663392D313164342D383439612D3030303530326235323132327D00  "{87191ca2-0fc9-11d4-849a-000502b52122}\000"
+2026-01-23T01:57:19.4285060Z     0x00000009 <uint32>=0x0000002A  "\000\000\000*"
+2026-01-23T01:57:19.4286700Z     0x0000000A <uint32>=0x00000800 
+2026-01-23T01:57:19.4287530Z     0x0000000B <uint32>=0x00000800 
+2026-01-23T01:57:19.4289520Z     0x0000000C <blob>=0x0000000000000000 
+2026-01-23T01:57:19.4289980Z     0x0000000D <blob>=0x0000000000000000 
+2026-01-23T01:57:19.4290730Z     0x0000000E <uint32>=0x00000001 
+2026-01-23T01:57:19.4291050Z     0x0000000F <uint32>=0x00000001 
+2026-01-23T01:57:19.4291470Z     0x00000010 <uint32>=0x00000001 
+2026-01-23T01:57:19.4293210Z     0x00000011 <uint32>=0x00000000 
+2026-01-23T01:57:19.4296860Z     0x00000012 <uint32>=0x00000001 
+2026-01-23T01:57:19.4300070Z     0x00000013 <uint32>=0x00000001 
+2026-01-23T01:57:19.4300660Z     0x00000014 <uint32>=0x00000001 
+2026-01-23T01:57:19.4302080Z     0x00000015 <uint32>=0x00000001 
+2026-01-23T01:57:19.4303560Z     0x00000016 <uint32>=0x00000001 
+2026-01-23T01:57:19.4304740Z     0x00000017 <uint32>=0x00000001 
+2026-01-23T01:57:19.4306010Z     0x00000018 <uint32>=0x00000001 
+2026-01-23T01:57:19.4307470Z     0x00000019 <uint32>=0x00000001 
+2026-01-23T01:57:19.4309480Z     0x0000001A <uint32>=0x00000001 
+2026-01-23T01:57:19.4385840Z ##[group]Run actions/setup-node@v4
+2026-01-23T01:57:19.4386170Z with:
+2026-01-23T01:57:19.4386340Z   node-version: 22
+2026-01-23T01:57:19.4386510Z   cache: npm
+2026-01-23T01:57:19.4386650Z   always-auth: false
+2026-01-23T01:57:19.4386840Z   check-latest: false
+2026-01-23T01:57:19.4387330Z   token: ***
+2026-01-23T01:57:19.4387490Z ##[endgroup]
+2026-01-23T01:57:19.6451860Z Found in cache @ /Users/runner/hostedtoolcache/node/22.22.0/arm64
+2026-01-23T01:57:19.6452580Z ##[group]Environment details
+2026-01-23T01:57:20.4846820Z node: v22.22.0
+2026-01-23T01:57:20.4859390Z npm: 10.9.4
+2026-01-23T01:57:20.4866500Z yarn: 1.22.22
+2026-01-23T01:57:20.4880100Z ##[endgroup]
+2026-01-23T01:57:20.4880610Z [command]/Users/runner/hostedtoolcache/node/22.22.0/arm64/bin/npm config get cache
+2026-01-23T01:57:20.7753130Z /Users/runner/.npm
+2026-01-23T01:57:20.9351850Z npm cache is not found
+2026-01-23T01:57:20.9466040Z ##[group]Run ruby/setup-ruby@v1
+2026-01-23T01:57:20.9466260Z with:
+2026-01-23T01:57:20.9466400Z   ruby-version: 3.4
+2026-01-23T01:57:20.9466990Z   bundler-cache: false
+2026-01-23T01:57:20.9467280Z   token: ***
+2026-01-23T01:57:20.9467440Z ##[endgroup]
+2026-01-23T01:57:21.1370310Z ##[group]Modifying PATH
+2026-01-23T01:57:21.1382160Z Entries removed from PATH to avoid conflicts with default Ruby:
+2026-01-23T01:57:21.1382990Z   /opt/homebrew/lib/ruby/gems/3.3.0/bin
+2026-01-23T01:57:21.1383340Z   /opt/homebrew/opt/ruby@3.3/bin
+2026-01-23T01:57:21.1383760Z Entries added to PATH to use selected Ruby:
+2026-01-23T01:57:21.1384500Z   /Users/runner/hostedtoolcache/Ruby/3.4.8/arm64/bin
+2026-01-23T01:57:21.1385060Z ##[endgroup]
+2026-01-23T01:57:21.1385480Z ##[group]Print Ruby version
+2026-01-23T01:57:21.1385990Z [command]/Users/runner/hostedtoolcache/Ruby/3.4.8/arm64/bin/ruby --version
+2026-01-23T01:57:21.1850270Z ruby 3.4.8 (2025-12-17 revision 995b59f666) +PRISM [arm64-darwin23]
+2026-01-23T01:57:21.1883060Z Took   0.06 seconds
+2026-01-23T01:57:21.1891470Z ##[endgroup]
+2026-01-23T01:57:21.1892890Z ##[group]Installing Bundler
+2026-01-23T01:57:21.1894600Z Using Bundler 2.6.9 from Gemfile.lock BUNDLED WITH 2.6.9
+2026-01-23T01:57:21.1897210Z [command]/Users/runner/hostedtoolcache/Ruby/3.4.8/arm64/bin/gem install bundler -v 2.6.9
+2026-01-23T01:57:21.9065390Z Successfully installed bundler-2.6.9
+2026-01-23T01:57:21.9147770Z 1 gem installed
+2026-01-23T01:57:21.9170250Z Took   0.72 seconds
+2026-01-23T01:57:21.9216970Z ##[endgroup]
+2026-01-23T01:57:21.9272810Z ##[group]Run set -e
+2026-01-23T01:57:21.9273090Z [36;1mset -e[0m
+2026-01-23T01:57:21.9273290Z [36;1mecho "Starting macOS Native Setup..."[0m
+2026-01-23T01:57:21.9273520Z [36;1m[0m
+2026-01-23T01:57:21.9273670Z [36;1m# 1. Unpack Portable Ruby[0m
+2026-01-23T01:57:21.9273900Z [36;1mmkdir -p bin/ruby_dist/macos-arm64[0m
+2026-01-23T01:57:21.9274350Z [36;1mURL="https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz"[0m
+2026-01-23T01:57:21.9274900Z [36;1mcurl -L "$URL" | tar -xz -C bin/ruby_dist/macos-arm64 --strip-components=1[0m
+2026-01-23T01:57:21.9275200Z [36;1m[0m
+2026-01-23T01:57:21.9275410Z [36;1mPORTABLE_DIR="$(pwd)/bin/ruby_dist/macos-arm64"[0m
+2026-01-23T01:57:21.9275680Z [36;1mRUBY_BIN="$PORTABLE_DIR/bin/ruby"[0m
+2026-01-23T01:57:21.9275910Z [36;1mLIB_DIR="$PORTABLE_DIR/lib"[0m
+2026-01-23T01:57:21.9276130Z [36;1m[0m
+2026-01-23T01:57:21.9276280Z [36;1mchmod -R +w "$PORTABLE_DIR"[0m
+2026-01-23T01:57:21.9276540Z [36;1mchmod +x "$RUBY_BIN"[0m
+2026-01-23T01:57:21.9276740Z [36;1mxattr -cr "$PORTABLE_DIR" || true[0m
+2026-01-23T01:57:21.9276950Z [36;1m[0m
+2026-01-23T01:57:21.9277120Z [36;1m# 2. Identify and Bundle Dependencies[0m
+2026-01-23T01:57:21.9277360Z [36;1mecho "Bundling dependencies..."[0m
+2026-01-23T01:57:21.9277590Z [36;1mmkdir -p "$LIB_DIR"[0m
+2026-01-23T01:57:21.9277760Z [36;1m[0m
+2026-01-23T01:57:21.9277920Z [36;1m# Bundle libruby[0m
+2026-01-23T01:57:21.9278240Z [36;1mL_SRC=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | head -n 1) || true[0m
+2026-01-23T01:57:21.9278560Z [36;1mif [ -n "$L_SRC" ]; then[0m
+2026-01-23T01:57:21.9278770Z [36;1m   cp "$L_SRC" "$LIB_DIR/"[0m
+2026-01-23T01:57:21.9279010Z [36;1m   chmod +w "$LIB_DIR/$(basename "$L_SRC")"[0m
+2026-01-23T01:57:21.9279430Z [36;1m   install_name_tool -id "@rpath/$(basename "$L_SRC")" "$LIB_DIR/$(basename "$L_SRC")" || true[0m
+2026-01-23T01:57:21.9280600Z [36;1mfi[0m
+2026-01-23T01:57:21.9280840Z [36;1m[0m
+2026-01-23T01:57:21.9281030Z [36;1m# Bundle Homebrew dependencies[0m
+2026-01-23T01:57:21.9281280Z [36;1mfor d in gmp libyaml openssl@3; do[0m
+2026-01-23T01:57:21.9281710Z [36;1m  P=$(brew --prefix $d 2>/dev/null)/lib || continue[0m
+2026-01-23T01:57:21.9281970Z [36;1m  if [ -d "$P" ]; then[0m
+2026-01-23T01:57:21.9282240Z [36;1m     cp "$P"/*.dylib "$LIB_DIR/" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9282480Z [36;1m  fi[0m
+2026-01-23T01:57:21.9282620Z [36;1mdone[0m
+2026-01-23T01:57:21.9282770Z [36;1m[0m
+2026-01-23T01:57:21.9282940Z [36;1m# Cleanup homebrew dylibs in our lib folder[0m
+2026-01-23T01:57:21.9283270Z [36;1mfind "$LIB_DIR" -name "*.dylib" -type f | while read -r d; do[0m
+2026-01-23T01:57:21.9283550Z [36;1m  chmod +w "$d"[0m
+2026-01-23T01:57:21.9283810Z [36;1m  codesign --remove-signature "$d" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9284150Z [36;1m  install_name_tool -id "@rpath/$(basename "$d")" "$d" || true[0m
+2026-01-23T01:57:21.9284420Z [36;1mdone[0m
+2026-01-23T01:57:21.9284570Z [36;1m[0m
+2026-01-23T01:57:21.9284710Z [36;1m# 3. Build Gems[0m
+2026-01-23T01:57:21.9284900Z [36;1mecho "Installing Gems..."[0m
+2026-01-23T01:57:21.9285140Z [36;1mexport PATH="$PORTABLE_DIR/bin:$PATH"[0m
+2026-01-23T01:57:21.9285400Z [36;1mexport DYLD_LIBRARY_PATH="$LIB_DIR"[0m
+2026-01-23T01:57:21.9285630Z [36;1m[0m
+2026-01-23T01:57:21.9285800Z [36;1mgem install bundler -v 2.6.2 --no-document[0m
+2026-01-23T01:57:21.9286090Z [36;1mbundle config set --local path 'vendor/bundle'[0m
+2026-01-23T01:57:21.9286370Z [36;1mbundle config set --local deployment 'true'[0m
+2026-01-23T01:57:21.9286630Z [36;1mbundle install --jobs 4 --retry 3[0m
+2026-01-23T01:57:21.9286860Z [36;1mxattr -cr vendor/bundle || true[0m
+2026-01-23T01:57:21.9287050Z [36;1m[0m
+2026-01-23T01:57:21.9287210Z [36;1m# 4. Deep Portability Repair[0m
+2026-01-23T01:57:21.9287450Z [36;1mecho "Repairing all Mach-O files..."[0m
+2026-01-23T01:57:21.9287770Z [36;1m# Fix everything in dist and bundle. Use -print0 for safety.[0m
+2026-01-23T01:57:21.9288510Z [36;1mfind "$PORTABLE_DIR" vendor/bundle -type f -print0 | while IFS= read -r -d '' f; do[0m
+2026-01-23T01:57:21.9288900Z [36;1m  # Use 'file' and check for Mach-O[0m
+2026-01-23T01:57:21.9289180Z [36;1m  if file "$f" 2>/dev/null | grep -q "Mach-O"; then[0m
+2026-01-23T01:57:21.9289610Z [36;1m    chmod +w "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9289930Z [36;1m    codesign --remove-signature "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9290200Z [36;1m    [0m
+2026-01-23T01:57:21.9290370Z [36;1m    # Add RPaths for various depths[0m
+2026-01-23T01:57:21.9290660Z [36;1m    # We do these as list to avoid any shell complexity[0m
+2026-01-23T01:57:21.9291030Z [36;1m    install_name_tool -add_rpath "@loader_path/../lib" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9291480Z [36;1m    install_name_tool -add_rpath "@loader_path/../../lib" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9294120Z [36;1m    install_name_tool -add_rpath "@loader_path/../../../lib" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9294630Z [36;1m    install_name_tool -add_rpath "@loader_path/../../../../lib" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9295110Z [36;1m    install_name_tool -add_rpath "@loader_path/../../../../../lib" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9295600Z [36;1m    install_name_tool -add_rpath "@loader_path/../../../../../../lib" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9296170Z [36;1m    install_name_tool -add_rpath "@loader_path/../../../../../../../lib" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9296720Z [36;1m    install_name_tool -add_rpath "@loader_path/../../../../../../../../lib" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9297110Z [36;1m    [0m
+2026-01-23T01:57:21.9297320Z [36;1m    # Relink all hardcoded dependencies and libruby[0m
+2026-01-23T01:57:21.9297630Z [36;1m    # Filter for dependencies that we bundled[0m
+2026-01-23T01:57:21.9298300Z [36;1m    otool -L "$f" 2>/dev/null | grep -E "/opt/homebrew|/usr/local|libruby" | awk '{print $1}' | while read -r dep; do[0m
+2026-01-23T01:57:21.9298740Z [36;1m      base=$(basename "$dep")[0m
+2026-01-23T01:57:21.9299010Z [36;1m      if [ -f "$LIB_DIR/$base" ] && [[ "$dep" != "@rpath"* ]]; then[0m
+2026-01-23T01:57:21.9299400Z [36;1m        install_name_tool -change "$dep" "@rpath/$base" "$f" 2>/dev/null || true[0m
+2026-01-23T01:57:21.9299730Z [36;1m      fi[0m
+2026-01-23T01:57:21.9299890Z [36;1m    done[0m
+2026-01-23T01:57:21.9300040Z [36;1m  fi[0m
+2026-01-23T01:57:21.9300180Z [36;1mdone[0m
+2026-01-23T01:57:21.9300320Z [36;1m[0m
+2026-01-23T01:57:21.9300470Z [36;1m# 5. Smoke Test[0m
+2026-01-23T01:57:21.9300660Z [36;1mecho "Running smoke test..."[0m
+2026-01-23T01:57:21.9300870Z [36;1munset DYLD_LIBRARY_PATH[0m
+2026-01-23T01:57:21.9301150Z [36;1mexport GEM_HOME="$(pwd)/vendor/bundle/ruby/3.4.0"[0m
+2026-01-23T01:57:21.9301530Z [36;1mexport GEM_PATH="$GEM_HOME:$PORTABLE_DIR/lib/ruby/gems/3.4.0"[0m
+2026-01-23T01:57:21.9301820Z [36;1m[0m
+2026-01-23T01:57:21.9301960Z [36;1m"$RUBY_BIN" -v[0m
+2026-01-23T01:57:21.9302250Z [36;1m"$RUBY_BIN" -e "require 'sqlite3'; puts 'SUCCESS: sqlite3 works portable!'"[0m
+2026-01-23T01:57:21.9302550Z [36;1m[0m
+2026-01-23T01:57:21.9302720Z [36;1m# 6. Production Signing[0m
+2026-01-23T01:57:21.9303150Z [36;1mIDENTITY="***"[0m
+2026-01-23T01:57:21.9303380Z [36;1mENTITLEMENTS="build/entitlements.mac.plist"[0m
+2026-01-23T01:57:21.9303640Z [36;1mif [ -n "$IDENTITY" ]; then[0m
+2026-01-23T01:57:21.9303870Z [36;1m   echo "Performing production signing..."[0m
+2026-01-23T01:57:21.9304140Z [36;1m   # Sign all native objects first[0m
+2026-01-23T01:57:21.9304530Z [36;1m   find bin/ruby_dist/macos-arm64 vendor/bundle -type f -print0 | while IFS= read -r -d '' item; do[0m
+2026-01-23T01:57:21.9304980Z [36;1m     if file "$item" 2>/dev/null | grep -q "Mach-O"; then[0m
+2026-01-23T01:57:21.9305370Z [36;1m       codesign --force --options runtime --timestamp -s "$IDENTITY" "$item" || true[0m
+2026-01-23T01:57:21.9305870Z [36;1m     fi[0m
+2026-01-23T01:57:21.9306030Z [36;1m   done[0m
+2026-01-23T01:57:21.9306220Z [36;1m   # Sign interpreter last with entitlements[0m
+2026-01-23T01:57:21.9306690Z [36;1m   codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$RUBY_BIN" || true[0m
+2026-01-23T01:57:21.9307120Z [36;1mfi[0m
+2026-01-23T01:57:21.9400400Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T01:57:21.9400740Z env:
+2026-01-23T01:57:21.9402330Z   PATH: /Users/runner/hostedtoolcache/node/22.22.0/arm64/bin:/Users/runner/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/runner/.cargo/bin:/usr/local/opt/curl/bin:/usr/local/bin:/usr/local/sbin:/Users/runner/bin:/Users/runner/.yarn/bin:/Users/runner/Library/Android/sdk/tools:/Users/runner/Library/Android/sdk/platform-tools:/Library/Frameworks/Python.framework/Versions/Current/bin:/Library/Frameworks/Mono.framework/Versions/Current/Commands:/usr/bin:/bin:/usr/sbin:/sbin:/Users/runner/.dotnet/tools
+2026-01-23T01:57:21.9403900Z ##[endgroup]
+2026-01-23T01:57:21.9757950Z Starting macOS Native Setup...
+2026-01-23T01:57:21.9906400Z   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+2026-01-23T01:57:21.9980420Z                                  Dload  Upload   Total   Spent    Left  Speed
+2026-01-23T01:57:21.9981070Z 
+2026-01-23T01:57:22.3584010Z   0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+2026-01-23T01:57:22.3585540Z   0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+2026-01-23T01:57:22.6340180Z 
+2026-01-23T01:57:23.0557510Z  35 14.4M   35 5181k    0     0  8041k      0  0:00:01 --:--:--  0:00:01 8041k
+2026-01-23T01:57:23.0560140Z 100 14.4M  100 14.4M    0     0  13.5M      0  0:00:01  0:00:01 --:--:-- 22.3M
+2026-01-23T01:57:23.2076310Z Bundling dependencies...
+2026-01-23T01:57:23.2613010Z cp: /Users/runner/work/brilliant_little_gnome/brilliant_little_gnome/bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib and /Users/runner/work/brilliant_little_gnome/brilliant_little_gnome/bin/ruby_dist/macos-arm64/lib/libruby.3.4.dylib are identical (not copied).
+2026-01-23T01:57:23.2631760Z ##[error]Process completed with exit code 1.
+2026-01-23T01:57:23.2731500Z Post job cleanup.
+2026-01-23T01:57:23.4256730Z [command]/opt/homebrew/bin/git version
+2026-01-23T01:57:23.4324880Z git version 2.52.0
+2026-01-23T01:57:23.4350350Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/3f9760f9-17bd-473d-88c2-ec04d0bb8a10/.gitconfig'
+2026-01-23T01:57:23.4361700Z Temporarily overriding HOME='/Users/runner/work/_temp/3f9760f9-17bd-473d-88c2-ec04d0bb8a10' before making global git config changes
+2026-01-23T01:57:23.4362480Z Adding repository directory to the temporary git global config as a safe directory
+2026-01-23T01:57:23.4367630Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/brilliant_little_gnome/brilliant_little_gnome
+2026-01-23T01:57:23.4424000Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-01-23T01:57:23.4477740Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-01-23T01:57:23.5372670Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-01-23T01:57:23.5466150Z http.https://github.com/.extraheader
+2026-01-23T01:57:23.5486980Z [command]/opt/homebrew/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-01-23T01:57:23.5591100Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-01-23T01:57:23.6436440Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-01-23T01:57:23.6493840Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-01-23T01:57:23.7265730Z Cleaning up orphan processes
