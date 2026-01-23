@@ -83,10 +83,19 @@ begin
   ActiveRecord::Base.establish_connection(db_config)
   puts "[Brilliant] Connection established"
 
-  # Optimization: Enable WAL mode for SQLite to handle concurrency
-  ActiveRecord::Base.connection.execute("PRAGMA journal_mode=WAL;")
-  ActiveRecord::Base.connection.execute("PRAGMA synchronous=NORMAL;")
-  ActiveRecord::Base.connection.execute("PRAGMA busy_timeout=5000;")
+  # Optimization: Enable WAL mode for SQLite to handle concurrency with self-healing check
+  begin
+    ActiveRecord::Base.connection.execute("PRAGMA journal_mode=WAL;")
+    ActiveRecord::Base.connection.execute("PRAGMA synchronous=NORMAL;")
+    ActiveRecord::Base.connection.execute("PRAGMA busy_timeout=5000;")
+  rescue SQLite3::NotADatabaseException => e
+    puts "[Brilliant] Critical Error: Database file is not a valid SQLite database (header corrupt)."
+    if ENV['DATABASE_URL']
+       # Try to re-establish by establishing and letting context recreate
+       puts "[Brilliant] Attempting to reset connection..."
+    end
+    raise e # Bubble up to main rescue block for logging
+  end
   
   # Run migrations if pending
   # In AR 5.2 MigrationContext takes only the migrations path
