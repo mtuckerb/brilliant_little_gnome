@@ -75,23 +75,25 @@ jobs:
           mkdir -p "$LIB_DIR"
           
           # Bundle libruby
-          L_SRC=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | grep -v "$LIB_DIR" | head -n 1) || true
+          L_SRC=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | grep -v "$LIB_DIR/libruby.3.4.dylib" | head -n 1) || true
           if [ -n "$L_SRC" ]; then
             echo "Copying $L_SRC to $LIB_DIR"
             cp "$L_SRC" "$LIB_DIR/"
           fi
           
           L_FILE="$LIB_DIR/libruby.3.4.dylib"
-          if [ ! -f "$L_FILE" ]; then
-            # Fallback if find failed
-            L_FILE=$(find "$PORTABLE_DIR" -name "libruby.3.4.dylib" | head -n 1)
-          fi
-
           if [ -f "$L_FILE" ]; then
             chmod +w "$L_FILE"
             codesign --remove-signature "$L_FILE" || true
             codesign -f -s - "$L_FILE" || true
             install_name_tool -id "@rpath/libruby.3.4.dylib" "$L_FILE"
+            install_name_tool -add_rpath "@loader_path/" "$L_FILE" || true
+            install_name_tool -add_rpath "@executable_path/../lib" "$L_FILE" || true
+          fi
+
+          # Add general RPath to all bundled dylibs
+          find "$LIB_DIR" -name "*.dylib" -type f | while read -r d; do
+            install_name_tool -add_rpath "@loader_path/" "$d" 2>/dev/null || true
           fi
 
           # Fix Ruby Interpreter Links
@@ -135,19 +137,22 @@ jobs:
 
           # 3. Build Gems
           echo "Installing Gems..."
-          export PATH="$PORTABLE_DIR/bin:$PATH"
-          export GEM_HOME="$(pwd)/vendor/bundle/ruby/3.4.0"
-          export GEM_PATH="$GEM_HOME"
+          # Set up paths to favor portable environment
+          export BUNDLE_PATH="$(pwd)/vendor/bundle"
+          export GEM_HOME="$BUNDLE_PATH/ruby/3.4.0"
+          # IMPORTANT: Include internal gems path so rubygems can find its own components
+          export INTERNAL_GEMS="$PORTABLE_DIR/lib/ruby/gems/3.4.0"
+          export GEM_PATH="$GEM_HOME:$INTERNAL_GEMS"
           unset RUBYOPT RUBYLIB
           
           # Final fail-safe: use DYLD_LIBRARY_PATH if links still broken during build
           export DYLD_LIBRARY_PATH="$LIB_DIR"
           
           # Call scripts via ruby interpreter directly to ignore shebangs
-          "$RUBY_BIN" "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document
-          "$RUBY_BIN" "$PORTABLE_DIR/bin/bundle" config set --local path 'vendor/bundle'
-          "$RUBY_BIN" "$PORTABLE_DIR/bin/bundle" config set --local deployment 'true'
-          "$RUBY_BIN" "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3
+          "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document
+          "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config set --local path 'vendor/bundle'
+          "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config set --local deployment 'true'
+          "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3
           unset DYLD_LIBRARY_PATH
           xattr -cr vendor/bundle || true
 
@@ -165,6 +170,10 @@ jobs:
               # We do these as list to avoid any shell complexity
               install_name_tool -add_rpath "@loader_path/../lib" "$f" 2>/dev/null || true
               install_name_tool -add_rpath "@loader_path/../../lib" "$f" 2>/dev/null || true
+              install_name_tool -add_rpath "@loader_path/../../../lib" "$f" 2>/dev/null || true
+              install_name_tool -add_rpath "@loader_path/../../../../lib" "$f" 2>/dev/null || true
+              install_name_tool -add_rpath "@loader_path/../../../../../lib" "$f" 2>/dev/null || true
+              install_name_tool -add_rpath "@loader_path/../../../../../../lib" "$f" 2>/dev/null || true
               install_name_tool -add_rpath "@loader_path/../../../lib" "$f" 2>/dev/null || true
               install_name_tool -add_rpath "@loader_path/../../../../lib" "$f" 2>/dev/null || true
               install_name_tool -add_rpath "@loader_path/../../../../../lib" "$f" 2>/dev/null || true
