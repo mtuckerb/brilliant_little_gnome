@@ -988,6 +988,8 @@ get '/notifications' do
   offset = (@page - 1) * @per_page
 
   @total_pages = (@notifications_total.to_f / @per_page).ceil
+  @notifications = query.offset(offset).limit(@per_page)
+
   if request.xhr?
     erb :'partials/notifications_list', layout: false
   else
@@ -1647,25 +1649,7 @@ get '/api/v1/courses/:id/stats' do
   stats = calculate_grade_stats(params[:id])
   stats.to_json
 end
-
-# --- Notifications ---
-get '/api/v1/notifications' do
-  query = Notification.all
-  
-  query = query.where(course_id: params[:course_id]) if params[:course_id].present?
-  query = query.where(semester: params[:semester]) if params[:semester].present?
-  query = query.where(urgency: params[:urgency]) if params[:urgency].present?
-  query = query.where(is_personal: true) if params[:is_personal] == 'true'
-  
-  unless params[:include_read] == 'true' || params[:show_read] == 'true'
-    query = query.where(is_read: false)
-  end
-  
-  limit = (params[:limit] || 50).to_i
-  query.order(date: :desc).limit(limit).to_json
-end
-
-# --- Synthetic Tasks CRUD ---
+# Synthetic Tasks CRUD
 get '/api/v1/synthetic_tasks' do
   query = Assignment.where(assignment_type: 'synthetic')
   query = query.where(course_id: params[:course_id]) if params[:course_id].present?
@@ -1698,11 +1682,7 @@ post '/api/v1/synthetic_tasks' do
   end
 end
 
-patch '/api/v1/synthetic_tasks/:id' do
-  task = Assignment.find_by(brightspace_id: params[:id], assignment_type: 'synthetic')
-  halt 404, { error: "Task not found" }.to_json unless task
-
-# Dedicated route for internal synthetic task creation (blocks highlighting)
+# Dedicated route for internal UI synthetic task creation
 post '/course/:id/synthetic_tasks' do
   content_type :json
   payload = JSON.parse(request.body.read) rescue {}
@@ -1726,11 +1706,13 @@ post '/course/:id/synthetic_tasks' do
   if task.persisted?
     task.to_json
   else
-    status 422
-    { errors: task.errors.full_messages }.to_json
+    halt 422, { errors: task.errors.full_messages }.to_json
   end
 end
 
+patch '/api/v1/synthetic_tasks/:id' do
+  task = Assignment.find_by(brightspace_id: params[:id], assignment_type: 'synthetic')
+  halt 404, { error: "Task not found" }.to_json unless task
   
   payload = JSON.parse(request.body.read) rescue {}
   if task.update(payload.slice('name', 'due_date', 'description', 'completed'))
@@ -1746,7 +1728,6 @@ delete '/api/v1/synthetic_tasks/:id' do
   task.destroy
   status 204
 end
-
 # --- Settings ---
 get '/api/v1/preferences' do
   @user_prefs.to_json(except: [:api_key, :brightspace_cookie])

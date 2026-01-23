@@ -428,10 +428,10 @@ module CourseHelpers
     year = Time.now.year
     
     # Pattern 1: M/D (1/19)
-    date_match = module_title.match(/(\d{1,2}\/\d{1,2})/)
+    date_match = module_title.match(/(\d{1,2}\/\d{1,2})/) || module_title.match(/(\d{1,2}-\d{1,2})/)
     if date_match
       begin
-        month, day = date_match[1].split('/').map(&:to_i)
+        month, day = date_match[1].split(/[\/-]/).map(&:to_i)
         inferred_date = Time.new(year, month, day, 23, 59, 59)
       rescue; end
     elsif (month_match = module_title.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*,?\s*(\d{1,2})/i))
@@ -440,8 +440,16 @@ module CourseHelpers
         parsed = Time.parse("#{month_match[1]} #{month_match[2]}")
         inferred_date = Time.new(parsed.year, parsed.month, parsed.day, 23, 59, 59)
       rescue; end
+    elsif (end_match = module_title.match(/Ending\s+(?:on\s+)?(\d{1,2}\s+[A-Za-z]+|[A-Za-z]+\s+\d{1,2})/i))
+      begin
+        parsed = Time.parse(end_match[1])
+        inferred_date = Time.new(parsed.year, parsed.month, parsed.day, 23, 59, 59)
+      rescue; end
+    elsif (week_match = module_title.match(/Week\s*(\d+)/i))
+       # If we just have a week number, but no date, maybe we can find a date in descriptions?
+       # For now, stay with nil/parent
     end
-
+    
     inferred_date ||= parent_date
 
     # 1. PROCESS TOPICS (Structural Identifying)
@@ -504,23 +512,36 @@ module CourseHelpers
         next if current_category =~ /Review Questions|Objectives|Resources/i
 
         content = nil
-        if line =~ /^[ \t]*[\-•*]\s*(.*+)/ || line =~ /^[ \t]*\d+\.\s*(.*+)/
-          content = $1 || line
+        content = nil
+        if line =~ /^[ \t]*[\-•*]\s*(.*+)/ || line =~ /^[ \t]*\d+[\.\)]\s*(.*+)/
+          content = ($1 || $2 || line).strip
         elsif current_category != "Task" && line.split.size >= 2 && line.split.size <= 8
           content = line
+        elsif current_category == "Assignments" || current_category == "Readings"
+          # If no bullet, but in a known list section, take the first sentence or short line
+          content = line if line.length > 5 && line.length < 200
         end
 
         if content && content.length > 2
           next if tasks.any? { |t| t[:name].downcase == content.strip.downcase }
           
+          # Try to find a specific internal date in the line (e.g. "due 02/04/26")
+          line_date = nil
+          if (item_date_match = line.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)/))
+            begin
+              line_date = Time.parse(item_date_match[1])
+              line_date = Time.new(line_date.year, line_date.month, line_date.day, 23, 59, 59)
+            rescue; end
+          end
+
           # Extract first URL found in the line if any
           extracted_url = line.match(/https?:\/\/[^\s<"']+/)&.to_s
-          extracted_url ||= line.match(/\(((\/[^\s<"')]+))\)/)&.captures&.first
+          extracted_url ||= line.match(/\(((\/[^\s<")]+))\)/)&.captures&.first
 
           tasks << { 
             name: content.strip, 
             type: current_category,
-            due_date: inferred_date,
+            due_date: line_date || inferred_date,
             source: 'text',
             module_id: module_obj['ModuleId'],
             context: module_title,
