@@ -25,13 +25,22 @@ export BUNDLE_GEMFILE="$BASE_DIR/Gemfile"
 export BUNDLE_PATH="$BASE_DIR/vendor/bundle"
 export BUNDLE_DEPLOYMENT="true"
 
+# Detect Ruby version directory
+if [ -d "$BASE_DIR/vendor/bundle/ruby" ]; then
+    RUBY_VER_DIR=$(ls -1 "$BASE_DIR/vendor/bundle/ruby" | head -n 1)
+else
+    RUBY_VER_DIR="3.4.0"
+fi
+
 # 3. Force Ruby to only look at our portable dist and vendor bundle
-# Standard internal paths for Ruby 3.4.x
-INTERNAL_GEMS="$PORTABLE_ROOT/lib/ruby/gems/3.4.0"
-VENDOR_GEMS="$BASE_DIR/vendor/bundle/ruby/3.4.0"
+# Standard internal paths
+INTERNAL_GEMS="$PORTABLE_ROOT/lib/ruby/gems/$RUBY_VER_DIR"
+VENDOR_GEMS="$BASE_DIR/vendor/bundle/ruby/$RUBY_VER_DIR"
 
 export GEM_PATH="$VENDOR_GEMS:$INTERNAL_GEMS"
 export GEM_HOME="$VENDOR_GEMS"
+
+echo "Using Ruby version directory: $RUBY_VER_DIR"
 
 # 4. Update PATH so the portable 'ruby' is found first if any gems spawn sub-processes
 export PATH="$PORTABLE_ROOT/bin:$PATH"

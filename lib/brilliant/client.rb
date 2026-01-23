@@ -241,9 +241,19 @@ class BrilliantClient
             course_id: course_id,
             course_name: c['OrgUnit']['Name'],
             urgency: 1,
+            attachments: item['Attachments']&.to_json,
             is_personal: false,
             url: "/course/#{course_id}/announcements"
           })
+        end
+
+        # Persist news attachments
+        items.each do |item|
+          if item['Attachments'] && !item['Attachments'].empty?
+            item['Attachments'].each do |att|
+              persist_attachment(course_id, "news/#{item['Id']}/attachments/#{att['FileId']}", att['FileId'], att['FileName'])
+            end
+          end
         end
         archive_cache(news_path)
 
@@ -431,6 +441,8 @@ class BrilliantClient
     if data[:semester]
         n.semester = data[:semester]
     end
+
+    n.attachments = data[:attachments] if data[:attachments]
 
     n.urgency = data[:urgency]
     n.is_personal = data[:is_personal]
@@ -745,6 +757,19 @@ class BrilliantClient
             item.is_hidden = topic['IsHidden'] || false
             item.sort_order = t_index
             item.save!
+
+            # Persist metadata for URLs/attachments
+            item.attachments = [topic].to_json if topic.any?
+            item.save! if topic.any?
+
+            # Persist content file if it's a direct resource
+            if item.url && (item.url.start_with?('/content/enforced/') || item.url.include?('/viewContent/'))
+              Thread.new(course_id, item.brightspace_id, item.title) do |cid, tid, title|
+                ActiveRecord::Base.connection_pool.with_connection do
+                  persist_attachment(cid, "content/topics/#{tid}/file", tid, title)
+                end
+              end
+            end
           end
           
           # Recursively sync sub-modules
@@ -779,6 +804,17 @@ class BrilliantClient
           item.is_hidden = topic['IsHidden'] || false
           item.sort_order = t_index
           item.save!
+
+          item.attachments = [topic].to_json if topic.any?
+          item.save! if topic.any?
+
+          if item.url && (item.url.start_with?('/content/enforced/') || item.url.include?('/viewContent/'))
+            Thread.new(course_id, item.brightspace_id, item.title) do |cid, tid, title|
+              ActiveRecord::Base.connection_pool.with_connection do
+                persist_attachment(cid, "content/topics/#{tid}/file", tid, title)
+              end
+            end
+          end
         end
         
         sync_sub_modules(course_id, mod['ModuleId'].to_s, mod['Modules']) if mod['Modules']
@@ -793,22 +829,45 @@ class BrilliantClient
     
     return if items.empty?
 
-    items.each do |a|
+    # Process each assignment - we fetch full details if possible to get attachments/instructions
+    items.each do |a_summary|
+      next if a_summary.nil?
+      t_id = (a_summary['Id'] || a_summary['Identifier'] || a_summary['TopicId']).to_s
+      
+      # Try to get full details (cached or fetch)
+      a = get_assignment(course_id, t_id) || a_summary
+      
       next if a.nil?
-      t_id = (a['Id'] || a['Identifier'] || a['TopicId']).to_s
       assignment = Assignment.find_or_initialize_by(brightspace_id: t_id, course_id: course_id.to_s)
       
       # Protection: Don't overwrite robust name with thin data (archived courses sometimes return numeric IDs as names)
       new_name = a['Name']
       assignment.name = new_name if new_name.present? && !new_name.match?(/^\d+$/)
       
-      new_due = (Time.parse(a['DueDate']) rescue nil)
+      new_due = (Time.parse(a['DueDate'] || a['DueDate']) rescue nil)
       assignment.due_date = new_due if new_due
       
       new_desc = a.dig('CustomInstructions', 'Text') || a.dig('Description', 'Text')
       assignment.description = new_desc if new_desc.present?
       
+      # Capture attachments and external URLs
+      atts = (a['Attachments'] || []) + (a['LinkAttachments'] || [])
+      assignment.attachments = atts.to_json if atts.any?
+      
+      # Proactively persist binary attachments in background
+      if a['Attachments']
+        Thread.new(course_id, t_id, a['Attachments']) do |cid, aid, attachments|
+          ActiveRecord::Base.connection_pool.with_connection do
+            attachments.each do |att|
+              persist_attachment(cid, "dropbox/folders/#{aid}/attachments/#{att['FileId']}", att['FileId'], att['FileName'])
+            end
+          end
+        end
+      end
+
       assignment.is_graded = a['IsGraded'] || false
+      assignment.external_url = a.dig('CustomInstructions', 'Html')&.match(/href="([^"]+)"/)&.at(1) if assignment.external_url.nil?
+      
       assignment.grade_item_id = a['GradeItemId'].to_s if a['GradeItemId']
       assignment.save!
     end
@@ -821,9 +880,9 @@ class BrilliantClient
 
     items.each do |q|
       next if q.nil?
-      t_id = (q['QuizId'] || q['Id'] || q['Identifier']).to_s
+      q_id = (q['QuizId'] || q['Id'] || q['Identifier']).to_s
       # We use the Assignment model for Quizzes too, but mark the type
-      assignment = Assignment.find_or_initialize_by(brightspace_id: "quiz_#{t_id}", course_id: course_id.to_s)
+      assignment = Assignment.find_or_initialize_by(brightspace_id: "quiz_#{q_id}", course_id: course_id.to_s)
       
       assignment.name = q['Name']
       assignment.assignment_type = 'quiz'
@@ -835,6 +894,10 @@ class BrilliantClient
       new_desc = q.dig('Description', 'Text') || q.dig('Header', 'Text')
       assignment.description = new_desc if new_desc.present?
       
+      # Quizzes can have link attachments too
+      atts = (q['LinkAttachments'] || [])
+      assignment.attachments = atts.to_json if atts.any?
+
       assignment.is_graded = q['IsActive'] || false # Quizzes don't have IsGraded in same way, but usually active means gradable
       assignment.save!
     end
@@ -1131,6 +1194,32 @@ class BrilliantClient
       puts "Download connection error for #{path}: #{e.message}"
       nil
     end
+  end
+
+  def persist_attachment(course_id, api_path, file_id, file_name)
+    # api_path is something like "dropbox/folders/123/attachments/456"
+    path = api_path.start_with?('/') ? api_path : "/d2l/api/le/#{@api_version}/#{course_id}/#{api_path}"
+    
+    # Create local storage path
+    data_dir = ENV['BRILLIANT_DATA_DIR'] || '.'
+    local_dir = File.join(data_dir, 'public', 'attachments', course_id.to_s)
+    FileUtils.mkdir_p(local_dir)
+    
+    safe_name = file_name.to_s.gsub(/[^0-9A-Za-z.\- ]/, '_')
+    local_path = File.join(local_dir, "#{file_id}_#{safe_name}")
+    
+    return local_path if File.exist?(local_path)
+
+    response = download_file(path)
+    if response && response.code == '200'
+      begin
+        File.open(local_path, 'wb') { |f| f.write(response.body) }
+        return local_path
+      rescue => e
+        puts "[Brilliant API] Failed to persist attachment: #{e.message}"
+      end
+    end
+    nil
   end
 
   def portal_url_for(type, options = {})

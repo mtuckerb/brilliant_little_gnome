@@ -1473,8 +1473,24 @@ end
 get '/course/:id/download' do
   path = params[:path]
   name = params[:name] || "download"
+  course_id = params[:id]
   
   path = "/#{path}" unless path.start_with?('/')
+
+  # Intelligent persistence check
+  # Try to find a local version of this file if it was already fetched
+  # Path looks like: /d2l/api/le/1.40/248383/dropbox/folders/1445612/attachments/24031641
+  file_id = path.split('/').last
+  if file_id && !file_id.empty?
+    local_dir = File.join(settings.public_folder, 'attachments', course_id.to_s)
+    if File.exist?(local_dir)
+      local_file = Dir.glob(File.join(local_dir, "#{file_id}_*")).first
+      if local_file && File.exist?(local_file)
+        return send_file local_file, disposition: 'attachment', filename: name
+      end
+    end
+  end
+
   http_resp = $client.download_file(path)
   
   if http_resp && http_resp.code == '200'

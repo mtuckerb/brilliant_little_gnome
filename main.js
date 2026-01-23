@@ -190,13 +190,24 @@ function startRubyApp() {
   const rubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
   const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
 
-  const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', '3.4.0');
-  const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
+  // Detect Ruby version directory in vendor/bundle/ruby/
+  let rubyVersionDir = '3.4.0'; // Default fallback
+  const vendorRubyRoot = path.join(resourceDir, 'vendor', 'bundle', 'ruby');
+  if (fs.existsSync(vendorRubyRoot)) {
+    const versions = fs.readdirSync(vendorRubyRoot).filter(f => fs.statSync(path.join(vendorRubyRoot, f)).isDirectory());
+    if (versions.length > 0) {
+      rubyVersionDir = versions[0];
+      console.log(`[Electron] Detected Ruby version directory: ${rubyVersionDir}`);
+    }
+  }
+
+  const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', rubyVersionDir);
+  const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', rubyVersionDir);
   
   const cacheDir = path.join(userDataPath, 'bootsnap');
   const dbDir = path.join(userDataPath, 'db');
   const logFile = path.join(userDataPath, 'ruby_sidecar.log');
-  
+
   if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
   if (fs.existsSync(pidFile)) {
