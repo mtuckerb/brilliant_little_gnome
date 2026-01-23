@@ -117,8 +117,23 @@
                       <% mod['Topics'].each do |topic| %>
                           <div class="list-item">
                             <div class="is-flex is-justify-content-space-between is-align-items-center">
-                              <span><span class="icon is-small mr-2"><i class="fas fa-file-alt"></i></span><%= topic['Title'] %></span>
-                              <a href="/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/download" class="button is-small is-link is-inverted">Download</a>
+                              <span>
+                                <span class="icon is-small mr-2"><i class="fas fa-file-alt"></i></span>
+                                <% if topic['Url'] %>
+                                  <% 
+                                    full_url = topic['Url']
+                                    if full_url.start_with?("/") 
+                                      full_url = "https://#{$client.host}#{full_url}"
+                                    end
+                                  %>
+                                  <a href="<%= full_url %>" target="_blank"><%= topic['Title'] %></a>
+                                <% else %>
+                                  <%= topic['Title'] %>
+                                <% end %>
+                              </span>
+                              <% if topic['Url'] && topic['Url'].start_with?("/content/enforced/") %>
+                                <a href="/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/download" class="button is-small is-link is-inverted">Download</a>
+                              <% end %>
                             </div>
                           </div>
                       <% end %>
@@ -134,9 +149,23 @@
                       <div class="is-flex is-justify-content-space-between is-align-items-center">
                           <div>
                             <span class="icon is-small has-text-info mr-2"><i class="fas fa-file-pdf"></i></span>
-                            <span class="has-text-weight-medium"><%= topic['Title'] %></span>
+                            <span class="has-text-weight-medium">
+                              <% if topic['Url'] %>
+                                <% 
+                                  full_url = topic['Url']
+                                  if full_url.start_with?("/") 
+                                    full_url = "https://#{$client.host}#{full_url}"
+                                  end
+                                %>
+                                <a href="<%= full_url %>" target="_blank"><%= topic['Title'] %></a>
+                              <% else %>
+                                <%= topic['Title'] %>
+                              <% end %>
+                            </span>
                           </div>
-                          <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/download" class="button is-small is-link is-outlined" target="_blank">Download</a>
+                          <% if topic['Url'] && topic['Url'].start_with?("/content/enforced/") %>
+                            <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/download" class="button is-small is-link is-outlined" target="_blank">Download</a>
+                          <% end %>
                       </div>
                     </div>
                 <% end %>

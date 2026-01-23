@@ -44,7 +44,61 @@ Brilliant is built to be portable.
    ```
 3. Visit `http://localhost:4567` in your browser.
 
-### 3. Authentication
+### 3. Build & Portability (Developer Tools)
+Brilliant includes a Rake-based build system to manage its portable Ruby environment and cross-platform dependencies.
+
+#### Rake Tasks
+- `rake platforms:check`: Audits the current environment to see if portable Ruby and vendor gems are correctly mapped.
+- `rake platforms:lock`: Updates `Gemfile.lock` to include all supported platforms (macOS arm64/x64, Windows x64).
+- `rake platforms:install`: Installs all gems into `vendor/bundle` using the portable Ruby environment (or system fallback) in deployment mode.
+
+#### Essential Command Lines
+
+| Command | Purpose |
+| :--- | :--- |
+| `npm install` | Install Electron and build-balancing dependencies. |
+| `bundle install` | Install Ruby dependencies for local development. |
+| `bundle exec rake platforms:lock` | **Crucial** before pushing: ensures the lockfile supports Windows and Intel Macs. |
+| `bundle exec rake platforms:install` | Pre-bundles gems into the project for portable distribution. |
+| `npm run start` | Launches the Electron application and the Ruby sidecar. |
+| `npm run build` | Packages the application into a distributable `dist/` (DMG for Mac). |
+| `./brilliant rake db:migrate` | Runs database migrations using the portable environment. |
+| `ruby app.rb --headless` | Starts only the Ruby API server without the Electron UI. |
+| `xattr -cr /Applications/Brilliant.app` | Fixes "damaged app" errors on macOS after manual installation. |
+| `rm db/development.sqlite3` | Resets the local development database (clears all settings/data). |
+
+---
+
+## Architecture
+Brilliant consists of two primary components:
+1.  **Ruby Sidecar (API)**: A Sinatra application that handles all Brightspace communication, SQLite persistence, and heavy data processing.
+2.  **Electron Frontend**: A thin wrapper that provides a native window, "Magic Login" cookie capture, and manages the lifecycle of the Ruby process.
+
+### Portable Ruby Strategy
+To ensure Brilliant runs without requiring the user to install Ruby:
+- We embed a "portable" Ruby distribution in `bin/ruby_dist/[platform]`.
+- Gems are pre-installed into `vendor/bundle`.
+- The `main.js` and `brilliant` wrapper script dynamically detect the Ruby version and platform to set `GEM_PATH` and `PATH` correctly.
+
+---
+
+## Maintenance
+
+### Troubleshooting (macOS)
+If you encounter a message stating that the app is **"damaged"** or **"cannot be opened because Apple cannot check it for malicious software"**, follow these steps:
+
+**Option 1: Right-Click Open (Easiest)**
+1. Locate Brilliant in your **Applications** folder.
+2. **Right-click** (or Control-click) the app icon and select **Open**.
+3. In the dialog box that appears, click **Open** again to confirm.
+
+**Option 2: Terminal Fix**
+Run the following command in your Terminal:
+```bash
+xattr -cr /Applications/Brilliant.app
+```
+
+### 4. Authentication
 Brilliant offers two ways to connect:
 
 #### Option 1: Magic Login (Recommended)

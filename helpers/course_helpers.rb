@@ -481,7 +481,9 @@ module CourseHelpers
     end
     
     unless desc_text.strip.empty?
-      text = desc_text.gsub(/<br\s*\/?>/i, "\n").gsub(/<\/p>/i, "\n").gsub(/<[^>]+>/, ' ')
+      # Preserve anchor tags by converting them to a format that keeps the URL
+      processed_desc = desc_text.gsub(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"[^>]*>(.*?)<\/a>/i, '\2 (\1)')
+      text = processed_desc.gsub(/<br\s*\/?>/i, "\n").gsub(/<\/p>/i, "\n").gsub(/<\/li>/i, "\n").gsub(/<[^>]+>/, ' ')
       lines = text.split("\n").map(&:strip).reject(&:empty?)
       
       current_category = "Task"
@@ -494,7 +496,7 @@ module CourseHelpers
         next if current_category =~ /Review Questions|Objectives|Resources/i
 
         content = nil
-        if line =~ /^[\-•*]\s*(.*+)/ || line =~ /^\d+\.\s*(.*+)/
+        if line =~ /^[ \t]*[\-•*]\s*(.*+)/ || line =~ /^[ \t]*\d+\.\s*(.*+)/
           content = $1 || line
         elsif current_category != "Task" && line.split.size >= 2 && line.split.size <= 8
           content = line
@@ -503,6 +505,9 @@ module CourseHelpers
         if content && content.length > 2
           next if tasks.any? { |t| t[:name].downcase == content.strip.downcase }
           
+          # Extract first URL found in the line if any
+          extracted_url = line.match(/https?:\/\/[^\s<"']+/)&.to_s
+
           tasks << { 
             name: content.strip, 
             type: current_category,
@@ -511,7 +516,7 @@ module CourseHelpers
             module_id: module_obj['ModuleId'],
             context: module_title,
             synthetic: true,
-            external_url: "/d2l/le/content/#{@course_id}/viewContent/#{module_obj['ModuleId']}/View"
+            external_url: extracted_url || "/d2l/le/content/#{@course_id}/viewContent/#{module_obj['ModuleId']}/View"
           }
         end
       end

@@ -11,8 +11,18 @@ const rubyBase = path.join(baseDir, 'bin', 'ruby_dist', platformDir);
 const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
 const bundleBinary = path.join(rubyBase, 'bin', 'bundle');
 
-const vendorGems = path.join(baseDir, 'vendor', 'bundle', 'ruby', '3.4.0');
-const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
+// Detect Ruby version directory
+let rubyVersionDir = '3.4.0';
+const vendorRubyRoot = path.join(baseDir, 'vendor/bundle/ruby');
+if (fs.existsSync(vendorRubyRoot)) {
+  const versions = fs.readdirSync(vendorRubyRoot).filter(f => fs.statSync(path.join(vendorRubyRoot, f)).isDirectory());
+  if (versions.length > 0) {
+    rubyVersionDir = versions[0];
+  }
+}
+
+const vendorGems = path.join(baseDir, 'vendor', 'bundle', 'ruby', rubyVersionDir);
+const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', rubyVersionDir);
 
 // Simulation of Electron's app.getPath('userData')
 const userDataPath = path.join(os.homedir(), 'Library', 'Application Support', 'Brilliant-Test');

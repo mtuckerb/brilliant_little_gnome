@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_01_19_170000) do
+ActiveRecord::Schema[7.2].define(version: 2026_01_23_012738) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
@@ -33,6 +33,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_19_170000) do
     t.string "assignment_type", default: "dropbox"
     t.boolean "completed", default: false
     t.datetime "completed_at"
+    t.string "external_url"
+    t.boolean "synthetic", default: false
+    t.text "attachments"
     t.index ["brightspace_id"], name: "index_assignments_on_brightspace_id"
     t.index ["course_id"], name: "index_assignments_on_course_id"
     t.index ["grade_item_id"], name: "index_assignments_on_grade_item_id"
@@ -48,6 +51,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_19_170000) do
     t.datetime "created_at", precision: nil, null: false
     t.datetime "updated_at", precision: nil, null: false
     t.integer "sort_order"
+    t.text "attachments"
     t.index ["brightspace_id"], name: "index_content_items_on_brightspace_id"
     t.index ["module_id"], name: "index_content_items_on_module_id"
   end
@@ -139,6 +143,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_19_170000) do
     t.datetime "last_post_date", precision: nil
     t.datetime "created_at", precision: nil, null: false
     t.datetime "updated_at", precision: nil, null: false
+    t.text "attachments"
     t.index ["brightspace_id"], name: "index_discussion_topics_on_brightspace_id"
     t.index ["course_id"], name: "index_discussion_topics_on_course_id"
     t.index ["forum_id"], name: "index_discussion_topics_on_forum_id"
@@ -178,6 +183,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_19_170000) do
     t.datetime "created_at", precision: nil, null: false
     t.datetime "updated_at", precision: nil, null: false
     t.boolean "is_read", default: false
+    t.text "attachments"
     t.index ["course_id"], name: "index_notifications_on_course_id"
     t.index ["external_id", "course_id"], name: "index_notifications_on_external_id_and_course_id", unique: true
     t.index ["external_id"], name: "index_notifications_on_external_id"

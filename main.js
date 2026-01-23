@@ -1,56 +1,17 @@
 const { app, BrowserWindow, ipcMain, session, dialog, shell } = require('electron');
-const { spawn, execSync } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
-const axios = require('axios');
 const fs = require('fs');
 
 let mainWindow;
 let rubyApp;
 
-const userDataPath = app.getPath('userData');
-const logFile = path.join(userDataPath, 'ruby_sidecar.log');
-const dbDir = path.join(userDataPath, 'db');
-const cacheDir = path.join(userDataPath, 'cache');
-
-// Determine resource paths for packaged vs dev
-const isPackaged = app.isPackaged;
-const resourceDir = isPackaged 
-  ? process.resourcesPath 
-  : __dirname;
-
-const baseDir = isPackaged
-  ? path.join(resourceDir, 'app.asar.unpacked')
-  : __dirname;
-
-function getRubyBinary() {
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-  const platformDir = process.platform === 'darwin' ? `macos-${arch}` : 'win-x64';
-  const rubyExec = process.platform === 'win32' ? 'ruby.exe' : 'ruby';
-  
-  // Production path in packaged app
-  const prodPath = path.join(resourceDir, 'bin', 'ruby_dist', platformDir, 'bin', rubyExec);
-  
-  if (fs.existsSync(prodPath)) {
-    return prodPath;
-  }
-
-  // Fallback for development
-  if (process.platform === 'darwin') {
-    try {
-      return execSync('which ruby').toString().trim() || '/usr/bin/ruby';
-    } catch (e) {
-      return '/usr/bin/ruby';
-    }
-  }
-  return 'ruby';
-}
-
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: 1200,
+    height: 800,
     title: "Brilliant",
-    backgroundColor: '#ffffff',
+    show: false, // Don't show until ready
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -58,8 +19,11 @@ function createWindow() {
     }
   });
 
-  // Load a placeholder while waiting
-  mainWindow.loadFile(path.join(__dirname, 'public', 'splash.html')).catch(() => {});
+  // Load the splash screen immediately
+  mainWindow.loadFile(path.join(__dirname, 'public', 'splash.html'));
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
 
   // Attempt to load the URL with retries
   let retryCount = 0;
@@ -72,16 +36,13 @@ function createWindow() {
     }
     
     if (retryCount > 60) { 
-      console.log("[Electron] Timeout reached. Sidecar may have failed to start.");
-      if (isPackaged) {
-          dialog.showErrorBox("Startup Error", "The Brilliant backend failed to respond in time.");
-      }
-      return;
+      console.log("[Electron] Timeout reached. Opening DevTools for manual inspection.");
+      mainWindow.webContents.openDevTools();
     }
 
-    axios.get(healthUrl, { timeout: 1000 })
+    fetch(healthUrl)
       .then(res => {
-        if (res.status === 200) {
+        if (res.ok) {
           console.log("[Electron] Ruby sidecar is healthy! Loading dashboard.");
           mainWindow.loadURL('http://127.0.0.1:4567');
         } else {
@@ -95,158 +56,68 @@ function createWindow() {
 
   loadWithRetry();
 
+  // Open dev tools for debugging during development
+  // mainWindow.webContents.openDevTools();
+
   mainWindow.on('closed', function () {
     mainWindow = null;
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // If it's a download link or local app relative link, allow Electron to handle it
     if (url.includes('/download') || url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
       return { action: 'allow' };
     }
+    
+    // For any other external http/https links, open in the system's default browser
     if (url.startsWith('http')) {
-      shell.openExternal(url).catch(err => console.error(`[Electron] Failed to open external link: ${url}`, err));
+      shell.openExternal(url).catch(err => {
+        console.error(`[Electron] Failed to open external link: ${url}`, err);
+      });
       return { action: 'deny' };
     }
+
     return { action: 'allow' };
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
+    // If it's the local app or a download, allow it
     if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost') || url.includes('/download')) {
       return;
     }
+
+    // Otherwise, intercept and open in external browser
     if (url.startsWith('http')) {
       event.preventDefault();
-      shell.openExternal(url).catch(err => console.error(`[Electron] Failed to open external link: ${url}`, err));
+      shell.openExternal(url).catch(err => {
+        console.error(`[Electron] Failed to open external link: ${url}`, err);
+      });
     }
   });
-}
 
-function startRubyApp() {
-  const rubyBinary = getRubyBinary();
-  const pidFile = path.join(userDataPath, 'ruby_sidecar.pid');
-
-  if (!fs.existsSync(userDataPath)) fs.mkdirSync(userDataPath, { recursive: true });
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-
-  if (fs.existsSync(pidFile)) {
-    try {
-      const oldPid = parseInt(fs.readFileSync(pidFile, 'utf8'));
-      if (oldPid) process.kill(oldPid, 'SIGTERM');
-    } catch (e) {}
-    try { fs.unlinkSync(pidFile); } catch(e) {}
-  }
-
-  try { 
-    if (process.platform !== 'win32') fs.chmodSync(rubyBinary, 0o755); 
-  } catch(e) {}
-
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-  const platformDir = process.platform === 'darwin' ? `macos-${arch}` : 'win-x64';
-  const rubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
-  const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', '3.4.0');
-  const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', '3.4.0');
-  const pathSeparator = process.platform === 'win32' ? ';' : ':';
-
-  // Build a robust environment for Ruby
-  const env = { 
-    ...process.env, 
-    PORT: '4567', 
-    BUNDLE_GEMFILE: path.join(baseDir, 'Gemfile'),
-    BUNDLE_DEPLOYMENT: 'true', 
-    BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
-    GEM_PATH: `${vendorGems}${pathSeparator}${internalGems}`,
-    GEM_HOME: vendorGems,
-    RUBY_PLATFORM_DIR: platformDir,
-    BRILLIANT_DATA_DIR: userDataPath,
-    BRILLIANT_ENV: 'electron',
-    BOOTSNAP_CACHE_DIR: cacheDir,
-    DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
-    PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`,
-    // Critical: ignore any global system ruby configurations
-    RUBYOPT: "", 
-    RUBYLIB: "",
-    // Diagnostic logging
-    DEBUG: "true"
-  };
-
-  // On macOS, some native extensions might need help finding our distributed libraries 
-  // if they didn't respect @rpath during build.
-  if (process.platform === 'darwin') {
-    env.DYLD_FALLBACK_LIBRARY_PATH = `${path.join(rubyBase, 'lib')}${pathSeparator}${process.env.DYLD_FALLBACK_LIBRARY_PATH || ''}`;
-  }
-
-  console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
-  
-  let logFd;
-  try {
-    logFd = fs.openSync(logFile, 'a');
-    fs.writeSync(logFd, `\n--- SIDE CAR STARTUP AT ${new Date().toISOString()} ---\n`);
-    fs.writeSync(logFd, `Binary: ${rubyBinary}\n`);
-    fs.writeSync(logFd, `CWD: ${baseDir}\n`);
-  } catch (err) {
-    console.error("Failed to open log file:", err);
-  }
-
-  const rubyArgs = ['app.rb', ...process.argv.slice(2)];
-
-  rubyApp = spawn(rubyBinary, rubyArgs, {
-    cwd: baseDir,
-    env: env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
-  if (rubyApp.stdout) {
-    rubyApp.stdout.on('data', (data) => {
-      if (logFd) fs.writeSync(logFd, data);
-      process.stdout.write(data);
-    });
-  }
-
-  if (rubyApp.stderr) {
-    rubyApp.stderr.on('data', (data) => {
-      if (logFd) fs.writeSync(logFd, data);
-      process.stderr.write(data);
-    });
-  }
-
-  rubyApp.on('error', (err) => {
-    console.error(`[Electron] Spawn Error: ${err}`);
-    if (logFd) fs.writeSync(logFd, `Spawn Error: ${err.message}\n`);
-  });
-
-  rubyApp.on('exit', (code, signal) => {
-    if (code !== 0 && !app.isQuitting) {
-      console.error(`[Electron] Ruby process exited unexpectedly: Code ${code}, Signal ${signal}`);
-      if (logFd) fs.writeSync(logFd, `EXITED UNEXPECTEDLY: Code ${code}, Signal ${signal}\n`);
-      if (isPackaged) {
-        dialog.showErrorBox("Ruby Sidecar Crash", `The Brilliant backend crashed (Exit Code: ${code}).\nCheck the log at: ${logFile}`);
+  session.defaultSession.on('will-download', (event, item, webContents) => {
+    // item.setSavePath(path.join(app.getPath('downloads'), item.getFilename()));
+    
+    item.on('updated', (event, state) => {
+      if (state === 'interrupted') {
+        console.log('Download is interrupted but can be resumed');
+      } else if (state === 'progressing') {
+        if (item.isPaused()) {
+          console.log('Download is paused');
+        } else {
+          console.log(`Received bytes: ${item.getReceivedBytes()}`);
+        }
       }
-    }
-    if (logFd) fs.closeSync(logFd);
+    });
+    item.once('done', (event, state) => {
+      if (state === 'completed') {
+        console.log('Download successfully');
+      } else {
+        console.log(`Download failed: ${state}`);
+      }
+    });
   });
 }
-
-const isHeadless = process.argv.includes('--headless');
-
-app.whenReady().then(() => {
-  startRubyApp();
-  if (!isHeadless) {
-    createWindow();
-  }
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
-
-app.isQuitting = false;
-app.on('before-quit', () => {
-  app.isQuitting = true;
-  if (rubyApp) {
-      try { rubyApp.kill('SIGTERM'); } catch (e) {}
-  }
-});
 
 ipcMain.on('start-login', (event, host) => {
   const loginWindow = new BrowserWindow({
@@ -284,4 +155,158 @@ ipcMain.on('start-login', (event, host) => {
         });
     }
   });
+
+  loginWindow.on('closed', () => {
+  });
+});
+
+function startRubyApp() {
+  const isPackaged = app.isPackaged;
+  const baseDir = isPackaged ? app.getAppPath().replace('app.asar', 'app.asar.unpacked') : __dirname;
+  const resourceDir = isPackaged ? process.resourcesPath : __dirname;
+  const userDataPath = app.getPath('userData') || path.join(app.getPath('appData'), app.getName());
+  
+  try {
+    if (!fs.existsSync(userDataPath)) {
+      fs.mkdirSync(userDataPath, { recursive: true });
+    }
+  } catch (err) {
+    console.error(`Failed to create userDataPath: ${userDataPath}`, err);
+  }
+
+  const pidFile = path.join(userDataPath, 'ruby_sidecar.pid');
+
+  let platformDir = '';
+  let rubyExec = 'ruby';
+
+  if (process.platform === 'darwin') {
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    platformDir = `macos-${arch}`;
+  } else if (process.platform === 'win32') {
+    platformDir = 'win-x64';
+    rubyExec = 'ruby.exe';
+  }
+
+  const rubyBase = path.join(resourceDir, 'bin', 'ruby_dist', platformDir);
+  const rubyBinary = path.join(rubyBase, 'bin', rubyExec);
+
+  // Detect Ruby version directory in vendor/bundle/ruby/
+  let rubyVersionDir = '3.4.0'; // Default fallback
+  const vendorRubyRoot = path.join(resourceDir, 'vendor', 'bundle', 'ruby');
+  if (fs.existsSync(vendorRubyRoot)) {
+    const versions = fs.readdirSync(vendorRubyRoot).filter(f => fs.statSync(path.join(vendorRubyRoot, f)).isDirectory());
+    if (versions.length > 0) {
+      rubyVersionDir = versions[0];
+      console.log(`[Electron] Detected Ruby version directory: ${rubyVersionDir}`);
+    }
+  }
+
+  const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', rubyVersionDir);
+  const internalGems = path.join(rubyBase, 'lib', 'ruby', 'gems', rubyVersionDir);
+  
+  const cacheDir = path.join(userDataPath, 'bootsnap');
+  const dbDir = path.join(userDataPath, 'db');
+  const logFile = path.join(userDataPath, 'ruby_sidecar.log');
+
+  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
+  if (fs.existsSync(pidFile)) {
+    try {
+      const oldPid = parseInt(fs.readFileSync(pidFile, 'utf8'));
+      if (oldPid) {
+        process.kill(oldPid, 'SIGTERM');
+      }
+    } catch (e) {}
+    try { fs.unlinkSync(pidFile); } catch(e) {}
+  }
+
+  try { 
+    if (process.platform !== 'win32') fs.chmodSync(rubyBinary, 0o755); 
+  } catch(e) {}
+  const pathSeparator = process.platform === 'win32' ? ';' : ':';
+
+  const env = { 
+    ...process.env, 
+    PORT: '4567', 
+    BUNDLE_GEMFILE: path.join(baseDir, 'Gemfile'),
+    BUNDLE_DEPLOYMENT: 'true', 
+    BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
+    GEM_PATH: vendorGems,
+    GEM_HOME: vendorGems,
+    RUBY_PLATFORM_DIR: platformDir,
+    RUBYLIB: "",
+    BRILLIANT_DATA_DIR: userDataPath,
+    BRILLIANT_ENV: 'electron',
+    BOOTSNAP_CACHE_DIR: cacheDir,
+    DATABASE_URL: `sqlite3:///${path.join(dbDir, 'production.sqlite3').replace(/\\/g, '/').replace(/ /g, '%20')}`,
+    PATH: `${path.join(rubyBase, 'bin')}${pathSeparator}${process.env.PATH}`
+  };
+
+  console.log(`[Electron] Spawning Ruby: ${rubyBinary}`);
+  
+  let logFd;
+  try {
+    logFd = fs.openSync(logFile, 'a');
+  } catch (err) {
+    console.error("Failed to open log file:", err);
+  }
+
+  const rubyArgs = ['app.rb', ...process.argv.slice(2)];
+
+  rubyApp = spawn(rubyBinary, rubyArgs, {
+    cwd: baseDir,
+    env: env,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  if (rubyApp.stdout) {
+    rubyApp.stdout.on('data', (data) => {
+      if (logFd) fs.writeSync(logFd, data);
+      process.stdout.write(data);
+    });
+  }
+
+  if (rubyApp.stderr) {
+    rubyApp.stderr.on('data', (data) => {
+      if (logFd) fs.writeSync(logFd, data);
+      process.stderr.write(data);
+    });
+  }
+
+  rubyApp.on('error', (err) => {
+    console.error(`[Electron] Failed to start Ruby process: ${err}`);
+    dialog.showErrorBox("Ruby Startup Error", `Failed to start the Ruby sidecar: ${err.message}\nBinary: ${rubyBinary}`);
+  });
+
+  rubyApp.on('exit', (code, signal) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[Electron] Ruby process exited with code ${code}`);
+      if (isPackaged) {
+        dialog.showErrorBox("Ruby Sidecar Crash", `The Ruby backend process crashed with code ${code}.\nCheck the log at: ${logFile}`);
+      }
+    }
+  });
+}
+
+app.on('ready', () => {
+    startRubyApp();
+    if (!process.argv.includes('--headless')) {
+      createWindow();
+    } else {
+      console.log("[Electron] Running in headless mode. UI suppressed.");
+    }
+});
+
+app.on('window-all-closed', function () {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('will-quit', () => {
+  if (rubyApp) {
+    rubyApp.kill();
+  }
+});
+
+app.on('activate', function () {
+  if (mainWindow === null) createWindow();
 });

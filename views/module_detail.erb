@@ -95,7 +95,19 @@
                           <input type="hidden" name="task_module_ids_<%= idx %>" value="<%= task[:module_id] %>">
                         </td>
                         <td><span class="tag is-primary is-light"><%= task[:type] %></span></td>
-                        <td><%= task[:name] %></td>
+                        <td>
+                          <% if task[:external_url] %>
+                            <% 
+                              task_url = task[:external_url]
+                              if task_url.start_with?("/")
+                                task_url = "https://#{$client.host}#{task_url}"
+                              end
+                            %>
+                            <a href="<%= task_url %>" target="_blank"><%= task[:name] %></a>
+                          <% else %>
+                            <%= task[:name] %>
+                          <% end %>
+                        </td>
                         <td>
                           <input type="date" name="task_dates_<%= idx %>" 
                                  class="input is-narrow is-small pt-0 pb-0" 
@@ -139,7 +151,19 @@
                         <i class="fas fa-info-circle"></i>
                       <% end %>
                     </span>
-                    <span class="has-text-weight-medium"><%= topic['Title'] %></span>
+                    <span class="has-text-weight-medium">
+                      <% if topic['Url'] %>
+                        <% 
+                          full_url = topic['Url']
+                          if full_url.start_with?("/") 
+                            full_url = "https://#{$client.host}#{full_url}"
+                          end
+                        %>
+                        <a href="<%= full_url %>" target="_blank"><%= topic['Title'] %></a>
+                      <% else %>
+                        <%= topic['Title'] %>
+                      <% end %>
+                    </span>
                   </div>
                   <% if topic['Url'] && topic['Url'].start_with?('/content/enforced/') %>
                     <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] %>/download" class="button is-small is-link is-outlined" target="_blank">
