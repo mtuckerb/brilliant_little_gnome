@@ -101,13 +101,13 @@ done
 # Fix IDs and RPaths for all bundled dylibs
 echo "Fixing library IDs and RPaths..."
 find "$LIB_DIR" -maxdepth 1 -name "*.dylib" -type f | while read -r d; do
+  [ -f "$d" ] || continue
   chmod +w "$d"
   libname=$(basename "$d")
   echo "    Preparing $libname..."
-  codesign --remove-signature "$d" || true
-  install_name_tool -id "@rpath/$libname" "$d"
-  
-  # Add @loader_path/ rpath so libraries can find each other if bundled together
+  # Use || true for all binary manipulation to prevent script death
+  codesign --remove-signature "$d" 2>/dev/null || true
+  install_name_tool -id "@rpath/$libname" "$d" 2>/dev/null || true
   install_name_tool -add_rpath "@loader_path/" "$d" 2>/dev/null || true
   relink_dependencies "$d"
 done
@@ -129,26 +129,28 @@ export PATH="$PORTABLE_DIR/bin:$PATH"
 unset RUBYLIB RUBYOPT
 
 echo "Checking Ruby and Gem version..."
-"$RUBY_BIN" -v
-"$RUBY_BIN" -r rubygems -e "puts Gem.version"
+"$RUBY_BIN" -v || echo "Ruby bin failed to run"
+"$RUBY_BIN" -r rubygems -e "puts Gem.version" || echo "Gems failed to load"
 
 echo "Setting up Bundler..."
-"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document || "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler --no-document
+# Ensure we have a working bundler in the portable env
+"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document || \
+"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler --no-document || \
+echo "Bundler installation failed but continuing..."
 
 # Configure gem builds to find Homebrew dependencies
 echo "Configuring gem build settings..."
 for d in openssl@3 sqlite libyaml gmp; do
   PREFIX=$(brew --prefix $d 2>/dev/null || true)
-  if [ -n "$PREFIX" ]; then
+  if [ -n "$PREFIX" ] && [ -d "$PREFIX" ]; then
     NAME=$(echo $d | sed 's/@3//')
-    # Special case for sqlite
+    # Use both names (sqlite and sqlite3) for safety
     if [ "$NAME" == "sqlite" ]; then
       echo "  Setting build.sqlite3 to $PREFIX"
       "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.sqlite3 --with-sqlite3-dir="$PREFIX" || true
-    else
-      echo "  Setting build.$NAME to $PREFIX"
-      "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.$NAME --with-$NAME-dir="$PREFIX" || true
     fi
+    echo "  Setting build.$NAME to $PREFIX"
+    "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.$NAME --with-$NAME-dir="$PREFIX" || true
   fi
 done
 
@@ -158,8 +160,7 @@ done
 # Use DYLD_LIBRARY_PATH so compilation can find our bundled libs if needed
 export DYLD_LIBRARY_PATH="$LIB_DIR"
 echo "Running bundle install..."
-# Add --verbose to see where it hangs/fails
-"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3 --verbose
+"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3
 unset DYLD_LIBRARY_PATH
 
 # 6. Post-build Gem Repair (Relink .bundle files)
