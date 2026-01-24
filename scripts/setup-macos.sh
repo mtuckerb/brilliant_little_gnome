@@ -108,6 +108,7 @@ find "$LIB_DIR" -maxdepth 1 -name "*.dylib" -type f | while read -r d; do
   # Use || true for all binary manipulation to prevent script death
   codesign --remove-signature "$d" 2>/dev/null || true
   install_name_tool -id "@rpath/$libname" "$d" 2>/dev/null || true
+  # Add @loader_path/ rpath so libraries can find each other if bundled together
   install_name_tool -add_rpath "@loader_path/" "$d" 2>/dev/null || true
   relink_dependencies "$d"
 done
@@ -129,14 +130,13 @@ export PATH="$PORTABLE_DIR/bin:$PATH"
 unset RUBYLIB RUBYOPT
 
 echo "Checking Ruby and Gem version..."
-"$RUBY_BIN" -v || echo "Ruby bin failed to run"
-"$RUBY_BIN" -r rubygems -e "puts Gem.version" || echo "Gems failed to load"
+"$RUBY_BIN" -v || { echo "ERROR: Ruby binary failed"; exit 1; }
+"$RUBY_BIN" -r rubygems -e "puts \"RubyGems version: #{Gem.version}\"" || { echo "ERROR: RubyGems failed to load"; exit 1; }
 
 echo "Setting up Bundler..."
 # Ensure we have a working bundler in the portable env
 "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document || \
-"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler --no-document || \
-echo "Bundler installation failed but continuing..."
+"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler --no-document
 
 # Configure gem builds to find Homebrew dependencies
 echo "Configuring gem build settings..."
@@ -144,6 +144,9 @@ for d in openssl@3 sqlite libyaml gmp; do
   PREFIX=$(brew --prefix $d 2>/dev/null || true)
   if [ -n "$PREFIX" ] && [ -d "$PREFIX" ]; then
     NAME=$(echo $d | sed 's/@3//')
+    echo "  Adding $PREFIX to PKG_CONFIG_PATH"
+    export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+    
     # Use both names (sqlite and sqlite3) for safety
     if [ "$NAME" == "sqlite" ]; then
       echo "  Setting build.sqlite3 to $PREFIX"
