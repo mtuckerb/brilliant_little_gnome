@@ -106,9 +106,9 @@ find "$LIB_DIR" -maxdepth 1 -name "*.dylib" -type f | while read -r d; do
   echo "    Preparing $libname..."
   codesign --remove-signature "$d" || true
   install_name_tool -id "@rpath/$libname" "$d"
-  # Remove existing rpaths to avoid duplicates/confusion
-  otool -l "$d" | grep LC_RPATH -A2 | grep path | awk '{print $2}' | xargs -I{} install_name_tool -delete_rpath "{}" "$d" 2>/dev/null || true
-  install_name_tool -add_rpath "@loader_path/" "$d"
+  
+  # Add @loader_path/ rpath so libraries can find each other if bundled together
+  install_name_tool -add_rpath "@loader_path/" "$d" 2>/dev/null || true
   relink_dependencies "$d"
 done
 
@@ -127,6 +127,10 @@ export PATH="$PORTABLE_DIR/bin:$PATH"
 
 # Prevent Ruby from looking at global/system locations during build
 unset RUBYLIB RUBYOPT
+
+echo "Checking Ruby and Gem version..."
+"$RUBY_BIN" -v
+"$RUBY_BIN" -r rubygems -e "puts Gem.version"
 
 echo "Setting up Bundler..."
 "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document || "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler --no-document
@@ -154,7 +158,8 @@ done
 # Use DYLD_LIBRARY_PATH so compilation can find our bundled libs if needed
 export DYLD_LIBRARY_PATH="$LIB_DIR"
 echo "Running bundle install..."
-"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3
+# Add --verbose to see where it hangs/fails
+"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3 --verbose
 unset DYLD_LIBRARY_PATH
 
 # 6. Post-build Gem Repair (Relink .bundle files)
