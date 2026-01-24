@@ -80,21 +80,24 @@ echo "Bundling native system dependencies (OpenSSL, LibYAML, GMP, SQLite)..."
 for d in gmp libyaml openssl@3 sqlite; do
   P=$(brew --prefix $d 2>/dev/null)/lib || continue
   if [ -d "$P" ]; then
-    # Use -L to follow symlinks since many brew libs are symlinks
-    find "$P" -maxdepth 1 -name "*.dylib" -not -type d | while read -r src; do
+    echo "  Found $d at $P"
+    # Use -L and follow symlinks
+    find -L "$P" -maxdepth 1 -name "*.dylib" -type f | while read -r src; do
       target="$LIB_DIR/$(basename "$src")"
       if [ ! -f "$target" ]; then
-        cp -a "$src" "$LIB_DIR/" 2>/dev/null || true
+        echo "    Copying $(basename "$src")..."
+        cp -L "$src" "$LIB_DIR/" 2>/dev/null || true
       fi
     done
   fi
 done
 
 # Fix IDs and RPaths for all bundled dylibs
+echo "Fixing library IDs and RPaths..."
 find "$LIB_DIR" -maxdepth 1 -name "*.dylib" -type f | while read -r d; do
   chmod +w "$d"
   if [ -f "$d" ]; then
-    echo "    Preparing $d..."
+    echo "    Preparing $(basename "$d")..."
     codesign --remove-signature "$d" || true
     install_name_tool -id "@rpath/$(basename "$d")" "$d" || true
     install_name_tool -add_rpath "@loader_path/" "$d" 2>/dev/null || true
