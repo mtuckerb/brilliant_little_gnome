@@ -77,40 +77,38 @@ install_name_tool -add_rpath "@loader_path/../../lib" "$RUBY_BIN" || true
 
 # 4. Bundle Homebrew dependencies (common requirements for native gems)
 echo "Bundling native system dependencies (OpenSSL, LibYAML, GMP, SQLite)..."
+# Create a clean list of required dylibs to bundle
 for d in gmp libyaml openssl@3 sqlite; do
-  BREW_PATH=$(brew --prefix $d 2>/dev/null || true)
-  if [ -z "$BREW_PATH" ]; then
+  BREW_PREFIX=$(brew --prefix $d 2>/dev/null || true)
+  if [ -z "$BREW_PREFIX" ]; then
     echo "  [Warn] $d not found via brew."
     continue
   fi
   
-  P="$BREW_PATH/lib"
-  echo "  Searching $d at $P"
-  if [ -d "$P" ]; then
-    # Use -L to resolve symlinks and focus on actual dylibs
-    find -L "$P" -maxdepth 1 -name "*.dylib" -type f | while read -r src; do
-      base=$(basename "$src")
-      # Skip versioned symlinks if the real file is there (we'll capture it via find -L)
-      # Extracting the target filename
-      target="$LIB_DIR/$base"
-      if [ ! -f "$target" ]; then
-        echo "    Copying $base..."
-        cp -L "$src" "$LIB_DIR/" 2>/dev/null || true
-      fi
-    done
-  fi
+  echo "  Searching $d at $BREW_PREFIX"
+  # Copy actual files only, following symlinks to get the real dylib
+  find -L "$BREW_PREFIX/lib" -maxdepth 1 -name "*.dylib" -type f | while read -r src; do
+    # Filter out very specific versioned files to keep the bundle slim, but keep main ones
+    base=$(basename "$src")
+    # If it's a versioned file like libsqlite3.0.dylib, but we already have libsqlite3.dylib as a real file from find -L, that's fine
+    if [ ! -f "$LIB_DIR/$base" ]; then
+      echo "    Copying $base..."
+      cp -f "$src" "$LIB_DIR/"
+    fi
+  done
 done
 
 # Fix IDs and RPaths for all bundled dylibs
 echo "Fixing library IDs and RPaths..."
-# Use -L here too just in case
 find "$LIB_DIR" -maxdepth 1 -name "*.dylib" -type f | while read -r d; do
   chmod +w "$d"
   libname=$(basename "$d")
   echo "    Preparing $libname..."
   codesign --remove-signature "$d" || true
-  install_name_tool -id "@rpath/$libname" "$d" || true
-  install_name_tool -add_rpath "@loader_path/" "$d" 2>/dev/null || true
+  install_name_tool -id "@rpath/$libname" "$d"
+  # Remove existing rpaths to avoid duplicates/confusion
+  otool -l "$d" | grep LC_RPATH -A2 | grep path | awk '{print $2}' | xargs -I{} install_name_tool -delete_rpath "{}" "$d" 2>/dev/null || true
+  install_name_tool -add_rpath "@loader_path/" "$d"
   relink_dependencies "$d"
 done
 
@@ -130,7 +128,6 @@ export PATH="$PORTABLE_DIR/bin:$PATH"
 # Prevent Ruby from looking at global/system locations during build
 unset RUBYLIB RUBYOPT
 
-# We must use the portable ruby to install gems so they are compiled against its headers
 echo "Setting up Bundler..."
 "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document || "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler --no-document
 
@@ -140,10 +137,14 @@ for d in openssl@3 sqlite libyaml gmp; do
   PREFIX=$(brew --prefix $d 2>/dev/null || true)
   if [ -n "$PREFIX" ]; then
     NAME=$(echo $d | sed 's/@3//')
-    echo "  Setting build.$NAME to $PREFIX"
-    "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.$NAME --with-$NAME-dir="$PREFIX" || true
-  else
-     echo "  [Skip] No prefix for $d"
+    # Special case for sqlite
+    if [ "$NAME" == "sqlite" ]; then
+      echo "  Setting build.sqlite3 to $PREFIX"
+      "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.sqlite3 --with-sqlite3-dir="$PREFIX" || true
+    else
+      echo "  Setting build.$NAME to $PREFIX"
+      "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.$NAME --with-$NAME-dir="$PREFIX" || true
+    fi
   fi
 done
 
