@@ -117,9 +117,23 @@ export PATH="$PORTABLE_DIR/bin:$PATH"
 unset RUBYLIB RUBYOPT
 
 # We must use the portable ruby to install gems so they are compiled against its headers
-"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document
+# Use a consistent bundler version
+"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document || "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler --no-document
+
+# Configure gem builds to find Homebrew dependencies
+# This ensures native extensions compile correctly on the runner
+for d in openssl@3 sqlite libyaml gmp; do
+  PREFIX=$(brew --prefix $d 2>/dev/null)
+  if [ -n "$PREFIX" ]; then
+    NAME=$(echo $d | sed 's/@3//')
+    echo "  Configuring build.$NAME to use $PREFIX"
+    "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.$NAME --with-$NAME-dir="$PREFIX" || true
+  fi
+done
+
 "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config set --local path 'vendor/bundle'
 "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config set --local deployment 'true'
+
 # Use DYLD_LIBRARY_PATH so compilation can find our bundled libs if needed
 export DYLD_LIBRARY_PATH="$LIB_DIR"
 "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3
