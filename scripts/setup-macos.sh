@@ -78,14 +78,23 @@ install_name_tool -add_rpath "@loader_path/../../lib" "$RUBY_BIN" || true
 # 4. Bundle Homebrew dependencies (common requirements for native gems)
 echo "Bundling native system dependencies (OpenSSL, LibYAML, GMP, SQLite)..."
 for d in gmp libyaml openssl@3 sqlite; do
-  P=$(brew --prefix $d 2>/dev/null)/lib || continue
+  BREW_PATH=$(brew --prefix $d 2>/dev/null || true)
+  if [ -z "$BREW_PATH" ]; then
+    echo "  [Warn] $d not found via brew."
+    continue
+  fi
+  
+  P="$BREW_PATH/lib"
+  echo "  Searching $d at $P"
   if [ -d "$P" ]; then
-    echo "  Found $d at $P"
-    # Use -L and follow symlinks
+    # Use -L to resolve symlinks and focus on actual dylibs
     find -L "$P" -maxdepth 1 -name "*.dylib" -type f | while read -r src; do
-      target="$LIB_DIR/$(basename "$src")"
+      base=$(basename "$src")
+      # Skip versioned symlinks if the real file is there (we'll capture it via find -L)
+      # Extracting the target filename
+      target="$LIB_DIR/$base"
       if [ ! -f "$target" ]; then
-        echo "    Copying $(basename "$src")..."
+        echo "    Copying $base..."
         cp -L "$src" "$LIB_DIR/" 2>/dev/null || true
       fi
     done
@@ -94,19 +103,21 @@ done
 
 # Fix IDs and RPaths for all bundled dylibs
 echo "Fixing library IDs and RPaths..."
+# Use -L here too just in case
 find "$LIB_DIR" -maxdepth 1 -name "*.dylib" -type f | while read -r d; do
   chmod +w "$d"
-  if [ -f "$d" ]; then
-    echo "    Preparing $(basename "$d")..."
-    codesign --remove-signature "$d" || true
-    install_name_tool -id "@rpath/$(basename "$d")" "$d" || true
-    install_name_tool -add_rpath "@loader_path/" "$d" 2>/dev/null || true
-    relink_dependencies "$d"
-  fi
+  libname=$(basename "$d")
+  echo "    Preparing $libname..."
+  codesign --remove-signature "$d" || true
+  install_name_tool -id "@rpath/$libname" "$d" || true
+  install_name_tool -add_rpath "@loader_path/" "$d" 2>/dev/null || true
+  relink_dependencies "$d"
 done
 
 # One more pass on libruby specifically since it's the core
-relink_dependencies "$LIB_DIR/libruby.3.4.dylib"
+if [ -f "$LIB_DIR/libruby.3.4.dylib" ]; then
+  relink_dependencies "$LIB_DIR/libruby.3.4.dylib"
+fi
 
 # 5. Build Gems
 echo "Installing gems into vendor/bundle..."
@@ -120,17 +131,19 @@ export PATH="$PORTABLE_DIR/bin:$PATH"
 unset RUBYLIB RUBYOPT
 
 # We must use the portable ruby to install gems so they are compiled against its headers
-# Use a consistent bundler version
+echo "Setting up Bundler..."
 "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document || "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler --no-document
 
 # Configure gem builds to find Homebrew dependencies
-# This ensures native extensions compile correctly on the runner
+echo "Configuring gem build settings..."
 for d in openssl@3 sqlite libyaml gmp; do
-  PREFIX=$(brew --prefix $d 2>/dev/null)
+  PREFIX=$(brew --prefix $d 2>/dev/null || true)
   if [ -n "$PREFIX" ]; then
     NAME=$(echo $d | sed 's/@3//')
-    echo "  Configuring build.$NAME to use $PREFIX"
+    echo "  Setting build.$NAME to $PREFIX"
     "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.$NAME --with-$NAME-dir="$PREFIX" || true
+  else
+     echo "  [Skip] No prefix for $d"
   fi
 done
 
@@ -139,6 +152,7 @@ done
 
 # Use DYLD_LIBRARY_PATH so compilation can find our bundled libs if needed
 export DYLD_LIBRARY_PATH="$LIB_DIR"
+echo "Running bundle install..."
 "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" install --jobs 4 --retry 3
 unset DYLD_LIBRARY_PATH
 
