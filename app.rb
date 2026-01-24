@@ -131,6 +131,9 @@ if ENV['BRILLIANT_DATA_DIR']
   at_exit { File.delete(pid_path) if File.exist?(pid_path) }
 end
 
+enable :sessions
+use Rack::Flash, :sweep => true
+
 # API Listening Configuration
 configure do
   begin
@@ -896,6 +899,38 @@ get '/api/proxy/banner' do
     puts "[Proxy] Download failed for #{url}: #{response ? response.code : 'NIL'}"
     halt 404, "Image not found"
   end
+end
+
+post '/course/:id/assignments/:assignment_id/update' do
+  assignment = Assignment.find_by(brightspace_id: params[:assignment_id], course_id: params[:id])
+  halt 404, "Task not found" unless assignment && assignment.synthetic
+
+  new_date = params[:due_date]
+  parsed_date = nil
+  if new_date.present?
+    parsed_date = Time.parse(new_date)
+    # If it's just a date (YYYY-MM-DD), set to end of day
+    parsed_date = parsed_date.end_of_day if new_date.length <= 10
+  end
+
+  assignment.update(
+    name: params[:name],
+    description: params[:description],
+    due_date: parsed_date,
+    external_url: params[:external_url]
+  )
+
+  flash[:success] = "Task updated successfully"
+  redirect "/course/#{params[:id]}/assignments/#{params[:assignment_id]}"
+end
+
+post '/course/:id/assignments/:assignment_id/delete' do
+  assignment = Assignment.find_by(brightspace_id: params[:assignment_id], course_id: params[:id])
+  halt 404, "Task not found" unless assignment && assignment.synthetic
+
+  assignment.destroy
+  flash[:success] = "Task deleted"
+  redirect "/course/#{params[:id]}/assignments"
 end
 
 # Enhanced Assignment Details

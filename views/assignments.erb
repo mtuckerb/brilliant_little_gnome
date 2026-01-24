@@ -65,7 +65,14 @@
                   </div>
                 </td>
                 <td class="has-text-right">
-                  <a href="<%= view_url %>" class="button is-small is-primary is-light">View Details</a>
+                  <div class="buttons is-right">
+                    <% if a.respond_to?(:synthetic) && a.synthetic %>
+                      <a href="<%= view_url %>" class="button is-small is-info is-light">
+                        <span class="icon is-small"><i class="fas fa-edit"></i></span>
+                      </a>
+                    <% end %>
+                    <a href="<%= view_url %>" class="button is-small is-primary is-light">View Details</a>
+                  </div>
                 </td>
               </tr>
             <% end %>

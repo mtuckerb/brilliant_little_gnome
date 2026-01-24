@@ -190,7 +190,14 @@
                         <p class="has-text-danger is-size-7 mb-1">
                           Due: <%= format_date(a.due_date, "%A, %b %d at %I:%M %p") %>
                         </p>
-                        <a href="/course/<%= @course_id %>/assignments/<%= a.brightspace_id %>" class="button is-small is-link is-light">View Details</a>
+                        <div class="buttons is-right">
+                          <% if a.synthetic %>
+                            <a href="/course/<%= @course_id %>/assignments/<%= a.brightspace_id %>" class="button is-small is-info is-light">
+                              <span class="icon is-small"><i class="fas fa-edit"></i></span>
+                            </a>
+                          <% end %>
+                          <a href="/course/<%= @course_id %>/assignments/<%= a.brightspace_id %>" class="button is-small is-link is-light">View Details</a>
+                        </div>
                       </div>
                     </div>
                   </div>
