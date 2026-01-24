@@ -33,9 +33,13 @@
           <div class="is-flex is-justify-content-end">
             <div class="buttons">
               <% if @overview && (@overview['HasAttachment'] || @overview['Attachment']) %>
+                <button class="button is-info is-small" onclick="openPdfViewer('/course/<%= @course_id %>/overview/view', '/course/<%= @course_id %>/overview/download', 'Syllabus')">
+                    <span class="icon is-small mr-1"><i class="fas fa-eye"></i></span>
+                    View Syllabus
+                </button>
                 <a href="/course/<%= @course_id %>/overview/download" class="button is-link is-small" target="_blank">
                     <span class="icon is-small mr-1"><i class="fas fa-file-download"></i></span>
-                    Syllabus File 
+                    Download 
                 </a>
               <% end %>
               <a href="/course/<%= @course_id %>/download_all" class="button is-primary is-small">
@@ -131,9 +135,14 @@
                                   <%= topic['Title'] %>
                                 <% end %>
                               </span>
-                              <% if topic['Url'] && topic['Url'].start_with?("/content/enforced/") %>
-                                <a href="/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/download" class="button is-small is-link is-inverted">Download</a>
-                              <% end %>
+                              <div class="buttons">
+                                <% if topic['Title'] && topic['Title'].downcase.end_with?('.pdf') %>
+                                  <button class="button is-small is-info is-inverted" onclick="openPdfViewer('/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/view', '/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/download', '<%= topic['Title'].gsub("'","\\\\'") %>')">View</button>
+                                <% end %>
+                                <% if topic['Url'] && topic['Url'].start_with?("/content/enforced/") %>
+                                  <a href="/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/download" class="button is-small is-link is-inverted">Download</a>
+                                <% end %>
+                              </div>
                             </div>
                           </div>
                       <% end %>
@@ -163,9 +172,14 @@
                               <% end %>
                             </span>
                           </div>
-                          <% if topic['Url'] && topic['Url'].start_with?("/content/enforced/") %>
-                            <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/download" class="button is-small is-link is-outlined" target="_blank">Download</a>
-                          <% end %>
+                          <div class="buttons">
+                            <% if topic['Title'] && topic['Title'].downcase.end_with?('.pdf') %>
+                              <button class="button is-small is-info is-outlined" onclick="openPdfViewer('/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/view', '/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/download', '<%= topic['Title'].gsub("'","\\\\'") %>')">View</button>
+                            <% end %>
+                            <% if topic['Url'] && topic['Url'].start_with?("/content/enforced/") %>
+                              <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/download" class="button is-small is-link is-outlined" target="_blank">Download</a>
+                            <% end %>
+                          </div>
                       </div>
                     </div>
                 <% end %>
@@ -204,5 +218,50 @@ function toggleAssignmentInline(checkbox) {
     }
   })
   .catch(err => console.error("Error toggling assignment:", err));
+}
+</script>
+
+<!-- PDF Viewer Modal -->
+<div id="pdfModal" class="modal">
+  <div class="modal-background" onclick="closePdfModal()"></div>
+  <div class="modal-card" style="width: 90%; max-width: 1000px; height: 90vh;">
+    <header class="modal-card-head">
+      <p class="modal-card-title" id="pdfModalTitle">PDF Viewer</p>
+      <button class="delete" aria-label="close" onclick="closePdfModal()"></button>
+    </header>
+    <section class="modal-card-body p-0" style="overflow: hidden;">
+      <iframe id="pdfFrame" src="" style="width: 100%; height: 100%; border: none;"></iframe>
+    </section>
+    <footer class="modal-card-foot is-justify-content-flex-end">
+      <a id="pdfDownloadBtn" href="#" class="button is-link" target="_blank">
+        <i class="fas fa-download mr-1"></i> Download
+      </a>
+      <button class="button" onclick="closePdfModal()">Close</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+function openPdfViewer(viewUrl, downloadUrl, title) {
+  const modal = document.getElementById('pdfModal');
+  const frame = document.getElementById('pdfFrame');
+  const titleEl = document.getElementById('pdfModalTitle');
+  const downloadBtn = document.getElementById('pdfDownloadBtn');
+  
+  titleEl.innerText = title;
+  downloadBtn.href = downloadUrl;
+  frame.src = viewUrl;
+  
+  modal.classList.add('is-active');
+  document.documentElement.classList.add('is-clipped');
+}
+
+function closePdfModal() {
+  const modal = document.getElementById('pdfModal');
+  const frame = document.getElementById('pdfFrame');
+  
+  modal.classList.remove('is-active');
+  document.documentElement.classList.remove('is-clipped');
+  frame.src = ""; // Stop loading/playing
 }
 </script>

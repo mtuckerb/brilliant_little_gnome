@@ -671,7 +671,7 @@ post '/course/:id/module/:module_id/create_tasks' do
 
     due_date = date_str.present? ? (Time.parse(date_str) rescue nil) : nil
     # Fallback if parsing failed or was never there
-    due_date ||= (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+    due_date ||= @course&.end_of_week_date
 
     # Determine ext_id using index to keep it unique per module
     ext_id = "syn_#{node_module_id}_#{idx}"
@@ -1209,6 +1209,26 @@ post '/course/:id/update_target_grade' do
   redirect back
 end
 
+post '/course/:id/update_end_of_week' do
+  @course = Course.find_by(org_unit_id: params[:id])
+  @course.update(end_of_week_day: params[:end_of_week_day].to_i) if @course
+  redirect back
+end
+
+post '/course/:id/grades/:grade_id/toggle_extra_credit' do
+  grade = Grade.find_by(id: params[:grade_id], course_id: params[:id])
+  if grade
+    grade.update(is_extra_credit: !grade.is_extra_credit)
+  end
+  
+  if request.xhr?
+    content_type :json
+    { status: 'ok', is_extra_credit: grade.is_extra_credit }.to_json
+  else
+    redirect back
+  end
+end
+
 # Discussions
 get '/course/:id/discussions' do
   @active_tab = 'discussions'
@@ -1468,6 +1488,30 @@ get '/course/:id/overview/download' do
   end
 end
 
+# PDF Overview Viewer Route
+get '/course/:id/overview/view' do
+  course_id = params[:id]
+  api_path = "/d2l/api/le/1.40/#{course_id}/overview/attachment"
+  http_resp = $client.download_file(api_path)
+  
+  if http_resp && http_resp.code == '200'
+    body_content = http_resp.body
+    puts "[PDF Proxy] Overview Success: #{api_path} Body size: #{body_content.to_s.bytesize}"
+    
+    content_type 'application/pdf'
+    response.headers['Content-Disposition'] = "inline; filename=\"syllabus_#{course_id}.pdf\""
+    response.headers['Content-Length'] = body_content.to_s.bytesize.to_s
+    response.headers['X-Frame-Options'] = 'ALLOWALL'
+    response.headers['Content-Security-Policy'] = "frame-ancestors 'self' *"
+    
+    body_content
+  else
+    status_code = http_resp ? http_resp.code : 'No Response'
+    puts "[PDF Proxy] Overview Failed: #{api_path} Status: #{status_code}"
+    "View failed: Status #{status_code}."
+  end
+end
+
 
 get '/course/:id/topic/:topic_id/download' do
   course_id = params[:id]
@@ -1488,6 +1532,33 @@ get '/course/:id/topic/:topic_id/download' do
   else
     status_code = http_resp ? http_resp.code : 'No Response'
     "Download failed: Status #{status_code} (trying to fetch topic #{topic_id} file)."
+  end
+end
+
+
+# PDF Viewer Route
+get '/course/:id/topic/:topic_id/view' do
+  course_id = params[:id]
+  topic_id = params[:topic_id]
+  
+  api_path = "/d2l/api/le/1.40/#{course_id}/content/topics/#{topic_id}/file"
+  http_resp = $client.download_file(api_path)
+  
+  if http_resp && http_resp.code == '200'
+    body_content = http_resp.body
+    puts "[PDF Proxy] Success: #{api_path} Body size: #{body_content.to_s.bytesize}"
+    
+    content_type 'application/pdf'
+    response.headers['Content-Disposition'] = "inline; filename=\"topic_#{topic_id}.pdf\""
+    response.headers['Content-Length'] = body_content.to_s.bytesize.to_s
+    response.headers['X-Frame-Options'] = 'ALLOWALL'
+    response.headers['Content-Security-Policy'] = "frame-ancestors 'self' *"
+    
+    body_content
+  else
+    status_code = http_resp ? http_resp.code : 'No Response'
+    puts "[PDF Proxy] Failed: #{api_path} Status: #{status_code}"
+    "View failed: Status #{status_code}."
   end
 end
 

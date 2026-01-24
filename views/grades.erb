@@ -35,6 +35,23 @@
                 </div>
               </div>
             </form>
+            <form action="/course/<%= @course_id %>/update_end_of_week" method="post" class="mt-2 is-flex is-align-items-center">
+              <label class="is-size-7 mr-2">End of Week:</label>
+              <div class="field has-addons">
+                <div class="control">
+                  <div class="select is-small">
+                    <select name="end_of_week_day">
+                      <% ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].each_with_index do |day, i| %>
+                        <option value="<%= i %>" <%= 'selected' if (@course.end_of_week_day || 0) == i %>><%= day %></option>
+                      <% end %>
+                    </select>
+                  </div>
+                </div>
+                <div class="control">
+                  <button type="submit" class="button is-small is-success is-light">Apply</button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
         <div class="level-right">
@@ -192,6 +209,14 @@
                   <% unless is_graded %>
                     <span class="tag is-small is-light ml-2">Ungraded</span>
                   <% end %>
+                  <% if g.respond_to?(:is_extra_credit) && g.is_extra_credit %>
+                    <span class="tag is-small is-warning ml-2">Extra Credit</span>
+                  <% end %>
+                  <div class="is-pulled-right">
+                    <button class="button is-ghost is-small p-0 h-auto" onclick="toggleExtraCredit(<%= g.id %>)" title="Toggle Extra Credit">
+                      <i class="fas fa-star <%= g.is_extra_credit ? 'has-text-warning' : 'has-text-grey-lighter' %>"></i>
+                    </button>
+                  </div>
                 </td>
                 <td class="has-text-centered">
                   <span class="is-size-7">
@@ -252,3 +277,20 @@
     </div>
   </div>
 </div>
+
+<script>
+function toggleExtraCredit(gradeId) {
+  const courseId = "<%= @course_id %>";
+  fetch(`/course/${courseId}/grades/${gradeId}/toggle_extra_credit`, {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.status === 'ok') {
+      location.reload(); // Refresh to show updated matching
+    }
+  })
+  .catch(err => console.error("Error toggling extra credit:", err));
+}
+</script>

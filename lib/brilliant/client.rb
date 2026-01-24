@@ -1171,6 +1171,7 @@ class BrilliantClient
     end
 
     request = Net::HTTP::Get.new(uri)
+    request['Referer'] = "https://#{@host}/d2l/home"
     
     if @token
       request['Authorization'] = "Bearer #{@token}"

@@ -451,6 +451,11 @@ module CourseHelpers
     end
     
     inferred_date ||= parent_date
+    
+    # NEW: If still no date, and we have a course reference, use the course's end-of-week
+    if inferred_date.nil? && @course.respond_to?(:end_of_week_date)
+      inferred_date = @course.end_of_week_date
+    end
 
     # 1. PROCESS TOPICS (Structural Identifying)
     (module_obj['Topics'] || []).each do |topic|

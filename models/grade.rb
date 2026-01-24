@@ -22,7 +22,7 @@ class Grade < ActiveRecord::Base
     graded_items = grades.select { |g| g.is_graded? && (g.denominator || 0) > 0 }
     
     if graded_items.empty?
-      all_possible_points = (grades.sum(:denominator) || 0).to_f
+      all_possible_points = (grades.where(is_extra_credit: false).sum(:denominator) || 0).to_f
       return { 
         score: 0, 
         confidence: 0, 
@@ -35,19 +35,33 @@ class Grade < ActiveRecord::Base
       } 
     end
 
+    # Total points earned include extra credit numerators
     total_points_earned = graded_items.sum { |g| g.numerator || 0 }
-    total_points_possible = graded_items.sum { |g| g.denominator || 0 }
     
-    # All points in the syllabus (graded or not)
-    all_possible_points = (grades.sum(:denominator) || 0).to_f
+    # Total points possible EXCLUDE extra credit denominators
+    total_points_possible = graded_items.reject(&:is_extra_credit).sum { |g| g.denominator || 0 }
     
-    current_score = (total_points_earned.to_f / total_points_possible.to_f) * 100
+    # All points in the syllabus (graded or not) EXCLUDE extra credit
+    all_possible_points = (grades.where(is_extra_credit: false).sum(:denominator) || 0).to_f
     
-    # Confidence is what percent of the total points have been graded
-    confidence = all_possible_points > 0 ? (total_points_possible.to_f / all_possible_points) * 100 : 0
+    # Current score can exceed 100% if extra credit is high
+    current_score = total_points_possible > 0 ? (total_points_earned.to_f / total_points_possible.to_f) * 100 : 100.0
+    
+    # Baseline Confidence: what percent of the total points have been graded
+    base_confidence = all_possible_points > 0 ? (total_points_possible.to_f / all_possible_points) * 100 : 0
+    
+    # Updated Confidence logic:
+    # If total points in syllabus >= 100, we trust the points-based percentage directly.
+    # Otherwise, we apply the item-count penalty to ensure low confidence for sparse data.
+    if all_possible_points >= 100
+      confidence = base_confidence
+    else
+      item_count_multiplier = [graded_items.count / 3.0, 1.0].min
+      confidence = base_confidence * item_count_multiplier
+    end
 
     remaining_points = all_possible_points - total_points_possible
-    max_potential_score = ((total_points_earned + remaining_points) / all_possible_points) * 100
+    max_potential_score = all_possible_points > 0 ? ((total_points_earned + remaining_points) / all_possible_points) * 100 : 100.0
 
     # Projection Math
     target_grade = Course.find_by(org_unit_id: course_id)&.target_grade || 93.0
@@ -68,7 +82,8 @@ class Grade < ActiveRecord::Base
       target_grade: target_grade,
       required_avg: required_avg ? required_avg.round(2) : nil,
       is_impossible: is_impossible,
-      points_needed: points_needed.round(2)
+      points_needed: points_needed.round(2),
+      item_count: graded_items.count
     }
   end
 
