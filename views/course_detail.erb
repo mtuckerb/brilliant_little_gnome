@@ -4,33 +4,10 @@
     <%= erb :'partials/sidebar' %>
   </div>
   <div class="column is-9">
-    <% if @course_upcoming && !@course_upcoming.empty? %>
-      <div class="notification is-warning is-light mb-4">
-        <button class="delete"></button>
-        <h5 class="title is-5 mb-2"><i class="fas fa-calendar-day mr-2"></i> Upcoming Assignments (Next 7 Days)</h5>
-        <% @course_upcoming.each do |a| %>
-          <div class="box p-3 mb-2" style="background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.05);">
-            <div class="is-flex is-justify-content-space-between is-align-items-center">
-              <div class="is-flex is-align-items-center">
-                <div class="control mr-3">
-                  <input type="checkbox" class="assignment-checkbox" data-id="<%= a.id %>" onchange="toggleAssignmentInline(this)">
-                </div>
-                <strong><%= a.name %></strong>
-              </div>
-              <span class="has-text-danger is-size-7">
-                Due: <%= format_date(a.due_date, "%A, %b %d at %I:%M %p") %>
-                <a href="/course/<%= @course_id %>/assignments/<%= a.brightspace_id %>" class="button is-small is-white has-text-link ml-2">View</a>
-              </span>
-            </div>
-          </div>
-        <% end %>
-      </div>
-   <% end %>
-
     <div class="box">
       <div class="mb-5">
-          <h4 class="title is-4 mb-2">Syllabus / Overview</h4>
-          <div class="is-flex is-justify-content-end">
+          <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
+            <h4 class="title is-4 mb-0">Syllabus / Overview</h4>
             <div class="buttons">
               <% if @overview && (@overview['HasAttachment'] || @overview['Attachment']) %>
                 <button class="button is-info is-small" onclick="openPdfViewer('/course/<%= @course_id %>/overview/view', '/course/<%= @course_id %>/overview/download', 'Syllabus')">
@@ -46,6 +23,87 @@
                   <span class="icon is-small mr-1"><i class="fas fa-archive"></i></span>
                   Download Everything (Zip)
               </a>
+            </div>
+          </div>
+
+          <!-- Course Settings Section -->
+          <div class="notification is-light py-3 px-4 mb-5" style="border: 1px solid #eee; background: #fafafa;">
+            <p class="is-size-7 uppercase has-text-weight-bold has-text-grey mb-3" style="text-transform: uppercase; letter-spacing: 0.5px;">
+              <i class="fas fa-cog mr-1"></i> Course Settings
+            </p>
+            <div class="columns is-multiline is-mobile">
+              <div class="column is-6-mobile is-3-tablet">
+                <form action="/course/<%= @course_id %>/update_units" method="post">
+                  <label class="label is-is-size-7 mb-1">Units (Credits)</label>
+                  <div class="field has-addons">
+                    <div class="control is-expanded">
+                      <input class="input is-small" type="number" name="units" value="<%= @course&.units || 3 %>">
+                    </div>
+                    <div class="control">
+                      <button type="submit" class="button is-small is-primary">Save</button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div class="column is-6-mobile is-3-tablet">
+                <form action="/course/<%= @course_id %>/update_target_grade" method="post">
+                  <label class="label is-is-size-7 mb-1">Target Grade (%)</label>
+                  <div class="field has-addons">
+                    <div class="control is-expanded">
+                      <input class="input is-small" type="number" step="0.1" name="target_grade" value="<%= @course&.target_grade || 93.0 %>">
+                    </div>
+                    <div class="control">
+                      <button type="submit" class="button is-small is-info">Apply</button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div class="column is-6-mobile is-3-tablet">
+                <form action="/course/<%= @course_id %>/update_end_of_week" method="post">
+                  <label class="label is-is-size-7 mb-1">End of Week</label>
+                  <div class="field has-addons">
+                    <div class="control is-expanded">
+                      <div class="select is-small is-fullwidth">
+                        <select name="end_of_week_day">
+                          <% ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].each_with_index do |day, i| %>
+                            <option value="<%= i %>" <%= 'selected' if (@course.end_of_week_day || 0) == i %>><%= day %></option>
+                          <% end %>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="control">
+                      <button type="submit" class="button is-small is-success">Set</button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div class="column is-6-mobile is-3-tablet">
+                <form action="/course/<%= @course_id %>/update_color" method="post">
+                  <label class="label is-is-size-7 mb-1">Custom Color</label>
+                  <div class="field has-addons">
+                    <div class="control is-expanded">
+                      <%# Support for hex picker %>
+                      <% 
+                        current_color = @course.custom_color || ""
+                        # Convert hue number back to hex if needed for the color picker
+                        unless current_color.start_with?('#')
+                          hue = current_color.empty? ? ((@course.name[0..6].upcase.strip.chars.map(&:ord).reduce(0, :+) * 137) % 360) : current_color.to_i
+                          # Quick HSL to HEX for UI representation (approximate)
+                          # We'll just display it as a color picker and let the user pick a new one
+                          current_color = "#739AC3" 
+                        end
+                      %>
+                      <input class="input is-small p-0" type="color" name="custom_color" value="<%= current_color %>" style="height: 27px; width: 100%;">
+                    </div>
+                    <div class="control">
+                      <button type="submit" class="button is-small is-link">Update</button>
+                    </div>
+                  </div>
+                </form>
+              </div>
             </div>
           </div>
       </div>
@@ -104,6 +162,42 @@
               </details>
             </div>
           <% end %>
+        <% end %>
+
+        <%# --- UPCOMING ASSIGNMENTS (Next 7 Days) --- %>
+        <% if @course_upcoming && !@course_upcoming.empty? %>
+          <div class="mb-5">
+            <details class="section-details" open>
+              <summary class="is-clickable p-2 has-background-warning-light" style="list-style: none; outline: none; border-radius: 4px; border: 1px solid #ffe8cc;">
+                <div class="is-flex is-justify-content-space-between is-align-items-center">
+                  <h5 class="title is-5 mb-0"><i class="fas fa-calendar-day mr-2 has-text-warning-dark"></i> Upcoming Assignments (Next 7 Days)</h5>
+                  <span class="icon is-small has-text-warning-dark">
+                    <i class="fas fa-chevron-down"></i>
+                  </span>
+                </div>
+              </summary>
+              <div class="p-4 has-background-white border-light">
+                <% @course_upcoming.each do |a| %>
+                  <div class="box p-3 mb-2" style="background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.05);">
+                    <div class="is-flex is-justify-content-space-between is-align-items-center">
+                      <div class="is-flex is-align-items-center">
+                        <div class="control mr-3">
+                          <input type="checkbox" class="assignment-checkbox" data-id="<%= a.id %>" onchange="toggleAssignmentInline(this)">
+                        </div>
+                        <strong class="is-size-6"><%= a.name %></strong>
+                      </div>
+                      <div class="has-text-right">
+                        <p class="has-text-danger is-size-7 mb-1">
+                          Due: <%= format_date(a.due_date, "%A, %b %d at %I:%M %p") %>
+                        </p>
+                        <a href="/course/<%= @course_id %>/assignments/<%= a.brightspace_id %>" class="button is-small is-link is-light">View Details</a>
+                      </div>
+                    </div>
+                  </div>
+                <% end %>
+              </div>
+            </details>
+          </div>
         <% end %>
 
         <% if @syllabus_info && (@syllabus_info[:modules].any? || @syllabus_info[:topics].any?) %>

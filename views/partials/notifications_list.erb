@@ -17,6 +17,9 @@
               </span>
               <span class="has-text-grey-light is-size-7 mr-2">#<%= n.id %></span>
               <span class="is-size-7 has-text-weight-bold has-text-grey-darker">
+                <% if n.course_name %>
+                  <span class="px-1 mr-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(n.course_name) %>"><%= n.course_name[0..6] %></span>
+                <% end %>
                 <%= n.course_name || (n.course_id ? "Course #{n.course_id}" : "General") %>
               </span>
               <% if n.semester %>

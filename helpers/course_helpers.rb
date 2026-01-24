@@ -575,4 +575,55 @@ module CourseHelpers
     
     tasks.uniq { |t| t[:name] }
   end
+  def course_pill_style(course_name)
+    return "" if course_name.nil?
+    
+    # Check if we have a custom color saved for this course
+    course = Course.find_by(name: course_name)
+    if course && course.respond_to?(:custom_color) && course.custom_color.present?
+      custom = course.custom_color.to_s
+      if custom.start_with?('#')
+        # Hex color: Generate pastel variants based on this hex
+        # Extract R, G, B
+        r = custom[1..2].to_i(16)
+        g = custom[3..4].to_i(16)
+        b = custom[5..6].to_i(16)
+        
+        # Convert to HSL for styling
+        r_f = r / 255.0
+        g_f = g / 255.0
+        b_f = b / 255.0
+        max = [r_f, g_f, b_f].max
+        min = [r_f, g_f, b_f].min
+        h, s, l = 0, 0, (max + min) / 2.0
+
+        if max != min
+          d = max - min
+          s = l > 0.5 ? d / (2.0 - max - min) : d / (max + min)
+          case max
+          when r_f then h = (g_f - b_f) / d + (g_f < b_f ? 6 : 0)
+          when g_f then h = (b_f - r_f) / d + 2
+          when b_f then h = (r_f - g_f) / d + 4
+          end
+          h /= 6.0
+        end
+        hue = (h * 360).round
+      else
+        hue = custom.to_i
+      end
+    else
+      prefix = course_name[0..6].upcase.strip
+      # Stable hash using character values
+      hash_val = prefix.chars.map(&:ord).reduce(0, :+)
+      hue = (hash_val * 137) % 360 # Spread the colors
+    end
+    
+    # Pastel/Light theme: light background, dark text
+    bg = "hsl(#{hue}, 85%, 96%)"
+    border = "hsl(#{hue}, 40%, 85%)"
+    text = "hsl(#{hue}, 80%, 25%)"
+    
+    "background-color: #{bg}; color: #{text}; border: 1px solid #{border};"
+  end
+
 end

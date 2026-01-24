@@ -388,6 +388,117 @@ get '/callback' do
   end
 end
 
+get '/calendar' do
+  @active_tab = 'calendar'
+  @view = params[:view] || 'week'
+  @date = params[:date] ? Date.parse(params[:date]) : Date.today
+  @show_completed = params[:show_completed] == 'true'
+  
+  if @view == 'week'
+    @start_date = @date
+    @end_date = @date + 6.days
+  else
+    # Month View: Start from today and show 4 weeks (standard rolling month)
+    @start_date = @date
+    @end_date = @date + 27.days # 4 weeks total
+  end
+  
+  # Fetch all items with due dates in this range
+  assignments = Assignment.includes(:course).where(due_date: @start_date.beginning_of_day..@end_date.end_of_day)
+  grades = Grade.includes(:course).where(due_date: @start_date.beginning_of_day..@end_date.end_of_day)
+  
+  # Filter completed assignments if not requested
+  unless @show_completed
+    assignments = assignments.where(completed: false)
+    # For grades, we consider them "completed" if they have been graded (numerator is not null)
+    # or if there is a matching assignment that is completed.
+    # However, the deduplication logic below already handles names.
+    # Let's filter out grades that already have a score if show_completed is false.
+    grades = grades.where(numerator: nil)
+  end
+
+  @items_by_date = {}
+  
+  assignments.each do |a|
+    date_key = a.due_date.to_date.to_s
+    @items_by_date[date_key] ||= []
+    @items_by_date[date_key] << {
+      type: 'assignment',
+      id: a.brightspace_id,
+      course_id: a.course_id,
+      course_name: a.course&.name,
+      name: a.name,
+      time: a.due_date,
+      completed: a.completed,
+      url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
+    }
+  end
+  
+  grades.each do |g|
+    date_key = g.due_date.to_date.to_s
+    existing = @items_by_date[date_key] || []
+    next if existing.any? { |e| e[:name] == g.name }
+    
+    @items_by_date[date_key] ||= []
+    @items_by_date[date_key] << {
+      type: 'grade',
+      id: g.brightspace_id,
+      course_id: g.course_id,
+      course_name: g.course&.name,
+      name: g.name,
+      time: g.due_date,
+      url: "/course/#{g.course_id}/grades"
+    }
+  end
+
+  erb :calendar
+end
+
+post '/calendar/update_due_date' do
+  type = params[:type]
+  item_id = params[:id] # brightspace_id
+  new_date = params[:due_date]
+  
+  puts "[CalendarUpdate] Request: type=#{type}, id=#{item_id}, due_date=#{new_date}"
+  
+  model = (type == 'assignment' ? Assignment : Grade)
+  item = model.find_by(brightspace_id: item_id)
+  
+  if item
+    begin
+      if new_date.present?
+        # Ensure it's at end of day if just a date (common for manual selection)
+        parsed_date = Time.parse(new_date)
+        if new_date.length <= 10 # YYYY-MM-DD
+          parsed_date = parsed_date.end_of_day
+        end
+        item.update!(due_date: parsed_date)
+        puts "[CalendarUpdate] Success: Updated #{type} #{item_id} to #{item.due_date}"
+      else
+        item.update!(due_date: nil)
+        puts "[CalendarUpdate] Success: Cleared due_date for #{type} #{item_id}"
+      end
+    rescue => e
+      puts "[CalendarUpdate] Error: #{e.message}"
+      puts e.backtrace.first(5).join("\n")
+      status 422
+      return { status: 'error', message: e.message }.to_json if request.xhr?
+      flash[:error] = "Error: #{e.message}"
+    end
+  else
+    puts "[CalendarUpdate] Not Found: type=#{type}, id=#{item_id}"
+    status 404
+    return { status: 'error', message: "Item not found (ID: #{item_id})" }.to_json if request.xhr?
+  end
+  
+  if request.xhr?
+    content_type :json
+    { status: 'ok', due_date: item&.due_date ? item.due_date.iso8601 : nil }.to_json
+  else
+    redirect back
+  end
+end
+
 get '/dashboard' do
   redirect '/' unless $client.authenticated?
   
@@ -1200,6 +1311,15 @@ end
 post '/course/:id/update_units' do
   @course = Course.find_by(org_unit_id: params[:id])
   @course.update(units: params[:units]) if @course
+  redirect back
+end
+
+
+post '/course/:id/update_color' do
+  @course = Course.find_by(org_unit_id: params[:id])
+  if @course
+    @course.update(custom_color: params[:custom_color])
+  end
   redirect back
 end
 

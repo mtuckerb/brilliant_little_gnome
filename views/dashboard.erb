@@ -185,8 +185,14 @@
               </div>
             </div>
             <div class="column">
-              <p class="is-size-7 has-text-weight-bold mb-0">
-                <%= Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course" %>
+              <p class="is-size-7 has-text-weight-bold mb-1">
+                <% 
+                   c_name = Course.find_by(org_unit_id: a.course_id)&.name 
+                   if c_name
+                %>
+                  <span class="px-1 mr-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(c_name) %>"><%= c_name[0..6] %></span>
+                <% end %>
+                <%= c_name || "Unknown Course" %>
               </p>
               <h6 class="title is-6 mb-0"><%= a.name %></h6>
               <p class="is-size-7 has-text-danger mb-0" onclick="event.stopPropagation()">
@@ -210,6 +216,9 @@
       <% @recent_notifications.each do |n| %>
         <div class="box mb-4 notification-card-small" onclick="window.location='/notifications/<%= n.id %>/view'" style="cursor:pointer; border-left: 4px solid <%= n.urgency == 3 ? '#ff3860' : (n.urgency == 2 ? '#ffdd57' : '#3273dc') %>;">
           <p class="is-size-7 has-text-primary has-text-weight-bold mb-1">
+            <% if n.course_name %>
+              <span class="px-1 mr-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(n.course_name) %>"><%= n.course_name[0..6] %></span>
+            <% end %>
             <%= n.course_name ? extract_course_info(n.course_name)[:course_display] : "General" %>
           </p>
           <h6 class="title is-6 mb-2"><%= n.title %></h6>

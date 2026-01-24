@@ -1,0 +1,453 @@
+<div class="calendar-container">
+  <div class="calendar-header-box mb-5">
+    <div class="level">
+      <div class="level-left">
+        <div>
+          <h1 class="title is-3 mb-1">
+            <span class="icon mr-2"><i class="fas fa-calendar-alt"></i></span>
+            <%= @view == 'month' ? "Next 30 Days" : "Next 7 Days" %>
+          </h1>
+          <p class="subtitle is-6 has-text-grey">
+            <%= @start_date.strftime("%b %d") %> - <%= @end_date.strftime("%b %d, %Y") %>
+          </p>
+        </div>
+      </div>
+      <div class="level-right">
+        <div class="mr-4">
+          <a href="/calendar?view=<%= @view %>&date=<%= @date.strftime("%Y-%m-%d") %>&show_completed=<%= !@show_completed %>" class="button is-small <%= @show_completed ? 'is-info' : 'is-white' %>">
+            <span class="icon is-small mr-1">
+              <i class="<%= @show_completed ? 'fas fa-eye' : 'fas fa-eye-slash' %>"></i>
+            </span>
+            <span><%= @show_completed ? "Hide Completed" : "Show Completed" %></span>
+          </a>
+        </div>
+
+        <div class="field has-addons mr-4">
+          <p class="control">
+            <a href="/calendar?view=month&date=<%= @date.strftime("%Y-%m-%d") %>&show_completed=<%= @show_completed %>" class="button is-small <%= 'is-primary' if @view == 'month' %>">
+              Month
+            </a>
+          </p>
+          <p class="control">
+            <a href="/calendar?view=week&date=<%= @date.strftime("%Y-%m-%d") %>&show_completed=<%= @show_completed %>" class="button is-small <%= 'is-primary' if @view == 'week' %>">
+              Week
+            </a>
+          </p>
+        </div>
+
+        <div class="buttons">
+          <% 
+            prev_date = (@view == 'month' ? @date - 1.month : @date - 1.week).strftime("%Y-%m-%d")
+            next_date = (@view == 'month' ? @date + 1.month : @date + 1.week).strftime("%Y-%m-%d")
+            sc_param = "&show_completed=#{@show_completed}"
+          %>
+          <a href="/calendar?view=<%= @view %>&date=<%= prev_date %><%= sc_param %>" class="button is-white">
+            <span class="icon"><i class="fas fa-chevron-left"></i></span>
+          </a>
+          <a href="/calendar?view=<%= @view %>&date=<%= Date.today.strftime("%Y-%m-%d") %><%= sc_param %>" class="button is-white">Today</a>
+          <a href="/calendar?view=<%= @view %>&date=<%= next_date %><%= sc_param %>" class="button is-white">
+            <span class="icon"><i class="fas fa-chevron-right"></i></span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <% if @view == 'month' %>
+    <!-- ROLLING MONTH VIEW (GRID) -->
+    <div class="calendar-grid">
+      <% (@start_date..@end_date).each do |day| %>
+        <% 
+          is_today = (day == Date.today)
+          date_key = day.to_s
+          items = @items_by_date[date_key] || []
+        %>
+        <div class="calendar-day <%= 'is-today' if is_today %>">
+          <div class="level is-mobile mb-1">
+            <div class="level-left">
+              <span class="is-size-7 has-text-grey-light font-weight-bold mr-1"><%= day.strftime("%a") %></span>
+              <div class="day-number <%= 'has-text-primary has-text-weight-bold' if is_today %>"><%= day.day %></div>
+            </div>
+            <% if day == @start_date || day.day == 1 %>
+              <div class="level-right">
+                <span class="tag is-light is-size-7"><%= day.strftime("%b") %></span>
+              </div>
+            <% end %>
+          </div>
+          <div class="day-content">
+            <% items.sort_by { |i| i[:time] }.each do |item| %>
+              <div class="calendar-item-wrapper" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>">
+                <a href="<%= item[:url] %>" class="calendar-item <%= item[:type] %> <%= 'is-completed' if item[:completed] %>" title="<%= item[:name] %>">
+                  <span class="item-time"><%= item[:time].strftime("%H:%M") %></span>
+                  <% if item[:course_name] %>
+                    <span class="has-text-weight-bold mr-1 px-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(item[:course_name]) %>"><%= item[:course_name][0..6] %></span>
+                  <% end %>
+                  <span class="item-name"><%= truncate_text(item[:name], 15) %></span>
+                </a>
+                <button class="button is-ghost is-small edit-date-btn p-1" onclick="openDateModal(this, event)">
+                  <span class="icon is-small"><i class="fas fa-edit"></i></span>
+                </button>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  <% else %>
+    <!-- ROLLING WEEK VIEW (LIST) -->
+    <div class="week-list">
+      <% (@start_date..@end_date).each do |day| %>
+        <% 
+          is_today = (day == Date.today)
+          date_key = day.to_s
+          items = @items_by_date[date_key] || []
+        %>
+        <div class="week-row <%= 'is-today' if is_today %>">
+          <div class="week-date-column">
+            <div class="week-day-name"><%= day.strftime("%A") %></div>
+            <div class="week-day-number <%= 'has-text-primary' if is_today %>"><%= day.strftime("%b %d") %></div>
+          </div>
+          <div class="week-items-column">
+            <% if items.empty? %>
+              <div class="has-text-grey-light is-size-7 mt-2">No items due.</div>
+            <% else %>
+              <div class="week-items-grid">
+                <% items.sort_by { |i| i[:time] }.each do |item| %>
+                  <div class="calendar-item-wrapper" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>">
+                    <a href="<%= item[:url] %>" class="calendar-item is-large <%= item[:type] %> <%= 'is-completed' if item[:completed] %>">
+                      <div class="level is-mobile mb-0">
+                        <div class="level-left">
+                          <span class="tag is-white is-rounded mr-2"><%= item[:time].strftime("%I:%M %p") %></span>
+                          <% if item[:course_name] %>
+                            <span class="tag mr-2 has-text-weight-bold" style="<%= course_pill_style(item[:course_name]) %>"><%= item[:course_name][0..6] %></span>
+                          <% end %>
+                          <span class="item-name-full"><%= truncate_text(item[:name], 80) %></span>
+                        </div>
+                        <div class="level-right">
+                          <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right"></i></span>
+                        </div>
+                      </div>
+                    </a>
+                    <button class="button is-ghost is-small edit-date-btn p-1 ml-2" onclick="openDateModal(this, event)">
+                      <span class="icon is-small"><i class="fas fa-edit"></i></span>
+                    </button>
+                  </div>
+                <% end %>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+</div>
+
+<!-- DATE PICKER MODAL -->
+<div class="modal" id="date-modal">
+  <div class="modal-background" onclick="closeDateModal()"></div>
+  <div class="modal-card">
+    <header class="modal-card-head">
+      <p class="modal-card-title">Change Due Date</p>
+      <button class="delete" aria-label="close" onclick="closeDateModal()"></button>
+    </header>
+    <section class="modal-card-body">
+      <div class="field">
+        <label class="label" id="modal-item-name"></label>
+        <div class="control">
+          <input class="input" type="date" id="modal-due-date">
+        </div>
+      </div>
+      <input type="hidden" id="modal-item-type">
+      <input type="hidden" id="modal-item-id">
+    </section>
+    <footer class="modal-card-foot">
+      <button class="button is-primary" onclick="saveDate()">Save Changes</button>
+      <button class="button" onclick="closeDateModal()">Cancel</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+  function openDateModal(btn, event) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const wrapper = btn.closest('.calendar-item-wrapper');
+    const type = wrapper.dataset.type;
+    const id = wrapper.dataset.id;
+    const name = wrapper.dataset.name;
+    const date = wrapper.dataset.date;
+    
+    document.getElementById('modal-item-name').innerText = name;
+    document.getElementById('modal-due-date').value = date;
+    document.getElementById('modal-item-type').value = type;
+    document.getElementById('modal-item-id').value = id;
+    
+    document.getElementById('date-modal').classList.add('is-active');
+  }
+  
+  function closeDateModal() {
+    document.getElementById('date-modal').classList.remove('is-active');
+  }
+  
+  function saveDate() {
+    const type = document.getElementById('modal-item-type').value;
+    const id = document.getElementById('modal-item-id').value;
+    const dueDate = document.getElementById('modal-due-date').value;
+    
+    fetch('/calendar/update_due_date', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: `type=${type}&id=${id}&due_date=${dueDate}`
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'ok') {
+        window.location.reload();
+      } else {
+        alert('Error: ' + (data.message || 'Unknown error'));
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      alert('Error: ' + error.message);
+    });
+  }
+</script>
+
+<style>
+  .calendar-container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .calendar-header-box {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+  }
+
+  /* Month Grid Styles */
+  .calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    border-top: 1px solid #eee;
+    border-left: 1px solid #eee;
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+  }
+  
+  .day-header {
+    background: #f9f9f9;
+    padding: 10px;
+    text-align: center;
+    font-weight: bold;
+    color: #666;
+    border-right: 1px solid #eee;
+    border-bottom: 1px solid #eee;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+  }
+  
+  .calendar-day {
+    min-height: 120px;
+    padding: 8px;
+    border-right: 1px solid #eee;
+    border-bottom: 1px solid #eee;
+    transition: background 0.2s;
+  }
+  
+  .calendar-day:hover {
+    background: #fdfdfd;
+  }
+  
+  .calendar-day.is-today {
+    background: #f0f7ff;
+  }
+  
+  .day-number {
+    font-size: 0.9rem;
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+  }
+  
+  .calendar-day.is-today .day-number {
+    background: #739AC3;
+    color: #fff !important;
+    border-radius: 50%;
+  }
+
+  /* Week List Styles */
+  .week-list {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+    overflow: hidden;
+  }
+
+  .week-row {
+    display: flex;
+    border-bottom: 1px solid #eee;
+    min-height: 80px;
+  }
+
+  .week-row:last-child {
+    border-bottom: none;
+  }
+
+  .week-row.is-today {
+    background: #f0f7ff;
+    border-left: 4px solid #739AC3;
+  }
+
+  .week-date-column {
+    width: 150px;
+    padding: 20px;
+    background: #f9f9f9;
+    border-right: 1px solid #eee;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .week-day-name {
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    color: #777;
+    margin-bottom: 4px;
+  }
+
+  .week-day-number {
+    font-size: 1.25rem;
+    font-weight: bold;
+  }
+
+  .week-items-column {
+    flex: 1;
+    padding: 15px 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .week-items-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Shared Item Styles */
+  .day-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .calendar-item-wrapper {
+    display: flex;
+    align-items: center;
+    position: relative;
+    width: 100%;
+  }
+
+  /* Only show edit button on hover or for week view */
+  .edit-date-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+    height: 24px !important;
+    width: 24px !important;
+  }
+
+  .calendar-item-wrapper:hover .edit-date-btn {
+    opacity: 1;
+  }
+
+  .week-items-grid .edit-date-btn {
+    opacity: 0.5;
+  }
+  
+  .calendar-item {
+    font-size: 0.75rem;
+    padding: 3px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    border-left: 3px solid transparent;
+    max-width: 100%;
+    transition: transform 0.1s;
+  }
+
+  .calendar-item.is-large {
+    padding: 10px 15px;
+    font-size: 0.9rem;
+    white-space: normal;
+    font-weight: 500;
+  }
+
+  .item-name-full {
+    display: inline-block;
+  }
+  
+  .calendar-item.assignment {
+    background: #eef2ff;
+    color: #4338ca;
+    border-left-color: #6366f1;
+  }
+  
+  .calendar-item.grade {
+    background: #ecfdf5;
+    color: #065f46;
+    border-left-color: #10b981;
+  }
+  
+  .calendar-item.is-completed {
+    text-decoration: line-through;
+    opacity: 0.6;
+    background: #f3f4f6;
+    color: #6b7280;
+    border-left-color: #9ca3af;
+  }
+  
+  .calendar-item:hover {
+    filter: brightness(0.95);
+    transform: translateX(2px);
+  }
+  
+  .item-time {
+    font-weight: bold;
+    margin-right: 4px;
+    opacity: 0.8;
+  }
+
+  @media screen and (max-width: 768px) {
+    .calendar-grid {
+      grid-template-columns: repeat(1, 1fr);
+    }
+    .week-row {
+      flex-direction: column;
+    }
+    .week-date-column {
+      width: 100%;
+      text-align: left;
+      padding: 10px 20px;
+      flex-direction: row;
+      gap: 10px;
+      align-items: center;
+    }
+    .week-day-name { margin-bottom: 0; }
+  }
+</style>

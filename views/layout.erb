@@ -67,6 +67,12 @@
     </div>
     <div class="navbar-end">
        <div class="navbar-item">
+          <a href="/calendar" class="button is-white <%= 'has-text-primary' if @active_tab == 'calendar' %>" title="Calendar">
+            <span class="icon"><i class="fas fa-calendar-alt"></i></span>
+            <span>Calendar</span>
+          </a>
+       </div>
+       <div class="navbar-item">
           <a href="/notifications<%= "?from_course=#{@course_id}" if @course_id %>" class="button is-white <%= 'has-text-primary' if @active_tab == 'notifications' %>">
             <span class="icon"><i class="fas fa-bell"></i></span>
             <span>Notifications</span>
