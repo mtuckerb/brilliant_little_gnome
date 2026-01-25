@@ -1172,11 +1172,16 @@ class BrilliantClient
 
     request = Net::HTTP::Get.new(uri)
     request['Referer'] = "https://#{@host}/d2l/home"
+    request['User-Agent'] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    request['Accept'] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+    request['Accept-Language'] = "en-US,en;q=0.9"
     
     if @token
       request['Authorization'] = "Bearer #{@token}"
     elsif @cookie_string
-      request['Cookie'] = @cookie_string
+      # Ensure cookie string doesn't have double "Cookie:" prefix
+      clean_cookies = @cookie_string.sub(/^Cookie:\s*/i, '')
+      request['Cookie'] = clean_cookies
     end
 
     http = Net::HTTP.new(uri.host, uri.port)
