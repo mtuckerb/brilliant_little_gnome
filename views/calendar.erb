@@ -76,7 +76,7 @@
           </div>
           <div class="day-content" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="<%= date_key %>">
             <% items.sort_by { |i| i[:time] }.each do |item| %>
-              <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>">
+              <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>" data-full-date="<%= item[:time].iso8601 %>">
                 <a href="<%= item[:url] %>" class="calendar-item <%= item[:type] %> <%= 'is-completed' if item[:completed] %>" title="<%= item[:name] %>">
                   <span class="item-time"><%= item[:time].strftime("%H:%M") %></span>
                   <% if item[:course_name] %>
@@ -112,8 +112,8 @@
               <div class="has-text-grey-light is-size-7 mt-2 no-items-msg">No items due.</div>
             <% end %>
             <div class="week-items-grid">
-              <% items.sort_by { |i| i[:time] }.each do |item| %>
-                <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>">
+                <% items.sort_by { |i| i[:time] }.each do |item| %>
+                  <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>" data-full-date="<%= item[:time].iso8601 %>">
                     <a href="<%= item[:url] %>" class="calendar-item is-large <%= item[:type] %> <%= 'is-completed' if item[:completed] %>">
                       <div class="level is-mobile mb-0">
                         <div class="level-left">
@@ -152,8 +152,13 @@
     <section class="modal-card-body">
       <div class="field">
         <label class="label" id="modal-item-name"></label>
-        <div class="control">
-          <input class="input" type="date" id="modal-due-date">
+        <div class="is-flex" style="gap: 10px;">
+          <div class="control" style="flex: 2;">
+            <input class="input" type="date" id="modal-due-date">
+          </div>
+          <div class="control" style="flex: 1;">
+            <input class="input" type="time" id="modal-due-time">
+          </div>
         </div>
       </div>
       <input type="hidden" id="modal-item-type">
@@ -175,10 +180,21 @@
     const type = wrapper.dataset.type;
     const id = wrapper.dataset.id;
     const name = wrapper.dataset.name;
-    const date = wrapper.dataset.date;
+    const fullDate = wrapper.dataset.fullDate || wrapper.dataset.date;
+    
+    // Split date and time if available
+    let datePart = fullDate;
+    let timePart = "23:59";
+    
+    if (fullDate.includes('T')) {
+      const parts = fullDate.split('T');
+      datePart = parts[0];
+      timePart = parts[1].substring(0, 5); // HH:MM
+    }
     
     document.getElementById('modal-item-name').innerText = name;
-    document.getElementById('modal-due-date').value = date;
+    document.getElementById('modal-due-date').value = datePart;
+    document.getElementById('modal-due-time').value = timePart;
     document.getElementById('modal-item-type').value = type;
     document.getElementById('modal-item-id').value = id;
     
@@ -192,9 +208,11 @@
   function saveDate() {
     const type = document.getElementById('modal-item-type').value;
     const id = document.getElementById('modal-item-id').value;
-    const dueDate = document.getElementById('modal-due-date').value;
+    const date = document.getElementById('modal-due-date').value;
+    const time = document.getElementById('modal-due-time').value;
     
-    updateItemDate(type, id, dueDate);
+    const fullDateTime = time ? `${date}T${time}` : date;
+    updateItemDate(type, id, fullDateTime);
   }
 
   function updateItemDate(type, id, newDate) {
