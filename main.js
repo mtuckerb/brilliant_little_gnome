@@ -214,6 +214,7 @@ function startRubyApp() {
   }
 
   const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', rubyVersionDir);
+  const internalGems = path.join(portableRubyBase, 'lib', 'ruby', 'gems', rubyVersionDir);
   
   const cacheDir = path.join(userDataPath, 'bootsnap');
   const dbDir = path.join(userDataPath, 'db');
@@ -242,7 +243,7 @@ function startRubyApp() {
     BUNDLE_GEMFILE: path.join(baseDir, 'Gemfile'),
     BUNDLE_DEPLOYMENT: 'true', 
     BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
-    GEM_PATH: vendorGems,
+    GEM_PATH: usePortable ? `${vendorGems}${pathSeparator}${internalGems}` : vendorGems,
     GEM_HOME: vendorGems,
     RUBY_PLATFORM_DIR: platformDir,
     RUBYLIB: "",
