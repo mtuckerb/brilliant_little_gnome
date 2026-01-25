@@ -75,7 +75,7 @@
                        </span>
                      </div>
                    </div>
-                   <p class="has-text-weight-bold is-size-6 mb-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="<%= info[:course_display] %>"><%= info[:course_display] %></p>
+                   <p class="has-text-weight-bold is-size-6 mb-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="<%= info[:course_display] %>"><%= render_markdown_inline(info[:course_display]) %></p>
                    <div class="level is-mobile">
                      <div class="level-left">
                         <span class="tag <%= grade_color(sg[:stats][:score]) %> is-light has-text-weight-bold">
@@ -156,11 +156,11 @@
                     <% end %>
                   </div>
                   
-                  <h3 class="title is-5 mb-1"><%= info[:course_display] %></h3>
+                  <h3 class="title is-5 mb-1"><%= render_markdown_inline(info[:course_display]) %></h3>
                   <p class="is-size-7 has-text-grey-light mb-3"><%= code %></p>
                   
                   <div class="has-text-right">
-                    <span class="is-size-7 has-text-link">Open Course <i class="fas fa-chevron-right ml-1"></i></span>
+                    <span class="is-size-7 has-text-link">Open Course <i class="fas fa-chevron-right ml-4"></i></span>
                   </div>
                 </div>
               </div>
@@ -186,18 +186,38 @@
             </div>
             <div class="column">
               <div class="is-flex is-justify-content-space-between is-align-items-start">
-                <p class="is-size-7 has-text-weight-bold mb-1">
-                  <% 
-                     c_name = Course.find_by(org_unit_id: a.course_id)&.name 
-                     if c_name
-                  %>
-                    <span class="px-1 mr-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(c_name) %>"><%= c_name[0..6] %></span>
-                  <% end %>
-                  <%= c_name || "Unknown Course" %>
-                </p>
+                <div>
+                  <p class="is-size-7 has-text-weight-bold mb-1">
+                    <% 
+                       c_name = Course.find_by(org_unit_id: a.course_id)&.name 
+                       if c_name
+                    %>
+                      <span class="px-1 mr-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(c_name) %>"><%= c_name[0..6] %></span>
+                    <% end %>
+                    <%= c_name || "Unknown Course" %>
+                  </p>
+                  <h6 class="title is-6 mb-0">
+                    <%= render_markdown_inline(a.name) %>
+                    <% if a.synthetic %>
+                      <% 
+                        modal_data = {
+                          name: a.name,
+                          dueDate: a.due_date&.strftime('%Y-%m-%d'),
+                          dueTime: a.due_date&.strftime('%H:%M'),
+                          externalUrl: a.external_url,
+                          description: a.description,
+                          courseId: a.course_id,
+                          brightspaceId: a.brightspace_id
+                        }.to_json
+                      %>
+                      <button class="button is-ghost is-small p-0 ml-2" onclick="event.stopPropagation(); openEditAssignmentModal(<%= modal_data.gsub('"', '&quot;') %>)" title="Edit Task" style="height: auto; line-height: 1; vertical-align: middle;">
+                        <span class="icon is-small has-text-info"><i class="fas fa-edit" style="font-size: 0.85rem;"></i></span>
+                      </button>
+                    <% end %>
+                  </h6>
+                </div>
                 <% if a.optional %><span class="tag is-light is-small"><i class="fas fa-hand-paper mr-1"></i> Optional</span><% end %>
               </div>
-              <h6 class="title is-6 mb-0"><%= a.name %></h6>
               <p class="is-size-7 has-text-danger mb-0" onclick="event.stopPropagation()">
                 Due: 
                 <span class="due-date-display is-clickable" onclick="editDueDate(this, '<%= a.id %>')" title="Click to edit date">
@@ -224,9 +244,9 @@
             <% end %>
             <%= n.course_name ? extract_course_info(n.course_name)[:course_display] : "General" %>
           </p>
-          <h6 class="title is-6 mb-2"><%= n.title %></h6>
-          <div class="content is-size-7 mb-2">
-            <%= n.body ? truncate_text(n.body.gsub(/<[^>]*>/, '').strip, 80) : "No description" %>
+          <h6 class="title is-6 mb-2"><%= render_markdown_inline(n.title) %></h6>
+          <div class="content is-size-7 mb-2" onclick="event.stopPropagation()">
+            <%= n.body ? render_markdown_inline(truncate_text(n.body, 120)) : "No description" %>
           </div>
           <div class="level is-mobile">
             <div class="level-left">
@@ -386,3 +406,4 @@ document.addEventListener('DOMContentLoaded', function() {
   };
 });
 </script>
+<%= erb :'partials/edit_assignment_modal' %>

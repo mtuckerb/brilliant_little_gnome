@@ -21,6 +21,7 @@ A lightweight, high-performance Brightspace companion that aggregates notificati
   - Consolidated Announcements & Notifications within the course sidebar.
 - **Resource Export**: Download syllabus, module files, or entire course modules as ZIP archives.
 - **Calendar Support**: Export assignment due dates to ICS/iCal format.
+- **Manual Overrides & Sync Protection**: Customize assignment names, descriptions, and due dates directly in the app. Edits are intelligently protected during LMS syncs, and you'll be notified when your custom data is preserved over server updates.
 
 ## Portability & Multi-platform
 Brilliant is built to be portable. 

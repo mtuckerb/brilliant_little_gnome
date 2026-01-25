@@ -81,6 +81,7 @@ begin
   end
 
   ActiveRecord::Base.establish_connection(db_config)
+  ActiveRecord::Base.default_timezone = :utc # Store as UTC
   puts "[Brilliant] Connection established"
   UserPreference.reset_column_information if defined?(UserPreference)
   Assignment.reset_column_information if defined?(Assignment)
@@ -232,6 +233,7 @@ end
 before do
   # Memoize preferences for all requests so they are available in layouts/helpers
   @user_prefs ||= UserPreference.current
+  Time.zone = @user_prefs.time_zone || "UTC"
 
   # Allow access to setup and public files without being "configured"
   return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/docs', '/sync/status'].include?(request.path_info) || 
@@ -369,7 +371,7 @@ before '/course/:id*' do
   @lineage = find_lineage(@toc['Modules'], current_module_id) if @toc && current_module_id
 
   # Upcoming Assignments for this course
-  @course_upcoming = Assignment.where(course_id: @course_id, completed: false).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
+  @course_upcoming = Assignment.where(course_id: @course_id, completed: false).where("due_date > ? AND due_date <= ?", Time.current, Time.current + 7.days).order(due_date: :asc)
 end
 
 get '/' do
@@ -396,21 +398,40 @@ end
 get '/calendar' do
   @active_tab = 'calendar'
   @view = params[:view] || 'week'
-  @date = params[:date] ? Date.parse(params[:date]) : Date.today
+  
+  # Ensure timezone is active for this request
+  tz_name = @user_prefs&.time_zone || "UTC"
+  Time.zone = tz_name
+  
+  @date = params[:date] ? Date.parse(params[:date]) : Time.zone.today
   @show_completed = params[:show_completed] == 'true'
   
+  @weeks_before = (params[:weeks_before] || 1).to_i
+  @weeks_after = (params[:weeks_after] || 1).to_i
+
   if @view == 'week'
-    @start_date = @date
-    @end_date = @start_date + 6.days
+    # Default to starting on selected date (today by default)
+    @start_date = @date - (@weeks_before * 7).days
+    @end_date = @date + (@weeks_after * 7).days + 6.days
   else
-    # Month View: Show rolling 30 days starting from @date
-    @start_date = @date
-    @end_date = @start_date + 29.days 
+    # Month View: Show 5 weeks snapped to Sunday for a consistent grid
+    @start_date = @date.beginning_of_week(:sunday)
+    @end_date = @start_date + 34.days 
   end
   
-  # Fetch all items with due dates in this range
-  assignments = Assignment.includes(:course).where(due_date: @start_date.beginning_of_day..@end_date.end_of_day)
-  grades = Grade.includes(:course).where(due_date: @start_date.beginning_of_day..@end_date.end_of_day)
+  tz_name = @user_prefs&.time_zone || "UTC"
+  
+  # Fetch all items with due dates in this range, converted to user time zone for bounds
+  assignments = nil
+  grades = nil
+  
+  Time.use_zone(tz_name) do
+    start_time = @start_date.to_time.beginning_of_day
+    end_time = @end_date.to_time.end_of_day
+    
+    assignments = Assignment.includes(:course).where(due_date: start_time..end_time)
+    grades = Grade.includes(:course).where(due_date: start_time..end_time)
+  end
   
   # Filter completed assignments if not requested
   unless @show_completed
@@ -426,7 +447,8 @@ get '/calendar' do
   @items_by_date = {}
   
   assignments.each do |a|
-    date_key = a.due_date.to_date.to_s
+    # Group by the date AS SEEN by the user (timezone-aware)
+    date_key = a.due_date.in_time_zone(tz_name).to_date.to_s
     @items_by_date[date_key] ||= []
     @items_by_date[date_key] << {
       type: 'assignment',
@@ -435,14 +457,18 @@ get '/calendar' do
       course_id: a.course_id,
       course_name: a.course&.name,
       name: a.name,
+      description: a.description,
+      external_url: a.external_url,
+      synthetic: a.synthetic,
       time: a.due_date,
       completed: a.completed,
+      optional: a.optional || false,
       url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
     }
   end
   
   grades.each do |g|
-    date_key = g.due_date.to_date.to_s
+    date_key = g.due_date.in_time_zone(tz_name).to_date.to_s
     existing = @items_by_date[date_key] || []
     next if existing.any? { |e| e[:name] == g.name }
     
@@ -450,6 +476,7 @@ get '/calendar' do
     @items_by_date[date_key] << {
       type: 'grade',
       id: g.brightspace_id,
+      db_id: g.id,
       course_id: g.course_id,
       course_name: g.course&.name,
       name: g.name,
@@ -477,18 +504,34 @@ post '/calendar/update_due_date' do
         # Get user's timezone or default to UTC
         tz_name = UserPreference.current&.time_zone || "UTC"
         
-        # Parse in the correct zone to avoid "disappearing days" due to offset shifts
-        # YYYY-MM-DD format from date input
-        if new_date.length <= 10
-          parsed_date = Time.use_zone(tz_name) { Time.zone.parse(new_date).end_of_day }
-        else
-          parsed_date = Time.use_zone(tz_name) { Time.zone.parse(new_date) }
+        parsed_date = nil
+        Time.use_zone(tz_name) do
+          if new_date.length <= 10
+            parsed_date = Time.zone.parse(new_date).end_of_day
+          else
+            parsed_date = Time.zone.parse(new_date)
+          end
         end
-        
-        item.update!(due_date: parsed_date)
+    
+        # Debug logging
+        if parsed_date
+          puts "[CalendarUpdate] Zone check: tz_name=#{tz_name}, input=#{new_date}, parsed=#{parsed_date.iso8601}, utc=#{parsed_date.utc.iso8601}"
+        end
+    
+        item.due_date = parsed_date
+        if type == 'assignment'
+          item.manually_edited = true
+          item.manually_edited_at = Time.current
+        end
+        item.save!
         puts "[CalendarUpdate] Success: Updated #{type} #{item_id} to #{item.due_date} (TZ: #{tz_name})"
       else
-        item.update!(due_date: nil)
+        item.due_date = nil
+        if type == 'assignment'
+          item.manually_edited = true
+          item.manually_edited_at = Time.current
+        end
+        item.save!
         puts "[CalendarUpdate] Success: Cleared due_date for #{type} #{item_id}"
       end
     rescue => e
@@ -680,7 +723,7 @@ get '/dashboard' do
   @recent_notifications = Notification.where(is_read: false).order(date: :desc, id: :desc).limit(10)
   
   # Upcoming Assignments for Dashboard
-  @upcoming_assignments = Assignment.where(completed: false).where("due_date > ? AND due_date <= ?", Time.now, Time.now + 7.days).order(due_date: :asc)
+  @upcoming_assignments = Assignment.where(completed: false).where("due_date > ? AND due_date <= ?", Time.current, Time.current + 14.days).order(optional: :asc, due_date: :asc)
   
   @sync_status = $client.sync_status
   
@@ -690,7 +733,7 @@ end
 post '/assignments/:id/toggle_complete' do
   assignment = Assignment.find(params[:id])
   new_status = !assignment.completed
-  assignment.update(completed: new_status, completed_at: (new_status ? Time.now : nil))
+  assignment.update(completed: new_status, completed_at: (new_status ? Time.current : nil))
   
   ext_id = "assignment_comp_#{assignment.brightspace_id}"
   if new_status
@@ -759,12 +802,24 @@ end
 post '/assignments/:id/update_due_date' do
   assignment = Assignment.find(params[:id])
   new_date = params[:due_date]
+  parsed_date = nil
+
   if new_date.present?
-    # Simple parse, assuming YYYY-MM-DD from a date input
-    assignment.update(due_date: Time.parse(new_date))
-  else
-    assignment.update(due_date: nil)
+    # Get user's timezone or default to UTC
+    tz_name = UserPreference.current&.time_zone || "UTC"
+    
+    # Parse in the correct zone
+    # YYYY-MM-DD format from date input
+    Time.use_zone(tz_name) do
+      if new_date.length <= 10
+        parsed_date = Time.zone.parse(new_date).end_of_day
+      else
+        parsed_date = Time.zone.parse(new_date)
+      end
+    end
   end
+
+  assignment.update(due_date: parsed_date, manually_edited: true, manually_edited_at: Time.current)
   
   if request.xhr?
     content_type :json
@@ -780,6 +835,7 @@ get '/sync/status' do
   content_type :json
   {
     status: $client.sync_status[:status],
+    progress: $client.sync_status[:progress],
     current_task: $client.sync_status[:current_task],
     degraded_mode: $client.degraded_mode,
     last_auth_error: $client.last_auth_error
@@ -839,7 +895,7 @@ post '/course/:id/module/:module_id/create_tasks' do
     due_date = date_str.present? ? (Time.parse(date_str) rescue nil) : nil
     # Fallback to course end-of-week if no date provided
     if due_date.nil? && @course.respond_to?(:end_of_week_date)
-      due_date = @course.end_of_week_date(Time.now)
+      due_date = @course.end_of_week_date(Time.current)
     end
 
     # Determine ext_id using index to keep it unique per module
@@ -916,7 +972,7 @@ get '/course/:id/assignments/export.ics' do
   assignments.each do |a|
     next unless a['DueDate']
 
-      event_start = (Time.parse(a['DueDate']) rescue Time.now)
+      event_start = (Time.parse(a['DueDate']) rescue Time.current)
       cal.event do |e|
         e.dtstart     = Icalendar::Values::DateTime.new(event_start.utc, tzid: 'UTC')
         e.dtend       = Icalendar::Values::DateTime.new((event_start + 60*60).utc, tzid: 'UTC')
@@ -975,21 +1031,30 @@ end
 
 post '/course/:id/assignments/:assignment_id/update' do
   assignment = Assignment.find_by(brightspace_id: params[:assignment_id], course_id: params[:id])
-  halt 404, "Task not found" unless assignment && assignment.synthetic
+  halt 404, "Task not found" unless assignment
 
   new_date = params[:due_date]
+  new_time = params[:due_time]
+  
   parsed_date = nil
   if new_date.present?
-    parsed_date = Time.parse(new_date)
-    # If it's just a date (YYYY-MM-DD), set to end of day
-    parsed_date = parsed_date.end_of_day if new_date.length <= 10
+    tz_name = UserPreference.current&.time_zone || "UTC"
+    Time.use_zone(tz_name) do
+      if new_time.present?
+        parsed_date = Time.zone.parse("#{new_date} #{new_time}")
+      else
+        parsed_date = Time.zone.parse(new_date).end_of_day
+      end
+    end
   end
 
   assignment.update(
     name: params[:name],
     description: params[:description],
     due_date: parsed_date,
-    external_url: params[:external_url]
+    external_url: params[:external_url],
+    manually_edited: true,
+    manually_edited_at: Time.current
   )
 
   flash[:success] = "Task updated successfully"
@@ -1086,6 +1151,8 @@ get '/course/:id/quizzes/:quiz_id' do
   @quiz = $client.do_get("/d2l/api/le/1.40/#{@course_id}/quizzes/#{@quiz_id}")
   halt 404, "Quiz not found" unless @quiz
 
+  @stored_quiz = Assignment.find_by(brightspace_id: "quiz_#{@quiz_id}", course_id: @course_id)
+
   @breadcrumb_trail = [
     { title: 'Assignments', url: "/course/#{@course_id}/assignments" },
     { title: @quiz['Name'], url: "/course/#{@course_id}/quizzes/#{@quiz_id}" }
@@ -1122,7 +1189,7 @@ post '/course/:id/announcements/:announcement_id/create_task' do
   end
 
   # Default due date to end of current week
-  due_date = (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+  due_date = (Time.current.end_of_week - 1.day).change(hour: 23, min: 59)
 
   Assignment.create(
     course_id: @course_id,
@@ -1697,6 +1764,81 @@ end
 # Overview Specific Download Route
 get '/course/:id/overview/download' do
   course_id = params[:id]
+# API for fetching rendered HTML details for expansion
+get '/api/v1/item_details' do
+  validate_api_access!
+  type = params[:type]
+  item_id = params[:id]
+  course_id = params[:course_id]
+
+  html = ""
+  if type == 'assignment'
+    assignment = nil
+    if item_id.to_s.start_with?('syn_')
+      rec = Assignment.find_by(brightspace_id: item_id, course_id: course_id)
+      if rec
+        html = <<-HTML
+          <div class="mb-3">
+            <h6 class="is-size-7 has-text-weight-bold mb-2"><i class="fas fa-info-circle mr-1 has-text-primary"></i> Instructions / Notes</h6>
+            <div class="box is-light p-3 has-background-white-ter" style="box-shadow: none; border: 1px solid #efefef;">
+               #{render_content(rec.description)}
+            </div>
+          </div>
+        HTML
+      end
+    else
+      # Regular Brightspace assignment
+      assignment = $client.get_assignment(course_id, item_id)
+      
+      # Try to find instructions in multiple places (Consistent with assignment_detail.erb)
+      instr_data = nil
+      if assignment
+        instr_data = assignment['Instructions'] || assignment['CustomInstructions'] || assignment['Description']
+      end
+      
+      desc_text = ""
+      if instr_data
+        desc_text = instr_data.is_a?(Hash) ? (instr_data['Html'] || instr_data['Text'] || "") : instr_data.to_s
+      end
+
+      # Fallback to local DB if API returned nothing or is empty
+      if desc_text.strip.empty?
+        rec = Assignment.find_by(brightspace_id: item_id, course_id: course_id)
+        desc_text = rec.description if rec && rec.description.present?
+      end
+
+      if desc_text.present? && !desc_text.strip.empty?
+        instructions_html = render_content(desc_text)
+        html = <<-HTML
+          <div class="mb-3">
+            <h6 class="is-size-7 has-text-weight-bold mb-2"><i class="fas fa-info-circle mr-1 has-text-primary"></i> Instructions</h6>
+            <div class="box is-light p-3 has-background-white-ter" style="box-shadow: none; border: 1px solid #efefef;">
+               #{instructions_html}
+            </div>
+          </div>
+        HTML
+      else
+        html = "<p class='has-text-grey italic'>No description or instructions available.</p>"
+      end
+    end
+  elsif type == 'grade'
+    grade = Grade.find_by(brightspace_id: item_id, course_id: course_id)
+    if grade && grade.comments.present?
+      html = <<-HTML
+        <div class="mb-3">
+          <h6 class="is-size-7 has-text-weight-bold mb-2"><i class="fas fa-comment-dots mr-1 has-text-success"></i> Gradebook Comments</h6>
+          <div class="box is-light p-3 has-background-white-ter" style="box-shadow: none; border: 1px solid #efefef;">
+             #{render_content(grade.comments)}
+          </div>
+        </div>
+      HTML
+    end
+  end
+
+  content_type :json
+  { html: html }.to_json
+end
+
   api_path = "/d2l/api/le/1.40/#{course_id}/overview/attachment"
   http_resp = $client.download_file(api_path)
   
@@ -1848,7 +1990,7 @@ get '/course/:id/module/:module_id/download_all' do
     return "No downloadable files found in this module."
   end
 
-  filename = "Brilliant-#{@course_id}-#{safe_title}-#{Time.now.strftime('%Y%m%d')}.zip"
+  filename = "Brilliant-#{@course_id}-#{safe_title}-#{Time.current.strftime('%Y%m%d')}.zip"
   job = DownloadJob.create(@course_id, files, $client, download_filename: filename)
   redirect "/job/#{job.id}"
 end
@@ -1859,7 +2001,7 @@ get '/course/:id/download_all' do
     return "No downloadable files found in this course."
   end
 
-  filename = "Brilliant-#{@course_id}-#{Time.now.strftime('%Y%m%d')}.zip"
+  filename = "Brilliant-#{@course_id}-#{Time.current.strftime('%Y%m%d')}.zip"
   job = DownloadJob.create(@course_id, files, $client, download_filename: filename)
   redirect "/job/#{job.id}"
 end
@@ -1964,9 +2106,9 @@ post '/api/v1/synthetic_tasks' do
   end
   
   if due_date.nil? && @course.respond_to?(:end_of_week_date)
-    due_date = @course.end_of_week_date(Time.now)
+    due_date = @course.end_of_week_date(Time.current)
   end
-  due_date ||= (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+  due_date ||= (Time.current.end_of_week - 1.day).change(hour: 23, min: 59)
 
   task = Assignment.create(
     course_id: payload['course_id'],
@@ -1995,9 +2137,9 @@ post '/course/:id/synthetic_tasks' do
   end
   
   if due_date.nil? && @course.respond_to?(:end_of_week_date)
-    due_date = @course.end_of_week_date(Time.now)
+    due_date = @course.end_of_week_date(Time.current)
   end
-  due_date ||= (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
+  due_date ||= (Time.current.end_of_week - 1.day).change(hour: 23, min: 59)
 
   task = Assignment.create(
     course_id: params[:id],
@@ -2298,7 +2440,7 @@ helpers do
         assignment_type: 'synthetic'
       )
       if task.due_date.nil?
-        task.update(due_date: (Time.now.end_of_week - 1.day).change(hour: 23, min: 59))
+        task.update(due_date: (Time.current.end_of_week - 1.day).change(hour: 23, min: 59))
       end
       { content: [{ type: "text", text: task.to_json }] }
 

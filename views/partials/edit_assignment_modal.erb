@@ -1,0 +1,77 @@
+<div id="editAssignmentModal" class="modal">
+  <div class="modal-background" onclick="closeEditAssignmentModal()"></div>
+  <div class="modal-card">
+    <header class="modal-card-head">
+      <p class="modal-card-title">Edit Synthesized Task</p>
+      <button class="delete" aria-label="close" onclick="closeEditAssignmentModal()"></button>
+    </header>
+    <section class="modal-card-body">
+      <form id="editAssignmentForm" method="POST">
+        <div class="field">
+          <label class="label">Task Name</label>
+          <div class="control">
+            <input class="input" type="text" name="name" id="edit-assignment-name" required>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label">Due Date & Time</label>
+          <div class="is-flex" style="gap: 10px;">
+            <div class="control" style="flex: 1;">
+              <input class="input" type="date" name="due_date" id="edit-assignment-due-date">
+            </div>
+            <div class="control" style="flex: 1;">
+              <input class="input" type="time" name="due_time" id="edit-assignment-due-time">
+            </div>
+          </div>
+          <p class="help">Time Zone: <%= @user_prefs&.time_zone || "UTC" %></p>
+        </div>
+
+        <div class="field">
+          <label class="label">External URL / Reference</label>
+          <div class="control">
+            <input class="input" type="text" name="external_url" id="edit-assignment-external-url" placeholder="https://...">
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label">Notes / Instructions</label>
+          <div class="control">
+            <textarea class="textarea" name="description" id="edit-assignment-description" rows="5"></textarea>
+          </div>
+        </div>
+
+        <div class="buttons is-right mt-5">
+          <button type="button" class="button" onclick="closeEditAssignmentModal()">Cancel</button>
+          <button type="submit" class="button is-primary">Save Changes</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</div>
+
+<script>
+function openEditAssignmentModal(data) {
+  const modal = document.getElementById('editAssignmentModal');
+  const form = document.getElementById('editAssignmentForm');
+  
+  // Populate fields
+  document.getElementById('edit-assignment-name').value = data.name || '';
+  document.getElementById('edit-assignment-due-date').value = data.dueDate || '';
+  document.getElementById('edit-assignment-due-time').value = data.dueTime || '';
+  document.getElementById('edit-assignment-external-url').value = data.externalUrl || '';
+  document.getElementById('edit-assignment-description').value = data.description || '';
+  
+  // Set form action
+  form.action = `/course/${data.courseId}/assignments/${data.brightspaceId}/update`;
+  
+  modal.classList.add('is-active');
+  document.documentElement.classList.add('is-clipped');
+}
+
+function closeEditAssignmentModal() {
+  const modal = document.getElementById('editAssignmentModal');
+  modal.classList.remove('is-active');
+  document.documentElement.classList.remove('is-clipped');
+}
+</script>

@@ -93,7 +93,7 @@
                 is_completed = a.respond_to?(:completed) && a.completed
                 is_optional = a.respond_to?(:optional) && a.optional
               %>
-              <tr class="assignment-row <%= 'is-completed' if is_completed %> <%= 'is-optional' if is_optional %>" data-id="<%= db_id %>">
+              <tr class="assignment-row <%= 'is-completed' if is_completed %> <%= 'is-optional' if is_optional %>" data-id="<%= db_id %>" data-type="assignment" data-brightspace-id="<%= id %>">
                 <td class="is-vcentered">
                   <div class="is-flex is-align-items-center" style="gap: 12px;">
                     <!-- Selection Checkbox -->
@@ -114,31 +114,55 @@
                   </div>
                 </td>
                 <td class="assignment-info">
-                  <div class="mb-1">
-                    <strong>
-                      <a href="<%= view_url %>" class="assignment-link"><%= name %></a>
-                    </strong>
-                    <% if is_quiz %><span class="tag is-info is-light is-small ml-2">Quiz</span><% end %>
-                    <span class="tag is-light is-small ml-2 optional-tag <%= 'is-hidden' unless is_optional %>">
-                      <i class="fas fa-hand-paper mr-1"></i> Optional
-                    </span>
-                  </div>
-                  <div class="is-size-7 has-text-grey">
-                    <i class="fas fa-calendar-alt mr-1"></i> Due: 
-                    <span class="due-date-display is-clickable" onclick="editDueDate(this, '<%= a.is_a?(Assignment) ? a.id : '' %>')" title="Click to edit date">
-                      <%= due_date ? format_date(due_date) : "No due date" %>
-                    </span>
-                    <input type="date" class="due-date-input is-hidden input is-small py-0 px-1" 
-                           value="<%= due_date ? (due_date.is_a?(String) ? Time.parse(due_date) : due_date).strftime('%Y-%m-%d') : '' %>"
-                           onblur="saveDueDate(this, '<%= a.is_a?(Assignment) ? a.id : '' %>')" style="width: 130px; display: none;">
+                  <div class="is-flex is-align-items-start">
+                    <button class="button is-ghost is-small p-0 ml-4 mt-1" onclick="expandAssignmentRow('<%= db_id %>', event)">
+                      <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
+                    </button>
+                    <div style="flex: 1;">
+                      <div class="mb-1">
+                        <strong>
+                          <a href="<%= view_url %>" class="assignment-link has-text-dark"><%= render_markdown_inline(name) %></a>
+                        </strong>
+                        <% if is_quiz %><span class="tag is-info is-light is-small ml-2">Quiz</span><% end %>
+                        <span class="tag is-light is-small ml-2 optional-tag <%= 'is-hidden' unless is_optional %>">
+                          <i class="fas fa-hand-paper mr-1"></i> Optional
+                        </span>
+                      </div>
+                      <div class="is-size-7 has-text-grey">
+                        <i class="fas fa-calendar-alt mr-1"></i> Due: 
+                        <span class="due-date-display is-clickable" onclick="editDueDate(this, '<%= a.is_a?(Assignment) ? a.id : '' %>')" title="Click to edit date">
+                          <%= due_date ? format_date(due_date) : "No due date" %>
+                        </span>
+                        <input type="date" class="due-date-input is-hidden input is-small py-0 px-1" 
+                               value="<%= due_date ? (due_date.is_a?(String) ? Time.parse(due_date) : due_date).strftime('%Y-%m-%d') : '' %>"
+                               onblur="saveDueDate(this, '<%= a.is_a?(Assignment) ? a.id : '' %>')" style="width: 130px; display: none;">
+                      </div>
+                      <!-- Expanded Content Area -->
+                      <div id="expand-<%= db_id %>" class="assignment-details-content is-hidden mt-3 p-3 has-background-white-bis" style="border-radius: 4px; border-left: 3px solid #dbdbdb;">
+                        <div class="content is-size-7">
+                          <p class="has-text-grey">Loading details...</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </td>
-                <td class="has-text-right">
+                <td class="has-text-right is-vcentered">
                   <div class="buttons is-right">
                     <% if a.respond_to?(:synthetic) && a.synthetic %>
-                      <a href="<%= view_url %>" class="button is-small is-info is-light">
+                      <% 
+                        modal_data = {
+                          name: name,
+                          dueDate: (due_date.is_a?(String) ? Time.parse(due_date) : due_date)&.strftime('%Y-%m-%d'),
+                          dueTime: (due_date.is_a?(String) ? Time.parse(due_date) : due_date)&.strftime('%H:%M'),
+                          externalUrl: a.respond_to?(:external_url) ? a.external_url : '',
+                          description: a.respond_to?(:description) ? a.description : '',
+                          courseId: @course_id,
+                          brightspaceId: id
+                        }.to_json
+                      %>
+                      <button class="button is-small is-info is-light" onclick="openEditAssignmentModal(<%= modal_data.gsub('"', '&quot;') %>)">
                         <span class="icon is-small"><i class="fas fa-edit"></i></span>
-                      </a>
+                      </button>
                     <% end %>
                     <a href="<%= view_url %>" class="button is-small is-primary is-light">View Details</a>
                   </div>
@@ -283,4 +307,45 @@ function saveDueDate(input, assignmentId) {
   span.classList.remove('is-hidden');
   span.style.display = 'inline-block';
 }
+
+function expandAssignmentRow(dbId, event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  
+  const detailsDiv = document.getElementById(`expand-${dbId}`);
+  const icon = event.currentTarget.querySelector('.toggle-icon');
+  
+  if (!detailsDiv.classList.contains('is-hidden')) {
+    detailsDiv.classList.add('is-hidden');
+    icon.classList.remove('fa-chevron-down');
+    icon.classList.add('fa-chevron-right');
+    return;
+  }
+  
+  // Show and change icon
+  detailsDiv.classList.remove('is-hidden');
+  icon.classList.remove('fa-chevron-right');
+  icon.classList.add('fa-chevron-down');
+  
+  // Fetch if needed
+  if (detailsDiv.dataset.loaded !== 'true') {
+    const row = detailsDiv.closest('.assignment-row');
+    const type = row.dataset.type;
+    const itemId = row.dataset.brightspaceId;
+    const courseId = '<%= @course_id %>';
+
+    fetch(`/api/v1/item_details?type=${type}&id=${itemId}&course_id=${courseId}`)
+      .then(r => r.json())
+      .then(data => {
+        detailsDiv.querySelector('.content').innerHTML = data.html || '<p class="has-text-grey">No description available.</p>';
+        detailsDiv.dataset.loaded = 'true';
+      })
+      .catch(err => {
+        detailsDiv.querySelector('.content').innerHTML = '<p class="has-text-danger">Error loading details.</p>';
+      });
+  }
+}
 </script>
+<%= erb :'partials/edit_assignment_modal' %>

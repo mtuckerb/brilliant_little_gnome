@@ -166,7 +166,7 @@
               %>
               <tr class="<%= is_graded ? '' : 'has-background-white-ter has-text-grey-light' %>">
                 <td>
-                  <%= name %>
+                  <%= render_markdown_inline(name) %>
                   <% unless is_graded %>
                     <span class="tag is-small is-light ml-2">Ungraded</span>
                   <% end %>

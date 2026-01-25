@@ -3,9 +3,9 @@
     <div class="level">
       <div class="level-left">
         <div>
-          <h1 class="title is-3 mb-1">
+          <h1 class="title is-3 is-spaced mb-1">
             <span class="icon mr-2"><i class="fas fa-calendar-alt"></i></span>
-            <%= @view == 'month' ? "Next 30 Days" : "Next 7 Days" %>
+            <%= @view == 'month' ? "Month Grid" : "Multi-Week List" %>
           </h1>
           <p class="subtitle is-6 has-text-grey ml-1">
             <%= @start_date.strftime("%b %d") %> - <%= @end_date.strftime("%b %d, %Y") %>
@@ -37,7 +37,8 @@
 
         <div class="field has-addons">
           <% 
-            sc_param = "&show_completed=#{@show_completed}"
+            offset_params = "&weeks_before=#{@weeks_before}&weeks_after=#{@weeks_after}"
+            sc_param = "&show_completed=#{@show_completed}#{offset_params}"
             prev_week = (@date - 1.week).strftime("%Y-%m-%d")
             prev_day = (@date - 1.day).strftime("%Y-%m-%d")
             next_day = (@date + 1.day).strftime("%Y-%m-%d")
@@ -54,7 +55,7 @@
             </a>
           </p>
           <p class="control">
-            <a href="/calendar?view=<%= @view %>&date=<%= Date.today.strftime("%Y-%m-%d") %><%= sc_param %>" class="button is-white">Today</a>
+            <a href="/calendar?view=<%= @view %>&date=<%= Time.zone.today.strftime("%Y-%m-%d") %><%= sc_param %>" class="button is-white">Today</a>
           </p>
           <p class="control">
             <a href="/calendar?view=<%= @view %>&date=<%= next_day %><%= sc_param %>" class="button is-white" title="Next Day">
@@ -72,11 +73,15 @@
   </div>
 
   <% if @view == 'month' %>
-    <!-- ROLLING MONTH VIEW (GRID) -->
+    <!-- CALENDAR MONTH VIEW (GRID) -->
     <div class="calendar-grid">
+      <% ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].each do |day_name| %>
+        <div class="day-header"><%= day_name %></div>
+      <% end %>
+
       <% (@start_date..@end_date).each do |day| %>
         <% 
-          is_today = (day == Date.today)
+          is_today = (day == Time.zone.today)
           date_key = day.to_s
           items = @items_by_date[date_key] || []
         %>
@@ -93,8 +98,18 @@
             <% end %>
           </div>
           <div class="day-content" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="<%= date_key %>">
-            <% items.sort_by { |i| i[:time] }.each do |item| %>
-              <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-db-id="<%= item[:db_id] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>" data-full-date="<%= item[:time].iso8601 %>">
+            <% items.sort_by { |i| [i[:optional] ? 1 : 0, i[:time]] }.each do |item| %>
+                <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" 
+                     data-type="<%= item[:type] %>" 
+                     data-db-id="<%= item[:db_id] %>" 
+                     data-id="<%= item[:id] %>" 
+                     data-name="<%= item[:name] %>" 
+                     data-course-id="<%= item[:course_id] %>"
+                     data-synthetic="<%= item[:synthetic] %>"
+                     data-description="<%= item[:description] %>"
+                     data-external-url="<%= item[:external_url] %>"
+                     data-date="<%= item[:time].strftime("%Y-%m-%d") %>" 
+                     data-full-date="<%= item[:time].iso8601 %>">
                 <% if item[:type] == 'assignment' %>
                   <button class="button is-ghost is-small toggle-complete-btn p-0 mr-1" onclick="toggleComplete('<%= item[:db_id] %>', event)">
                     <span class="icon is-small">
@@ -102,13 +117,37 @@
                     </span>
                   </button>
                 <% end %>
-                <a href="<%= item[:url] %>" class="calendar-item <%= item[:type] %> <%= 'is-completed' if item[:completed] %>" title="<%= item[:name] %>">
-                  <span class="item-time"><%= item[:time].strftime("%H:%M") %></span>
-                  <% if item[:course_name] %>
-                    <span class="has-text-weight-bold mr-1 px-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(item[:course_name]) %>"><%= item[:course_name][0..6] %></span>
+                <div class="calendar-item <%= item[:type] %> <%= 'is-completed' if item[:completed] %> <%= 'is-optional' if item[:optional] %>" 
+                     onmouseenter="handleItemHover(this)"
+                     data-db-id="<%= item[:db_id] %>" 
+                     data-type="<%= item[:type] %>" 
+                     data-item-id="<%= item[:id] %>" 
+                     data-course-id="<%= item[:course_id] %>">
+                  <% if @view != 'month' %>
+                    <span class="item-time"><%= item[:time].in_time_zone(@user_prefs.time_zone).strftime("%I:%M %p") %></span>
                   <% end %>
-                  <span class="item-name"><%= truncate_text(item[:name], 15) %></span>
-                </a>
+                  <% if item[:course_name] %>
+                    <a href="/course/<%= item[:course_id] %>" class="has-text-weight-bold mr-1 px-1 course-pill-link" style="border-radius: 3px; font-size: 0.7rem; display: inline-block; <%= course_pill_style(item[:course_name]) %>" onclick="event.stopPropagation();"><%= item[:course_name][0..6] %></a>
+                  <% end %>
+                  <a href="<%= item[:url] %>" class="item-name has-text-dark" style="text-decoration: none;"><%= render_markdown_inline(item[:name]) %></a>
+                  
+                  <% if @view == 'month' %>
+                  <div class="calendar-hover-card">
+                    <div class="hover-card-content">
+                      <p class="has-text-weight-bold mb-1"><%= render_markdown_inline(item[:name]) %></p>
+                      <div class="is-size-7 has-text-grey mb-2">
+                        <span><i class="far fa-clock mr-1"></i><%= item[:time].in_time_zone(@user_prefs.time_zone).strftime("%I:%M %p") %></span>
+                        <% if item[:course_name] %>
+                          <span class="ml-2"><i class="fas fa-university mr-1"></i><%= item[:course_name] %></span>
+                        <% end %>
+                      </div>
+                      <div class="hover-details content is-size-7">
+                        <p class="has-text-grey-light">Loading details...</p>
+                      </div>
+                    </div>
+                  </div>
+                  <% end %>
+                </div>
                 <button class="button is-ghost is-small edit-date-btn p-1" onclick="openDateModal(this, event)">
                   <span class="icon is-small"><i class="fas fa-edit"></i></span>
                 </button>
@@ -121,9 +160,15 @@
   <% else %>
     <!-- ROLLING WEEK VIEW (LIST) -->
     <div class="week-list">
+      <div class="extend-view-row p-2 has-background-white-bis" style="border-bottom: 1px solid #eee;">
+        <a href="/calendar?view=week&date=<%= @date.strftime("%Y-%m-%d") %>&weeks_before=<%= @weeks_before + 1 %>&weeks_after=<%= @weeks_after %>&show_completed=<%= @show_completed %>" class="button is-ghost is-fullwidth is-small has-text-grey">
+          <span class="icon"><i class="fas fa-plus-circle"></i></span>
+          <span>Extend View (Earlier)</span>
+        </a>
+      </div>
       <% (@start_date..@end_date).each do |day| %>
         <% 
-          is_today = (day == Date.today)
+          is_today = (day == Time.zone.today)
           date_key = day.to_s
           items = @items_by_date[date_key] || []
         %>
@@ -137,8 +182,18 @@
               <div class="has-text-grey-light is-size-7 mt-2 no-items-msg">No items due.</div>
             <% end %>
             <div class="week-items-grid">
-                <% items.sort_by { |i| i[:time] }.each do |item| %>
-                  <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-db-id="<%= item[:db_id] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>" data-full-date="<%= item[:time].iso8601 %>">
+                <% items.sort_by { |i| [i[:optional] ? 1 : 0, i[:time]] }.each do |item| %>
+                  <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" 
+                       data-type="<%= item[:type] %>" 
+                       data-db-id="<%= item[:db_id] %>" 
+                       data-id="<%= item[:id] %>" 
+                       data-name="<%= item[:name] %>" 
+                       data-course-id="<%= item[:course_id] %>"
+                       data-synthetic="<%= item[:synthetic] %>"
+                       data-description="<%= item[:description] %>"
+                       data-external-url="<%= item[:external_url] %>"
+                       data-date="<%= item[:time].strftime("%Y-%m-%d") %>" 
+                       data-full-date="<%= item[:time].iso8601 %>">
                     <% if item[:type] == 'assignment' %>
                       <button class="button is-ghost is-small toggle-complete-btn p-0 mr-2" onclick="toggleComplete('<%= item[:db_id] %>', event)">
                         <span class="icon">
@@ -146,20 +201,27 @@
                         </span>
                       </button>
                     <% end %>
-                    <a href="<%= item[:url] %>" class="calendar-item is-large <%= item[:type] %> <%= 'is-completed' if item[:completed] %>">
+                    <div class="calendar-item is-large <%= item[:type] %> <%= 'is-completed' if item[:completed] %> <%= 'is-optional' if item[:optional] %>">
                       <div class="level is-mobile mb-0">
-                        <div class="level-left">
-                          <span class="tag is-white is-rounded mr-2"><%= item[:time].strftime("%I:%M %p") %></span>
+                        <div class="level-left" style="flex-shrink: 1; overflow: hidden;">
+                          <span class="tag is-white is-rounded mr-2"><%= item[:time].in_time_zone(@user_prefs.time_zone).strftime("%I:%M %p") %></span>
                           <% if item[:course_name] %>
-                            <span class="tag mr-2 has-text-weight-bold" style="<%= course_pill_style(item[:course_name]) %>"><%= item[:course_name][0..6] %></span>
+                            <a href="/course/<%= item[:course_id] %>" class="tag mr-2 has-text-weight-bold" style="<%= course_pill_style(item[:course_name]) %>" onclick="event.stopPropagation();"><%= item[:course_name][0..6] %></a>
                           <% end %>
-                          <span class="item-name-full"><%= truncate_text(item[:name], 80) %></span>
+                          <a href="<%= item[:url] %>" class="item-name-full has-text-dark" style="text-decoration: none;"><%= render_markdown_inline(item[:name]) %></a>
                         </div>
                         <div class="level-right">
-                          <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right"></i></span>
+                          <button class="button is-ghost is-small p-0 ml-4" onclick="expandItem('<%= item[:db_id] %>', event)">
+                            <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
+                          </button>
                         </div>
                       </div>
-                    </a>
+                      <div id="expand-<%= item[:db_id] %>" class="item-details is-hidden mt-2 pt-2" style="border-top: 1px solid rgba(0,0,0,0.05);">
+                        <div class="content is-size-7" id="content-<%= item[:db_id] %>">
+                           <p>Loading details...</p>
+                        </div>
+                      </div>
+                    </div>
                     <button class="button is-ghost is-small edit-date-btn p-1 ml-2" onclick="openDateModal(this, event)">
                       <span class="icon is-small"><i class="fas fa-edit"></i></span>
                     </button>
@@ -169,6 +231,12 @@
           </div>
         </div>
       <% end %>
+      <div class="extend-view-row p-2 has-background-white-bis" style="border-top: 1px solid #eee;">
+        <a href="/calendar?view=week&date=<%= @date.strftime("%Y-%m-%d") %>&weeks_before=<%= @weeks_before %>&weeks_after=<%= @weeks_after + 1 %>&show_completed=<%= @show_completed %>" class="button is-ghost is-fullwidth is-small has-text-grey">
+          <span class="icon"><i class="fas fa-plus-circle"></i></span>
+          <span>Extend View (Later)</span>
+        </a>
+      </div>
     </div>
   <% end %>
 </div>
@@ -210,6 +278,23 @@
     
     const wrapper = btn.closest('.calendar-item-wrapper');
     const type = wrapper.dataset.type;
+    const isSynthetic = wrapper.dataset.synthetic === 'true';
+    
+    if (type === 'assignment' && isSynthetic) {
+      const fullDate = wrapper.dataset.fullDate || wrapper.dataset.date;
+      const data = {
+        name: wrapper.dataset.name,
+        dueDate: wrapper.dataset.date,
+        dueTime: fullDate.includes('T') ? fullDate.split('T')[1].substring(0, 5) : '23:59',
+        externalUrl: wrapper.dataset.externalUrl,
+        description: wrapper.dataset.description,
+        courseId: wrapper.dataset.courseId,
+        brightspaceId: wrapper.dataset.id
+      };
+      openEditAssignmentModal(data);
+      return;
+    }
+
     const id = wrapper.dataset.id;
     const name = wrapper.dataset.name;
     const fullDate = wrapper.dataset.fullDate || wrapper.dataset.date;
@@ -293,6 +378,48 @@
     });
   }
 
+  function expandItem(dbId, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    
+    const detailsDiv = document.getElementById(`expand-${dbId}`);
+    const icon = event.currentTarget.querySelector('.toggle-icon');
+    
+    if (!detailsDiv.classList.contains('is-hidden')) {
+      detailsDiv.classList.add('is-hidden');
+      icon.classList.remove('fa-chevron-down');
+      icon.classList.add('fa-chevron-right');
+      return;
+    }
+    
+    // Show and change icon
+    detailsDiv.classList.remove('is-hidden');
+    icon.classList.remove('fa-chevron-right');
+    icon.classList.add('fa-chevron-down');
+    
+    // Fetch if needed
+    if (detailsDiv.dataset.loaded !== 'true') {
+      const wrapper = detailsDiv.closest('.calendar-item-wrapper');
+      const type = wrapper.dataset.type;
+      const itemId = wrapper.dataset.id;
+      // Robustly find the course link (can be .course-pill-link or .tag)
+      const courseLink = wrapper.querySelector('a[href^="/course/"]');
+      const courseId = courseLink?.href.split('/').pop();
+
+      fetch(`/api/v1/item_details?type=${type}&id=${itemId}&course_id=${courseId}`)
+        .then(r => r.json())
+        .then(data => {
+          detailsDiv.querySelector('.content').innerHTML = data.html || '<p class="has-text-grey">No description available.</p>';
+          detailsDiv.dataset.loaded = 'true';
+        })
+        .catch(err => {
+          detailsDiv.querySelector('.content').innerHTML = '<p class="has-text-danger">Error loading details.</p>';
+        });
+    }
+  }
+
   // --- Drag and Drop Handlers ---
   function handleDragStart(event) {
     const wrapper = event.target.closest('.calendar-item-wrapper');
@@ -341,9 +468,76 @@
       console.error('Drop error:', e);
     }
   }
+
+  function handleItemHover(el) {
+    const detailsDiv = el.querySelector('.hover-details');
+    if (!detailsDiv || detailsDiv.dataset.loaded === 'true') return;
+    
+    // Check if we already started loading (to avoid multiple requests)
+    if (detailsDiv.dataset.loading === 'true') return;
+    detailsDiv.dataset.loading = 'true';
+
+    const type = el.dataset.type;
+    const itemId = el.dataset.itemId;
+    const courseId = el.dataset.courseId;
+
+    fetch(`/api/v1/item_details?type=${type}&id=${itemId}&course_id=${courseId}`)
+      .then(r => r.json())
+      .then(data => {
+        detailsDiv.innerHTML = data.html || '<p class="has-text-grey">No description available.</p>';
+        detailsDiv.dataset.loaded = 'true';
+        detailsDiv.dataset.loading = 'false';
+      })
+      .catch(err => {
+        detailsDiv.innerHTML = '<p class="has-text-danger">Error loading details.</p>';
+        detailsDiv.dataset.loading = 'false';
+      });
+  }
 </script>
 
 <style>
+  /* Hover Card Popup Styles */
+  .calendar-hover-card {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    z-index: 1000;
+    width: 260px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    padding: 15px;
+    margin-bottom: 10px;
+    white-space: normal;
+    pointer-events: none;
+    border: 1px solid #eee;
+    color: #4a4a4a;
+    text-align: left;
+  }
+
+  .calendar-item:hover .calendar-hover-card {
+    display: block;
+  }
+
+  /* Triangle for the popup */
+  .calendar-hover-card::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 20px;
+    border-width: 8px;
+    border-style: solid;
+    border-color: white transparent transparent transparent;
+  }
+
+  .hover-details {
+    max-height: 150px;
+    overflow-y: auto;
+    border-top: 1px solid #f5f5f5;
+    padding-top: 8px;
+  }
+
   .calendar-container {
     max-width: 1200px;
     margin: 0 auto;
@@ -374,13 +568,14 @@
   /* Month Grid Styles */
   .calendar-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     border-top: 1px solid #eee;
     border-left: 1px solid #eee;
     background: #fff;
     border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+    width: 100%;
   }
   
   .day-header {
@@ -561,6 +756,12 @@
     color: #6b7280;
     border-left-color: #9ca3af;
   }
+
+  .calendar-item.is-optional {
+    opacity: 0.7;
+    border-left-style: dashed;
+    filter: grayscale(0.5);
+  }
   
   .calendar-item:hover {
     filter: brightness(0.95);
@@ -606,3 +807,4 @@
     .week-day-name { margin-bottom: 0; }
   }
 </style>
+<%= erb :'partials/edit_assignment_modal' %>

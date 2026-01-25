@@ -13,7 +13,7 @@
               <summary class="is-clickable p-2 has-background-light is-radiusless" style="list-style: none; outline: none;">
                 <div class="is-flex is-justify-content-space-between is-align-items-center">
                   <div>
-                    <h5 class="title is-5 mb-0" style="display: inline;"><%= item['Title'] %></h5>
+                    <h5 class="title is-5 mb-0" style="display: inline;"><%= render_markdown_inline(item['Title']) %></h5>
                     <span class="is-size-7 has-text-grey ml-3">
                       <%= format_date(item["StartDate"], "%b %d, %Y") %>
                     </span>

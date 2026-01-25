@@ -121,7 +121,7 @@
                 %>
                 <a href="/course/<%= @course_id %>/download?path=<%= att['Path'] || "/d2l/api/le/1.40/#{@course_id}/overview/attachments/#{id}" %>&name=<%= URI.encode_www_form_component(name) %>" class="button is-small is-outlined is-link">
                   <span class="icon is-small"><i class="fas fa-file"></i></span>
-                  <span><%= name %></span>
+                  <span><%= render_markdown_inline(name) %></span>
                 </a>
               <% end %>
             <% end %>
@@ -130,7 +130,7 @@
               <% @overview['LinkAttachments'].each do |link| %>
                 <a href="<%= link['Url'] %>" target="_blank" class="button is-small is-outlined is-info">
                   <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
-                  <span><%= link['Title'] || link['Url'] %></span>
+                  <span><%= render_markdown_inline(link['Title'] || link['Url']) %></span>
                 </a>
               <% end %>
             <% end %>
@@ -157,7 +157,7 @@
                   </div>
                 </summary>
                 <div class="content p-4 has-background-white border-light">
-                  <%= fix_links(desc_text) %>
+                  <%= render_content(desc_text) %>
                 </div>
               </details>
             </div>
@@ -184,7 +184,7 @@
                         <div class="control mr-3">
                           <input type="checkbox" class="assignment-checkbox" data-id="<%= a.id %>" onchange="toggleAssignmentInline(this)">
                         </div>
-                        <strong class="is-size-6"><%= a.name %></strong>
+                        <strong class="is-size-6"><%= render_markdown_inline(a.name) %></strong>
                       </div>
                       <div class="has-text-right">
                         <p class="has-text-danger is-size-7 mb-1">
@@ -192,9 +192,20 @@
                         </p>
                         <div class="buttons is-right">
                           <% if a.synthetic %>
-                            <a href="/course/<%= @course_id %>/assignments/<%= a.brightspace_id %>" class="button is-small is-info is-light">
+                            <% 
+                              modal_data = {
+                                name: a.name,
+                                dueDate: a.due_date&.strftime('%Y-%m-%d'),
+                                dueTime: a.due_date&.strftime('%H:%M'),
+                                externalUrl: a.external_url,
+                                description: a.description,
+                                courseId: a.course_id,
+                                brightspaceId: a.brightspace_id
+                              }.to_json
+                            %>
+                            <button class="button is-small is-info is-light" onclick="openEditAssignmentModal(<%= modal_data.gsub('"', '&quot;') %>)" title="Edit Task">
                               <span class="icon is-small"><i class="fas fa-edit"></i></span>
-                            </a>
+                            </button>
                           <% end %>
                           <a href="/course/<%= @course_id %>/assignments/<%= a.brightspace_id %>" class="button is-small is-link is-light">View Details</a>
                         </div>
@@ -214,7 +225,7 @@
             <% @syllabus_info[:modules].each do |mod| %>
                 <div class="box is-light">
                   <div class="is-flex is-justify-content-space-between is-align-items-center">
-                    <span class="has-text-weight-bold"><%= mod['Title'] %> (Module)</span>
+                    <span class="has-text-weight-bold"><%= render_markdown_inline(mod['Title']) %> (Module)</span>
                     <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" class="button is-small is-primary is-outlined">View Module</a>
                   </div>
                   <% if mod['Topics'] && !mod['Topics'].empty? %>
@@ -231,9 +242,9 @@
                                       full_url = "https://#{$client.host}#{full_url}"
                                     end
                                   %>
-                                  <a href="<%= full_url %>" target="_blank"><%= topic['Title'] %></a>
+                                  <a href="<%= full_url %>" target="_blank"><%= render_markdown_inline(topic['Title']) %></a>
                                 <% else %>
-                                  <%= topic['Title'] %>
+                                  <%= render_markdown_inline(topic['Title']) %>
                                 <% end %>
                               </span>
                               <div class="buttons">
@@ -267,9 +278,9 @@
                                     full_url = "https://#{$client.host}#{full_url}"
                                   end
                                 %>
-                                <a href="<%= full_url %>" target="_blank"><%= topic['Title'] %></a>
+                                <a href="<%= full_url %>" target="_blank"><%= render_markdown_inline(topic['Title']) %></a>
                               <% else %>
-                                <%= topic['Title'] %>
+                                <%= render_markdown_inline(topic['Title']) %>
                               <% end %>
                             </span>
                           </div>
@@ -366,3 +377,4 @@ function closePdfModal() {
   frame.src = ""; // Stop loading/playing
 }
 </script>
+<%= erb :'partials/edit_assignment_modal' %>

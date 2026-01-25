@@ -6,51 +6,52 @@
   <div class="column is-9">
     <div class="box">
       <div class="mb-5">
-        <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
-          <div class="is-flex is-align-items-center">
-            <h4 class="title is-4 mb-0"><%= @assignment['Name'] %></h4>
-            <% 
-               # Find local record to check optional status
-               local_rec = Assignment.find_by(brightspace_id: @assignment_id, course_id: @course_id)
-            %>
-            <% if local_rec %>
-              <div class="ml-3">
-                <button class="button is-small <%= local_rec.optional ? 'is-dark' : 'is-light' %>" onclick="toggleOptional('<%= local_rec.id %>')">
+        <div class="is-flex is-justify-content-space-between is-align-items-start mb-2">
+          <div style="flex: 1; padding-right: 20px;">
+            <h4 class="title is-4 mb-1"><%= render_markdown_inline(@assignment['Name']) %></h4>
+            <div class="is-size-6 has-text-grey">
+              <i class="fas fa-calendar-alt mr-1"></i> Due: <%= @assignment['DueDate'] ? format_date(@assignment["DueDate"]) : "No due date" %>
+            </div>
+          </div>
+          
+          <div class="is-flex is-flex-direction-column is-align-items-flex-end" style="gap: 8px;">
+            <div class="buttons are-small mb-0">
+              <% 
+                 # Find local record to check optional status
+                 local_rec = Assignment.find_by(brightspace_id: @assignment_id, course_id: @course_id)
+              %>
+              <% if local_rec %>
+                <button class="button <%= local_rec.optional ? 'is-dark' : 'is-light' %>" onclick="toggleOptional('<%= local_rec.id %>')">
                   <span class="icon is-small"><i class="fas fa-hand-paper"></i></span>
                   <span><%= local_rec.optional ? 'Optional' : 'Mark Optional' %></span>
                 </button>
-              </div>
-            <% end %>
-          </div>
-          <% if @assignment['Synthetic'] %>
-            <div class="buttons">
-              <button class="button is-small is-info is-light" onclick="openEditModal()">
-                <span class="icon is-small"><i class="fas fa-edit"></i></span>
-                <span>Edit Task</span>
-              </button>
-              <form action="/course/<%= @course_id %>/assignments/<%= @assignment_id %>/delete" method="POST" onsubmit="return confirm('Are you sure you want to delete this task?');">
-                <button type="submit" class="button is-small is-danger is-light">
-                  <span class="icon is-small"><i class="fas fa-trash"></i></span>
+              <% end %>
+
+              <% if @assignment['Synthetic'] %>
+                <button class="button is-info is-light" onclick="openEditModal()">
+                  <span class="icon is-small"><i class="fas fa-edit"></i></span>
+                  <span>Edit</span>
                 </button>
-              </form>
+                <form action="/course/<%= @course_id %>/assignments/<%= @assignment_id %>/delete" method="POST" onsubmit="return confirm('Are you sure you want to delete this task?');" style="display:inline;">
+                  <button type="submit" class="button is-danger is-light">
+                    <span class="icon is-small"><i class="fas fa-trash"></i></span>
+                  </button>
+                </form>
+              <% end %>
             </div>
-          <% end %>
-        </div>
-        <div class="is-flex is-justify-content-space-between is-align-items-center">
-          <div class="is-size-6 has-text-grey">
-            <i class="fas fa-calendar-alt mr-1"></i> Due: <%= @assignment['DueDate'] ? format_date(@assignment["DueDate"]) : "No due date" %>
+
+            <% 
+               portal_url = if @assignment['Synthetic'] && (ext_url = @assignment['ExternalUrl'])
+                              ext_url.start_with?('/') ? "https://#{$client.host}#{ext_url}" : ext_url
+                            else
+                              $client.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id})
+                            end
+            %>
+            <a href="<%= portal_url %>" class="button is-small is-link is-light" target="_blank">
+              <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
+              <span>Open in Brightspace</span>
+            </a>
           </div>
-          <% 
-             portal_url = if @assignment['Synthetic'] && (ext_url = @assignment['ExternalUrl'])
-                            ext_url.start_with?('/') ? "https://#{$client.host}#{ext_url}" : ext_url
-                          else
-                            $client.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id})
-                          end
-          %>
-          <a href="<%= portal_url %>" class="button is-small is-link is-light" target="_blank">
-            <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
-            <span>Open in Brightspace</span>
-          </a>
         </div>
       </div>
 
@@ -194,7 +195,7 @@
                   <% if fb_text_content.strip.empty? %>
                     <p class="has-text-grey italic">No feedback text provided in official feedback slot.</p>
                   <% else %>
-                    <%= fix_links(fb_text_content) %>
+                    <%= render_content(fb_text_content) %>
                   <% end %>
                 </div>
 
@@ -241,7 +242,7 @@
               <% if desc_text.strip.empty? %>
                 <p class="has-text-grey italic">No specific instructions provided.</p>
               <% else %>
-                <%= fix_links(desc_text) %>
+                <%= render_content(desc_text) %>
               <% end %>
             </div>
 
@@ -382,7 +383,7 @@
            <h5 class="title is-5 mb-3"><i class="fas fa-award mr-2 has-text-warning"></i> Gradebook Comments</h5>
            <div class="box" style="border-left: 5px solid #ffdd57; background: #fffcf0;">
              <div class="content">
-                <%= fix_links(@grade_entry['Comments']['Html'] || @grade_entry['Comments']['Text']) %>
+                <%= render_content(@grade_entry['Comments']['Html'] || @grade_entry['Comments']['Text']) %>
              </div>
              <div class="is-size-7 has-text-grey mt-2">
                 Score: <strong><%= @grade_entry['DisplayedGrade'] %></strong> (<%= @grade_entry['PointsNumerator'] %> / <%= @grade_entry['PointsDenominator'] %>)
@@ -421,10 +422,20 @@
         </div>
 
         <div class="field">
-          <label class="label">Due Date</label>
-          <div class="control">
-            <input class="input" type="date" name="due_date" value="<%= @assignment['DueDate'] ? Time.parse(@assignment['DueDate']).strftime('%Y-%m-%d') : '' %>">
+          <label class="label">Due Date & Time</label>
+          <div class="is-flex" style="gap: 10px;">
+            <div class="control" style="flex: 1;">
+              <% 
+                tz_name = @user_prefs&.time_zone || "UTC"
+                dt = @assignment['DueDate'] ? Time.parse(@assignment['DueDate']).in_time_zone(tz_name) : nil
+              %>
+              <input class="input" type="date" name="due_date" value="<%= dt ? dt.strftime('%Y-%m-%d') : '' %>">
+            </div>
+            <div class="control" style="flex: 1;">
+              <input class="input" type="time" name="due_time" value="<%= dt ? dt.strftime('%H:%M') : '' %>">
+            </div>
           </div>
+          <p class="help">Time Zone: <%= tz_name %></p>
         </div>
 
         <div class="field">

@@ -1,3 +1,5 @@
+require 'kramdown'
+
 module CourseHelpers
   def truncate_text(text, max_length = 20)
     return text if text.nil? || text.length <= max_length
@@ -23,6 +25,24 @@ module CourseHelpers
     obj['Author']['IsInstructor'] == true || obj['Author']['RoleName'] =~ /Instructor/i
   rescue
     false
+  end
+
+  def render_markdown(text)
+    return "" if text.nil? || text.empty?
+    
+    # Process text through Kramdown
+    Kramdown::Document.new(text.to_s).to_html
+  end
+
+  def render_markdown_inline(text)
+    return "" if text.nil? || text.empty?
+    html = render_markdown(text).strip
+    
+    # Remove surrounding <p> tags if they exist
+    if html.start_with?("<p>") && html.end_with?("</p>")
+      html = html[3..-5]
+    end
+    html
   end
 
   def fix_links(html)
@@ -54,6 +74,57 @@ module CourseHelpers
     end
 
     temp_html
+  end
+
+  def html_to_markdown(html)
+    return "" if html.nil?
+    
+    # Handle D2L Rich Text Hash objects
+    if html.is_a?(Hash)
+      html = html["Html"] || html["Text"] || html[:Html] || html[:Text] || ""
+    end
+    
+    # Handle stringified Ruby hashes (recovery from sync bugs)
+    if html.is_a?(String) && html.start_with?("{") && html.include?("=>")
+      if html =~ /"(?:Html|Text)"\s*=>\s*"(.*?)"/m
+        html = $1
+      elsif html =~ /:(?:Html|Text)\s*=>\s*"(.*?)"/m
+        html = $1
+      end
+    end
+
+    return "" if html.to_s.empty?
+    
+    # Very basic HTML to Markdown conversion
+    text = html.to_s.dup
+    text.gsub!(/<br\s*\/?>/i, "\n")
+    text.gsub!(/<\/p>/i, "\n\n")
+    text.gsub!(/<p[^>]*>/i, "")
+    text.gsub!(/<strong>(.*?)<\/strong>/i, '**\1**')
+    text.gsub!(/<b>(.*?)<\/b>/i, '**\1**')
+    text.gsub!(/<em>(.*?)<\/em>/i, '_\1_')
+    text.gsub!(/<i>(.*?)<\/i>/i, '_\1_')
+    text.gsub!(/<a\s+[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/i, '[\2](\1)')
+    text.gsub!(/<ul[^>]*>/i, "\n")
+    text.gsub!(/<\/ul>/i, "\n")
+    text.gsub!(/<li[^>]*>/i, "\n* ")
+    text.gsub!(/<\/li>/i, "")
+    
+    # Strip remaining tags
+    text.gsub!(/<[^>]+>/, '')
+    
+    # Decode common entities
+    text.gsub!("&nbsp;", " ")
+    text.gsub!("&amp;", "&")
+    text.gsub!("&lt;", "<")
+    text.gsub!("&gt;", ">")
+    text.gsub!("&quot;", "\"")
+
+    text.strip
+  end
+
+  def render_content(text)
+    fix_links(render_markdown(text))
   end
 
 

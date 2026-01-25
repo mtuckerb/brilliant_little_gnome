@@ -54,7 +54,7 @@
               <tr>
                 <td>
                   <a href="/course/<%= @course_id %>/discussions/<%= forum_id %>/topics/<%= topic_id %>" class="has-text-weight-bold">
-                    <%= name %>
+                    <%= render_markdown_inline(name) %>
                   </a>
                   <div class="is-size-7 has-text-grey">
                     <% if created_date %>

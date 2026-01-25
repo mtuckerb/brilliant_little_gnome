@@ -40,6 +40,8 @@ GEM
       logger
       ostruct
     ice_cube (0.17.0)
+    kramdown (2.5.2)
+      rexml (>= 3.4.4)
     logger (1.7.0)
     minitest (5.27.0)
     mustermann (3.0.4)
@@ -59,6 +61,7 @@ GEM
       base64 (>= 0.1.0)
       rack (~> 2.2, >= 2.2.4)
     rake (13.3.1)
+    rexml (3.4.4)
     ruby2_keywords (0.0.5)
     rubyzip (2.4.1)
     securerandom (0.4.1)
@@ -71,6 +74,8 @@ GEM
       activerecord (>= 4.1)
       sinatra (>= 1.0)
     sqlite3 (2.8.1-arm64-darwin)
+    sqlite3 (2.8.1-x64-mingw-ucrt)
+    sqlite3 (2.8.1-x86_64-darwin)
     tilt (2.7.0)
     timeout (0.6.0)
     tzinfo (2.0.6)
@@ -83,7 +88,6 @@ GEM
 
 PLATFORMS
   arm64-darwin
-  ruby
   x64-mingw-ucrt
   x86_64-darwin
 
@@ -93,6 +97,7 @@ DEPENDENCIES
   bigdecimal
   ferrum
   icalendar
+  kramdown
   mutex_m
   puma
   rack-cache (~> 1.17)

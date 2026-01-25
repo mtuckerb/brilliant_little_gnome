@@ -13,5 +13,6 @@ gem 'mutex_m'
 gem 'base64'
 gem 'bigdecimal'
 gem 'rack-flash3'
+gem 'kramdown'
 
 gem "rack-cache", "~> 1.17"
