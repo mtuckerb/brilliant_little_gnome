@@ -398,12 +398,12 @@ get '/calendar' do
   @show_completed = params[:show_completed] == 'true'
   
   if @view == 'week'
-    @start_date = @date
-    @end_date = @date + 6.days
+    @start_date = @date.beginning_of_week
+    @end_date = @start_date + 6.days
   else
-    # Month View: Start from today and show 4 weeks (standard rolling month)
-    @start_date = @date
-    @end_date = @date + 27.days # 4 weeks total
+    # Month View: Show 4 weeks starting from the beginning of the week containing @date
+    @start_date = @date.beginning_of_week
+    @end_date = @start_date + 27.days # 4 weeks total
   end
   
   # Fetch all items with due dates in this range
