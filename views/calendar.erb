@@ -2,12 +2,12 @@
   <div class="calendar-header-box mb-5">
     <div class="level">
       <div class="level-left">
-        <div class="mb-5">
-          <h1 class="title is-3 mb-2">
+        <div>
+          <h1 class="title is-3 mb-1">
             <span class="icon mr-2"><i class="fas fa-calendar-alt"></i></span>
             <%= @view == 'month' ? "Next 30 Days" : "Next 7 Days" %>
           </h1>
-          <p class="subtitle is-6 has-text-grey">
+          <p class="subtitle is-6 has-text-grey ml-1">
             <%= @start_date.strftime("%b %d") %> - <%= @end_date.strftime("%b %d, %Y") %>
           </p>
         </div>
@@ -35,19 +35,37 @@
           </p>
         </div>
 
-        <div class="buttons">
+        <div class="field has-addons">
           <% 
-            prev_date = (@view == 'month' ? @date - 1.month : @date - 1.week).strftime("%Y-%m-%d")
-            next_date = (@view == 'month' ? @date + 1.month : @date + 1.week).strftime("%Y-%m-%d")
             sc_param = "&show_completed=#{@show_completed}"
+            prev_week = (@date - 1.week).strftime("%Y-%m-%d")
+            prev_day = (@date - 1.day).strftime("%Y-%m-%d")
+            next_day = (@date + 1.day).strftime("%Y-%m-%d")
+            next_week = (@date + 1.week).strftime("%Y-%m-%d")
           %>
-          <a href="/calendar?view=<%= @view %>&date=<%= prev_date %><%= sc_param %>" class="button is-white">
-            <span class="icon"><i class="fas fa-chevron-left"></i></span>
-          </a>
-          <a href="/calendar?view=<%= @view %>&date=<%= Date.today.strftime("%Y-%m-%d") %><%= sc_param %>" class="button is-white">Today</a>
-          <a href="/calendar?view=<%= @view %>&date=<%= next_date %><%= sc_param %>" class="button is-white">
-            <span class="icon"><i class="fas fa-chevron-right"></i></span>
-          </a>
+          <p class="control">
+            <a href="/calendar?view=<%= @view %>&date=<%= prev_week %><%= sc_param %>" class="button is-white" title="Previous Week">
+              <span class="icon"><i class="fas fa-angle-double-left"></i></span>
+            </a>
+          </p>
+          <p class="control">
+            <a href="/calendar?view=<%= @view %>&date=<%= prev_day %><%= sc_param %>" class="button is-white" title="Previous Day">
+              <span class="icon"><i class="fas fa-angle-left"></i></span>
+            </a>
+          </p>
+          <p class="control">
+            <a href="/calendar?view=<%= @view %>&date=<%= Date.today.strftime("%Y-%m-%d") %><%= sc_param %>" class="button is-white">Today</a>
+          </p>
+          <p class="control">
+            <a href="/calendar?view=<%= @view %>&date=<%= next_day %><%= sc_param %>" class="button is-white" title="Next Day">
+              <span class="icon"><i class="fas fa-angle-right"></i></span>
+            </a>
+          </p>
+          <p class="control">
+            <a href="/calendar?view=<%= @view %>&date=<%= next_week %><%= sc_param %>" class="button is-white" title="Next Week">
+              <span class="icon"><i class="fas fa-angle-double-right"></i></span>
+            </a>
+          </p>
         </div>
       </div>
     </div>
@@ -76,7 +94,14 @@
           </div>
           <div class="day-content" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="<%= date_key %>">
             <% items.sort_by { |i| i[:time] }.each do |item| %>
-              <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>" data-full-date="<%= item[:time].iso8601 %>">
+              <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-db-id="<%= item[:db_id] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>" data-full-date="<%= item[:time].iso8601 %>">
+                <% if item[:type] == 'assignment' %>
+                  <button class="button is-ghost is-small toggle-complete-btn p-0 mr-1" onclick="toggleComplete('<%= item[:db_id] %>', event)">
+                    <span class="icon is-small">
+                      <i class="<%= item[:completed] ? 'fas fa-check-circle has-text-success' : 'far fa-circle has-text-grey-light' %>"></i>
+                    </span>
+                  </button>
+                <% end %>
                 <a href="<%= item[:url] %>" class="calendar-item <%= item[:type] %> <%= 'is-completed' if item[:completed] %>" title="<%= item[:name] %>">
                   <span class="item-time"><%= item[:time].strftime("%H:%M") %></span>
                   <% if item[:course_name] %>
@@ -113,7 +138,14 @@
             <% end %>
             <div class="week-items-grid">
                 <% items.sort_by { |i| i[:time] }.each do |item| %>
-                  <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>" data-full-date="<%= item[:time].iso8601 %>">
+                  <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-db-id="<%= item[:db_id] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>" data-full-date="<%= item[:time].iso8601 %>">
+                    <% if item[:type] == 'assignment' %>
+                      <button class="button is-ghost is-small toggle-complete-btn p-0 mr-2" onclick="toggleComplete('<%= item[:db_id] %>', event)">
+                        <span class="icon">
+                          <i class="<%= item[:completed] ? 'fas fa-check-circle fa-lg has-text-success' : 'far fa-circle fa-lg has-text-grey-light' %>"></i>
+                        </span>
+                      </button>
+                    <% end %>
                     <a href="<%= item[:url] %>" class="calendar-item is-large <%= item[:type] %> <%= 'is-completed' if item[:completed] %>">
                       <div class="level is-mobile mb-0">
                         <div class="level-left">
@@ -213,6 +245,29 @@
     
     const fullDateTime = time ? `${date}T${time}` : date;
     updateItemDate(type, id, fullDateTime);
+  }
+
+  function toggleComplete(assignmentId, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    
+    fetch(`/assignments/${assignmentId}/toggle_complete`, {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'ok') {
+        window.location.reload();
+      }
+    })
+    .catch(error => {
+      console.error('Error toggling completion:', error);
+    });
   }
 
   function updateItemDate(type, id, newDate) {

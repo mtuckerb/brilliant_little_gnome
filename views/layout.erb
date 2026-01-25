@@ -56,9 +56,26 @@
     .notification.is-flash.is-danger {
       border-left-color: #f14668;
     }
+
+    /* Auth Banner */
+    #auth-banner {
+      background-color: #f14668;
+      color: white;
+      text-align: center;
+      padding: 8px;
+    }
+    #auth-banner a {
+      color: white;
+      text-decoration: underline;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
+  <div id="auth-banner" class="is-hidden">
+    <span class="icon mr-1"><i class="fas fa-exclamation-triangle"></i></span>
+    Brightspace session expired. <a href="/settings">Click here to re-authenticate</a> to keep your data in sync.
+  </div>
   <nav class="navbar is-white">
     <div class="navbar-brand">
        <a class="navbar-item is-size-4 has-text-weight-bold has-text-primary" href="/dashboard">
@@ -127,6 +144,7 @@
           .then(data => {
             const indicator = document.getElementById('sync-indicator');
             const text = document.getElementById('sync-text');
+            const authBanner = document.getElementById('auth-banner');
             
             if (indicator && text) {
               if (data.status === 'syncing') {
@@ -134,6 +152,14 @@
                 text.innerText = data.current_task || 'Syncing...';
               } else {
                 indicator.classList.add('is-hidden');
+              }
+            }
+
+            if (authBanner) {
+              if (data.degraded_mode) {
+                authBanner.classList.remove('is-hidden');
+              } else {
+                authBanner.classList.add('is-hidden');
               }
             }
           })

@@ -30,7 +30,29 @@ module CourseHelpers
     
     # Prepend host to relative links starting with /
     host = $client.host
-    html.gsub(/href="(\/[^"]*)"/i, "href=\"https://#{host}\\1\"")
+    html = html.gsub(/href="(\/[^"]*)"/i, "href=\"https://#{host}\\1\"")
+
+    # Auto-link plain text URLs while avoiding existing HTML tags
+    tags = []
+    # Identify all HTML tags and existing <a> blocks to preserve them
+    temp_html = html.gsub(/<a\b[^>]*>.*?<\/a>|<[^>]+>/i) do |match|
+      tags << match
+      "__TAG_PLACEHOLDER_#{tags.size - 1}__"
+    end
+
+    # Linkify URLs in the remaining text
+    # Regex matches http/https URLs not immediately followed by a tag placeholder or inside quotes
+    url_regex = %r{https?://[^\s<"']+}i
+    temp_html = temp_html.gsub(url_regex) do |url|
+      "<a href=\"#{url}\" target=\"_blank\">#{url}</a>"
+    end
+
+    # Restore the original tags
+    tags.each_with_index do |tag, i|
+      temp_html.sub!("__TAG_PLACEHOLDER_#{i}__", tag)
+    end
+
+    temp_html
   end
 
 
@@ -82,28 +104,27 @@ module CourseHelpers
     # Add topics that are files
     if module_obj['Topics']
       module_obj['Topics'].each do |t|
-        # 1. Direct Content Files (Enforced)
-        if t['Url'] && (t['Url'].start_with?('/content/enforced/') || t['Url'].include?('/viewContent/'))
-          files << { 
-            id: (t['Id'] || t['TopicId']), 
-            title: t['Title'], 
-            path: "/d2l/api/le/1.40/#{course_id}/content/topics/#{t['Id'] || t['TopicId']}/file",
-            folder: folder_name
-          }
-        # 2. External Links / LTI
-        elsif t['Url'] && (t['Type'] == 3 || t['Type'] == "Link")
-          safe_title = t['Title'].gsub(/[^0-9a-z]/i, '_')
+        # Unique ID for the topic (Identifier is most stable in our normalized DB)
+        tid = t['Id'] || t['TopicId'] || t['Identifier']
+        url = t['Url']
+        
+        next unless tid && url
+
+        # 1. External Links / LTI (Handle as .url shortcut)
+        if t['Type'].to_s == "3" || t['Type'].to_s == "Link"
+          safe_title = (t['Title'] || "Link").gsub(/[^0-9a-z]/i, '_')
           files << {
             title: "#{safe_title}.url",
-            content: "[InternetShortcut]\r\nURL=#{t['Url']}\r\n",
+            content: "[InternetShortcut]\r\nURL=#{url}\r\n",
             folder: folder_name
           }
-        # 3. Catch-all for other potentially downloadable types (Type 1 is often file, Type 3 is link)
-        elsif t['Url'] && t['Type'] != 3
-           files << { 
-            id: (t['Id'] || t['TopicId']), 
+        else
+          # 2. Binary content (PDF, Word, etc.)
+          # We use the le API topic file endpoint
+          files << { 
+            id: tid, 
             title: t['Title'], 
-            path: "/d2l/api/le/1.40/#{course_id}/content/topics/#{t['Id'] || t['TopicId']}/file",
+            path: "/d2l/api/le/1.40/#{course_id}/content/topics/#{tid}/file",
             folder: folder_name
           }
         end
@@ -114,7 +135,8 @@ module CourseHelpers
     if module_obj['Modules']
       module_obj['Modules'].each do |sub|
         # Create subfolder path
-        sub_folder = "#{folder_name}/#{sub['Title'].gsub(/[^0-9a-z]/i, '_')}"
+        safe_sub_title = (sub['Title'] || "Untitled").gsub(/[^0-9a-z]/i, '_')
+        sub_folder = "#{folder_name}/#{safe_sub_title}"
         collect_all_files(course_id, sub, sub_folder, files)
       end
     end
@@ -354,6 +376,8 @@ module CourseHelpers
         'Topics' => (items_by_module[m.brightspace_id] || []).map do |item|
           {
             'Identifier' => item.brightspace_id,
+            'Id' => item.brightspace_id,
+            'TopicId' => item.brightspace_id,
             'Title' => item.title,
             'Type' => item.item_type,
             'Url' => item.url,

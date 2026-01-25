@@ -10,17 +10,65 @@
           <h4 class="title is-4"><i class="fas fa-tasks mr-2"></i> Assignments</h4>
         </div>
         <div class="level-right">
+          <div id="bulk-action-bar" class="is-hidden mr-4">
+            <span class="has-text-grey-light is-size-7 mr-2"><span id="selected-count">0</span> selected</span>
+            <div class="buttons are-small">
+              <button class="button is-light" onclick="bulkOptional(true)">
+                <span class="icon is-small"><i class="fas fa-hand-paper"></i></span>
+                <span>Mark Optional</span>
+              </button>
+              <button class="button is-light" onclick="bulkOptional(false)">
+                <span class="icon is-small"><i class="fas fa-check-circle"></i></span>
+                <span>Mark Required</span>
+              </button>
+            </div>
+          </div>
+          <a href="/course/<%= @course_id %>/assignments?show_completed=<%= !@show_completed %>" class="button is-small <%= !@show_completed ? 'is-info' : 'is-white' %> mr-2">
+            <span class="icon is-small mr-1">
+              <i class="<%= @show_completed ? 'fas fa-eye' : 'fas fa-eye-slash' %>"></i>
+            </span>
+            <span><%= @show_completed ? "Hide Completed" : "Show Completed" %></span>
+          </a>
           <a href="/course/<%= @course_id %>/assignments/export.ics" class="button is-small is-primary is-outlined">
             <span class="icon is-small"><i class="fas fa-calendar-alt"></i></span>
             <span>Export to Calendar</span>
           </a>
         </div>
       </div>
+      <style>
+        .completion-toggle-label .icon {
+          transition: transform 0.1s ease;
+        }
+        .completion-toggle-label:hover .icon {
+          transform: scale(1.1);
+        }
+        .completion-toggle-label:active .icon {
+          transform: scale(0.9);
+        }
+        
+        /* Row States */
+        .assignment-row.is-completed {
+          opacity: 0.6;
+          background-color: #fafafa;
+        }
+        .assignment-row.is-completed strong {
+          text-decoration: line-through;
+        }
+        .assignment-row.is-optional {
+          border-left: 4px solid #dbdbdb;
+          background-color: #fcfcfc;
+        }
+      </style>
       <% if @assignments && !@assignments.empty? %>
         <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
-              <th width="40"></th>
+              <th width="80">
+                <div class="is-flex is-align-items-center">
+                  <input type="checkbox" id="select-all" class="mr-2" onchange="toggleSelectAll(this)" title="Select all for bulk actions">
+                  <span class="is-size-7 has-text-grey-light has-text-weight-normal">Select</span>
+                </div>
+              </th>
               <th>Assignment</th>
               <th class="has-text-right">Action</th>
             </tr>
@@ -29,6 +77,7 @@
             <% @assignments.order(completed: :asc, due_date: :asc).each do |a| %>
               <%
                 id = a.is_a?(Hash) ? a['Id'] : a.brightspace_id
+                db_id = a.is_a?(Assignment) ? a.id : ''
                 name = a.is_a?(Hash) ? a['Name'] : a.name
                 due_date = a.is_a?(Hash) ? a['DueDate'] : a.due_date
                 
@@ -42,17 +91,37 @@
                 base_url = is_quiz ? "/course/#{@course_id}/quizzes" : "/course/#{@course_id}/assignments"
                 view_url = "#{base_url}/#{link_id}"
                 is_completed = a.respond_to?(:completed) && a.completed
+                is_optional = a.respond_to?(:optional) && a.optional
               %>
-              <tr class="<%= 'is-completed' if is_completed %>" style="<%= 'opacity: 0.6; background-color: #fafafa;' if is_completed %>">
+              <tr class="assignment-row <%= 'is-completed' if is_completed %> <%= 'is-optional' if is_optional %>" data-id="<%= db_id %>">
                 <td class="is-vcentered">
-                  <div class="control">
-                    <input type="checkbox" class="assignment-checkbox" data-id="<%= a.is_a?(Assignment) ? a.id : '' %>" <%= 'checked' if is_completed %> onchange="toggleAssignment(this)" <%= 'disabled' if a.is_a?(Hash) %>>
+                  <div class="is-flex is-align-items-center" style="gap: 12px;">
+                    <!-- Selection Checkbox -->
+                    <input type="checkbox" class="assignment-bulk-checkbox" data-id="<%= db_id %>" onchange="updateBulkSelection()" title="Select for bulk action">
+                    
+                    <!-- Completion Toggle -->
+                    <div class="completion-toggle-container">
+                      <input type="checkbox" id="complete-<%= db_id %>" class="assignment-checkbox is-hidden" data-id="<%= db_id %>" <%= 'checked' if is_completed %> onchange="toggleAssignment(this)" <%= 'disabled' if a.is_a?(Hash) %>>
+                      <label for="complete-<%= db_id %>" class="completion-toggle-label is-clickable" title="Mark as <%= is_completed ? 'Incomplete' : 'Complete' %>">
+                        <span class="icon is-medium has-text-success status-icon-completed <%= 'is-hidden' unless is_completed %>">
+                          <i class="fas fa-check-circle fa-lg"></i>
+                        </span>
+                        <span class="icon is-medium has-text-grey-lighter status-icon-incomplete <%= 'is-hidden' if is_completed %>">
+                          <i class="far fa-circle fa-lg"></i>
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 </td>
-                <td>
+                <td class="assignment-info">
                   <div class="mb-1">
-                    <strong style="<%= 'text-decoration: line-through;' if is_completed %>"><a href="<%= view_url %>"><%= name %></a></strong>
+                    <strong>
+                      <a href="<%= view_url %>" class="assignment-link"><%= name %></a>
+                    </strong>
                     <% if is_quiz %><span class="tag is-info is-light is-small ml-2">Quiz</span><% end %>
+                    <span class="tag is-light is-small ml-2 optional-tag <%= 'is-hidden' unless is_optional %>">
+                      <i class="fas fa-hand-paper mr-1"></i> Optional
+                    </span>
                   </div>
                   <div class="is-size-7 has-text-grey">
                     <i class="fas fa-calendar-alt mr-1"></i> Due: 
@@ -86,12 +155,77 @@
 </div>
 
 <script>
+function toggleSelectAll(checkbox) {
+  const checkboxes = document.querySelectorAll('.assignment-bulk-checkbox');
+  checkboxes.forEach(cb => cb.checked = checkbox.checked);
+  updateBulkSelection();
+}
+
+function updateBulkSelection() {
+  const selected = document.querySelectorAll('.assignment-bulk-checkbox:checked');
+  const count = selected.length;
+  const bar = document.getElementById('bulk-action-bar');
+  const countSpan = document.getElementById('selected-count');
+  
+  if (count > 0) {
+    bar.classList.remove('is-hidden');
+    countSpan.textContent = count;
+  } else {
+    bar.classList.add('is-hidden');
+  }
+}
+
+function bulkOptional(isOptional) {
+  const selected = document.querySelectorAll('.assignment-bulk-checkbox:checked');
+  const ids = Array.from(selected).map(cb => cb.getAttribute('data-id')).filter(id => id !== '');
+  
+  if (ids.length === 0) return;
+  
+  const courseId = '<%= @course_id %>';
+  const formData = new URLSearchParams();
+  ids.forEach(id => formData.append('ids[]', id));
+  formData.append('optional', isOptional);
+  
+  // Optimistic UI Update
+  selected.forEach(cb => {
+    const row = cb.closest('tr');
+    if (isOptional) {
+      row.classList.add('is-optional');
+      row.querySelector('.optional-tag').classList.remove('is-hidden');
+    } else {
+      row.classList.remove('is-optional');
+      row.querySelector('.optional-tag').classList.add('is-hidden');
+    }
+    cb.checked = false; // Clear selection after action
+  });
+  updateBulkSelection();
+  
+  fetch(`/course/${courseId}/assignments/bulk_optional`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: formData.toString()
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status !== 'ok') {
+      window.location.reload(); // Revert on error
+    }
+  })
+  .catch(err => {
+    console.error("Error updated bulk optional:", err);
+    window.location.reload();
+  });
+}
+
 function toggleAssignment(checkbox) {
   const id = checkbox.getAttribute('data-id');
   if (!id) return;
   
-  const row = checkbox.closest('tr');
-  const titleLink = row.querySelector('strong');
+  const row = checkbox.closest('.assignment-row');
+  const container = checkbox.closest('.completion-toggle-container');
+  const label = container.querySelector('label');
+  const completedIcon = container.querySelector('.status-icon-completed');
+  const incompleteIcon = container.querySelector('.status-icon-incomplete');
   
   fetch(`/assignments/${id}/toggle_complete`, {
     method: 'POST',
@@ -101,13 +235,15 @@ function toggleAssignment(checkbox) {
   .then(data => {
     if (data.status === 'ok') {
       if (data.completed) {
-        row.style.opacity = '0.6';
-        row.style.backgroundColor = '#fafafa';
-        if (titleLink) titleLink.style.textDecoration = 'line-through';
+        row.classList.add('is-completed');
+        completedIcon.classList.remove('is-hidden');
+        incompleteIcon.classList.add('is-hidden');
+        label.setAttribute('title', 'Mark as Incomplete');
       } else {
-        row.style.opacity = '1';
-        row.style.backgroundColor = 'transparent';
-        if (titleLink) titleLink.style.textDecoration = 'none';
+        row.classList.remove('is-completed');
+        completedIcon.classList.add('is-hidden');
+        incompleteIcon.classList.remove('is-hidden');
+        label.setAttribute('title', 'Mark as Complete');
       }
     }
   })

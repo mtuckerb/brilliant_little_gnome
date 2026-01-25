@@ -175,7 +175,7 @@
     <% if @upcoming_assignments && !@upcoming_assignments.empty? %>
       <h2 class="title is-4"><i class="fas fa-calendar-check mr-2"></i> Upcoming Assignments</h2>
       <% @upcoming_assignments.each do |a| %>
-        <div class="box mb-4 has-background-warning-light p-4" onclick="window.location='/course/<%= a.course_id %>/assignments/<%= a.brightspace_id %>'" style="cursor:pointer; border: 1px solid #ffdd57; position: relative;">
+        <div class="box mb-4 <%= a.optional ? 'has-background-white-bis' : 'has-background-warning-light' %> p-4" onclick="window.location='/course/<%= a.course_id %>/assignments/<%= a.brightspace_id %>'" style="cursor:pointer; border: 1px solid <%= a.optional ? '#dbdbdb' : '#ffdd57' %>; position: relative; <%= 'border-left: 4px solid #dbdbdb;' if a.optional %>">
           <div class="columns is-mobile is-vcentered">
             <div class="column is-narrow">
               <div class="control" onclick="event.stopPropagation()">
@@ -185,15 +185,18 @@
               </div>
             </div>
             <div class="column">
-              <p class="is-size-7 has-text-weight-bold mb-1">
-                <% 
-                   c_name = Course.find_by(org_unit_id: a.course_id)&.name 
-                   if c_name
-                %>
-                  <span class="px-1 mr-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(c_name) %>"><%= c_name[0..6] %></span>
-                <% end %>
-                <%= c_name || "Unknown Course" %>
-              </p>
+              <div class="is-flex is-justify-content-space-between is-align-items-start">
+                <p class="is-size-7 has-text-weight-bold mb-1">
+                  <% 
+                     c_name = Course.find_by(org_unit_id: a.course_id)&.name 
+                     if c_name
+                  %>
+                    <span class="px-1 mr-1" style="border-radius: 3px; font-size: 0.7rem; <%= course_pill_style(c_name) %>"><%= c_name[0..6] %></span>
+                  <% end %>
+                  <%= c_name || "Unknown Course" %>
+                </p>
+                <% if a.optional %><span class="tag is-light is-small"><i class="fas fa-hand-paper mr-1"></i> Optional</span><% end %>
+              </div>
               <h6 class="title is-6 mb-0"><%= a.name %></h6>
               <p class="is-size-7 has-text-danger mb-0" onclick="event.stopPropagation()">
                 Due: 

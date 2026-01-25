@@ -82,6 +82,8 @@ begin
 
   ActiveRecord::Base.establish_connection(db_config)
   puts "[Brilliant] Connection established"
+  UserPreference.reset_column_information if defined?(UserPreference)
+  Assignment.reset_column_information if defined?(Assignment)
 
   # Optimization: Enable WAL mode for SQLite to handle concurrency with self-healing check
   begin
@@ -398,12 +400,12 @@ get '/calendar' do
   @show_completed = params[:show_completed] == 'true'
   
   if @view == 'week'
-    @start_date = @date.beginning_of_week
+    @start_date = @date
     @end_date = @start_date + 6.days
   else
-    # Month View: Show 4 weeks starting from the beginning of the week containing @date
-    @start_date = @date.beginning_of_week
-    @end_date = @start_date + 27.days # 4 weeks total
+    # Month View: Show rolling 30 days starting from @date
+    @start_date = @date
+    @end_date = @start_date + 29.days 
   end
   
   # Fetch all items with due dates in this range
@@ -413,11 +415,12 @@ get '/calendar' do
   # Filter completed assignments if not requested
   unless @show_completed
     assignments = assignments.where(completed: false)
-    # For grades, we consider them "completed" if they have been graded (numerator is not null)
-    # or if there is a matching assignment that is completed.
-    # However, the deduplication logic below already handles names.
-    # Let's filter out grades that already have a score if show_completed is false.
+    # For grades, filter out those that are already graded (numerator present)
+    # OR those that have a matching completed assignment.
     grades = grades.where(numerator: nil)
+    
+    completed_assignment_names = Assignment.where(completed: true).pluck(:name)
+    grades = grades.to_a.reject { |g| completed_assignment_names.include?(g.name) }
   end
 
   @items_by_date = {}
@@ -428,6 +431,7 @@ get '/calendar' do
     @items_by_date[date_key] << {
       type: 'assignment',
       id: a.brightspace_id,
+      db_id: a.id,
       course_id: a.course_id,
       course_name: a.course&.name,
       name: a.name,
@@ -714,6 +718,44 @@ post '/assignments/:id/toggle_complete' do
   end
 end
 
+post '/assignments/:id/toggle_optional' do
+  assignment = Assignment.find(params[:id])
+  assignment.update(optional: !assignment.optional)
+  
+  if request.xhr?
+    content_type :json
+    { status: 'ok', optional: assignment.optional }.to_json
+  else
+    redirect back
+  end
+end
+
+post '/course/:id/assignments/bulk_optional' do
+  ids = params[:ids]
+  optional_value = params[:optional] == 'true'
+  
+  if ids && ids.is_a?(Array)
+    Assignment.where(id: ids, course_id: params[:id]).update_all(optional: optional_value)
+    
+    if request.xhr?
+      content_type :json
+      { status: 'ok', updated: ids.size }.to_json
+    else
+      flash[:success] = "Updated #{ids.size} assignments"
+      redirect back
+    end
+  else
+    status 400
+    if request.xhr?
+      content_type :json
+      { status: 'error', message: 'No assignments selected' }.to_json
+    else
+      flash[:error] = "No assignments selected"
+      redirect back
+    end
+  end
+end
+
 post '/assignments/:id/update_due_date' do
   assignment = Assignment.find(params[:id])
   new_date = params[:due_date]
@@ -736,7 +778,12 @@ end
 # Sync Status Endpoint
 get '/sync/status' do
   content_type :json
-  $client.sync_status.to_json
+  {
+    status: $client.sync_status[:status],
+    current_task: $client.sync_status[:current_task],
+    degraded_mode: $client.degraded_mode,
+    last_auth_error: $client.last_auth_error
+  }.to_json
 end
 
 post '/sync/force' do
@@ -806,7 +853,8 @@ post '/course/:id/module/:module_id/create_tasks' do
       description: "Synthesized from Module: #{params[:module_title] || @module_id}",
       assignment_type: 'synthetic',
       external_url: url,
-      synthetic: true
+      synthetic: true,
+      optional: params["task_optional_#{idx}"] == 'true'
     )
     built_tasks << name
   end
@@ -823,7 +871,21 @@ end
 # Assignments
 get '/course/:id/assignments' do
   @active_tab = 'assignments'
-  @breadcrumb_trail = [{ title: 'Assignments', url: "/course/#{@course_id}" }]
+  @breadcrumb_trail = [{ title: 'Assignments', url: "/course/#{@course_id}/assignments" }]
+  
+  # Determine if we should show completed based on param or persisted preference
+  # Use hash access to be safe against schema cache issues
+  current_hide_pref = @user_prefs[:hide_completed_assignments].nil? ? true : @user_prefs[:hide_completed_assignments]
+
+  if params[:show_completed]
+    @show_completed = params[:show_completed] == 'true'
+    # Persist choice if it differs from current preference
+    if @show_completed == current_hide_pref
+      @user_prefs.update(hide_completed_assignments: !@show_completed)
+    end
+  else
+    @show_completed = !current_hide_pref
+  end
   
   # Load real assignments (not synthetic) to check if we need to sync
   real_assignments = Assignment.where(course_id: @course_id, synthetic: false)
@@ -837,7 +899,9 @@ get '/course/:id/assignments' do
   end
 
   # Load ALL assignments (real + synthetic) for the view
-  @assignments = Assignment.where(course_id: @course_id).order(due_date: :asc)
+  query = Assignment.where(course_id: @course_id)
+  query = query.where(completed: false) unless @show_completed
+  @assignments = query.order(due_date: :asc)
 
   erb :assignments
 end
@@ -1812,7 +1876,8 @@ get '/job/:id/status' do
       status: job.status, 
       progress: job.progress,
       completed: job.completed_files,
-      total: job.total_files
+      total: job.total_files,
+      failed: job.failed_files
     }.to_json
   else
     status 404
@@ -1932,7 +1997,8 @@ post '/course/:id/synthetic_tasks' do
     due_date: due_date,
     description: payload['description'],
     assignment_type: 'synthetic',
-    synthetic: true
+    synthetic: true,
+    optional: payload['optional'] == true
   )
   
   if task.persisted?

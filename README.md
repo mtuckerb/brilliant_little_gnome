@@ -9,6 +9,8 @@ A lightweight, high-performance Brightspace companion that aggregates notificati
 - **Hero-Style Course Headers**: Clean, high-impact headers with integrated banner images for every course.
 - **Local Asset Caching**: Persistent local storage for banners and resources to maintain speed and reliability.
 - **Magic Login**: Connect to Brightspace instantly without manually hunting for cookies.
+- **Global Linkification**: All course descriptions and task instructions automatically detect and enable clickable URLs for resources, videos, and external tools.
+- **Degraded Mode & Proactive UI**: Automatically detects expired sessions (403 Forbidden) and provides a global notification banner to guide re-authentication, allowing you to stay in sync with zero friction.
 - **Advanced Analytics & GPA**: 
   - Real-time GPA calculation (USM-weighted).
   - "Max Potential" cumulative GPA tracking.
@@ -74,31 +76,11 @@ Brilliant consists of two primary components:
 1.  **Ruby Sidecar (API)**: A Sinatra application that handles all Brightspace communication, SQLite persistence, and heavy data processing.
 2.  **Electron Frontend**: A thin wrapper that provides a native window, "Magic Login" cookie capture, and manages the lifecycle of the Ruby process.
 
-### Portable Ruby Strategy
-To ensure Brilliant runs without requiring the user to install Ruby:
-- We embed a "portable" Ruby distribution in `bin/ruby_dist/[platform]`.
-- Gems are pre-installed into `vendor/bundle`.
-- The `main.js` and `brilliant` wrapper script dynamically detect the Ruby version and platform to set `GEM_PATH` and `PATH` correctly.
-
 ---
 
-## Maintenance
+## Authentication & Sync
 
-### Troubleshooting (macOS)
-If you encounter a message stating that the app is **"damaged"** or **"cannot be opened because Apple cannot check it for malicious software"**, follow these steps:
-
-**Option 1: Right-Click Open (Easiest)**
-1. Locate Brilliant in your **Applications** folder.
-2. **Right-click** (or Control-click) the app icon and select **Open**.
-3. In the dialog box that appears, click **Open** again to confirm.
-
-**Option 2: Terminal Fix**
-Run the following command in your Terminal:
-```bash
-xattr -cr /Applications/Brilliant.app
-```
-
-### 4. Authentication
+### 1. Authentication
 Brilliant offers two ways to connect:
 
 #### Option 1: Magic Login (Recommended)
@@ -109,8 +91,22 @@ Brilliant offers two ways to connect:
 #### Option 2: Manual Cookie Entry
 If you prefer not to use the automated tool:
 1. Open DevTools (F12) in your browser on any Brightspace page.
-2. Copy the `Cookie` request header value (or the full host URL).
+2. Copy the `Cookie` request header value.
 3. Paste it into the "Manual Setup" field in Brilliant.
+
+### 2. Degraded Mode & Refreshes
+When Brightspace session cookies tokens expire, the sync engine enters **Degraded Mode**.
+- A red notification banner appears in the app.
+- You can continue viewing all cached data (grades, course content, banners).
+- Clicking "Update Session" in the banner triggers a Magic Login refresh to resume background synchronization.
+
+### 3. Refresh & Sync (Maintenance)
+The **Settings** menu contains a dedicated maintenance section:
+- **Reset & Sync Notifications**: Rebuilds your entire notification history and clears the API cache.
+- **Re-Sync Courses**: Pulls fresh metadata (names, banners, codes) for all courses while intelligently protecting existing local data from degradation.
+
+### 4. Caching
+Banners and assets are cached locally in the `public/banners` folder after the first successful authenticated fetch. This reduces network dependency and ensures your dashboard remains beautiful even in low-bandwidth situations.
 
 ## Maintenance
 
@@ -127,14 +123,6 @@ Run the following command in your Terminal:
 ```bash
 xattr -cr /Applications/Brilliant.app
 ```
-
-### Refresh & Sync
-The **Settings** menu now contains a dedicated maintenance section:
-- **Reset & Sync Notifications**: Rebuilds your entire notification history and clears the API cache.
-- **Re-Sync Courses**: Pulls fresh metadata (names, banners, codes) for all courses while intelligently protecting existing local data from degradation.
-
-### Caching
-Banners and assets are cached locally in the `public/banners` folder after the first successful authenticated fetch. This reduces network dependency and ensures your dashboard remains beautiful even in low-bandwidth situations.
 
 ## Design
 Built with **Sinatra**, **ActiveRecord**, and **Bulma**. Managed as a high-performance sidecar for an **Electron** frontend.

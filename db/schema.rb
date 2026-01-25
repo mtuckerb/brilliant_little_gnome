@@ -205,5 +205,6 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_23_012738) do
     t.string "api_key"
     t.boolean "api_enabled", default: false
     t.boolean "api_listen_all", default: false
+    t.boolean "hide_completed_assignments", default: true
   end
 end

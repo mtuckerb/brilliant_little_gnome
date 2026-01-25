@@ -9,7 +9,7 @@ require 'time'
 class BrilliantClient
   class AuthenticationError < StandardError; attr_reader :status_code; def initialize(msg, code); super(msg); @status_code = code; end; end
   
-  attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status, :degraded_mode
+  attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status, :degraded_mode, :last_auth_error
 
   def initialize
     data_dir = ENV['BRILLIANT_DATA_DIR'] || '.'
@@ -21,6 +21,8 @@ class BrilliantClient
     @syncing = false
     @sync_status = { status: "idle", progress: 0, current_task: nil }
     @degraded_mode = false
+    @last_auth_error = nil
+    @auth_notification_sent = false
     
     # Legacy/Fallback: Try loading from cookies.txt
     cookies_fallback = File.join(data_dir, 'cookies.txt')
@@ -1402,20 +1404,26 @@ class BrilliantClient
     begin
       response = http.request(request)
       if response.code == '200'
+        # Success: Clear errors if we just recovered
+        if @degraded_mode
+          @degraded_mode = false
+          @auth_notification_sent = false
+          @last_auth_error = nil
+        end
+        
         data = JSON.parse(response.body)
         write_cache(path, data)
         data
       elsif response.code == '401'
         puts "[!] AUTH ERROR 401: Token expired. Session is invalid."
-        @degraded_mode = true
+        handle_auth_failure("401 Unauthorized")
         read_cache(path)
       elsif response.code == '403'
         # Distinguish between global 403 (session dead) and resource 403 (archive/restricted)
-        # If we hit 403 on a specific course resource, we shouldn't kill the whole app's ability to sync.
         is_global = ['/users/whoami', '/enrollments/myenrollments/'].any? { |p| path.include?(p) }
         if is_global
-          puts "[!] AUTH ERROR 403: Forbidden on global resource. Entering Degraded Mode."
-          @degraded_mode = true
+          puts "[!] AUTH ERROR 403: Forbidden on global resource. Session dead."
+          handle_auth_failure("403 Forbidden")
         else
           puts "[!] ACCESS FORBIDDEN 403: #{path}. Course might be archived or restricted."
         end
@@ -1431,5 +1439,20 @@ class BrilliantClient
       puts "[!] API EXCEPTION: #{e.message}"
       read_cache(path)
     end
+  end
+
+  def handle_auth_failure(reason)
+    @degraded_mode = true
+    @last_auth_error = reason
+    
+    return if @auth_notification_sent
+    
+    create_system_notification({
+      id: "auth_failure_#{Time.now.to_i}",
+      title: "Brightspace Session Expired",
+      body: "Your connection to #{@host} has expired (#{reason}). Please go to Settings and refresh your cookies to continue syncing.",
+      urgency: 5
+    })
+    @auth_notification_sent = true
   end
 end
