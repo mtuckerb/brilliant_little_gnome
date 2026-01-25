@@ -41,8 +41,9 @@ module CourseHelpers
     end
 
     # Linkify URLs in the remaining text
-    # Regex matches http/https URLs not immediately followed by a tag placeholder or inside quotes
-    url_regex = %r{https?://[^\s<"']+}i
+    # Regex matches http/https URLs. We use a positive lookahead to exclude trailing punctuation
+    # that is likely part of the surrounding sentence/formatting (.,?!:) or parentheses.
+    url_regex = %r{https?://[^\s<"']+[^\s<"'. ,?!:)]}i
     temp_html = temp_html.gsub(url_regex) do |url|
       "<a href=\"#{url}\" target=\"_blank\">#{url}</a>"
     end
@@ -568,11 +569,14 @@ module CourseHelpers
           end
 
           # Extract first URL found in the line if any
-          extracted_url = line.match(/https?:\/\/[^\s<"']+/)&.to_s
+          extracted_url = line.match(%r{https?://[^\s<"']+[^\s<"'. ,?!:)]})&.to_s
           extracted_url ||= line.match(/\(((\/[^\s<")]+))\)/)&.captures&.first
 
+          # Clean task name: Remove the (URL) suffix if it exists to keep UI clean
+          clean_task_name = content.strip.gsub(/\s*\(https?:\/\/[^\)]+\)$/, '')
+
           tasks << { 
-            name: content.strip, 
+            name: clean_task_name, 
             type: current_category,
             due_date: line_date || inferred_date,
             source: 'text',
