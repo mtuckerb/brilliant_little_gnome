@@ -470,13 +470,19 @@ post '/calendar/update_due_date' do
   if item
     begin
       if new_date.present?
-        # Ensure it's at end of day if just a date (common for manual selection)
-        parsed_date = Time.parse(new_date)
-        if new_date.length <= 10 # YYYY-MM-DD
-          parsed_date = parsed_date.end_of_day
+        # Get user's timezone or default to UTC
+        tz_name = UserPreference.current&.time_zone || "UTC"
+        
+        # Parse in the correct zone to avoid "disappearing days" due to offset shifts
+        # YYYY-MM-DD format from date input
+        if new_date.length <= 10
+          parsed_date = Time.use_zone(tz_name) { Time.zone.parse(new_date).end_of_day }
+        else
+          parsed_date = Time.use_zone(tz_name) { Time.zone.parse(new_date) }
         end
+        
         item.update!(due_date: parsed_date)
-        puts "[CalendarUpdate] Success: Updated #{type} #{item_id} to #{item.due_date}"
+        puts "[CalendarUpdate] Success: Updated #{type} #{item_id} to #{item.due_date} (TZ: #{tz_name})"
       else
         item.update!(due_date: nil)
         puts "[CalendarUpdate] Success: Cleared due_date for #{type} #{item_id}"

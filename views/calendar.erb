@@ -278,9 +278,24 @@
 
   .calendar-header-box {
     background: #fff;
-    padding: 20px;
+    padding: 25px;
     border-radius: 8px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+  }
+
+  /* Robust Header Layout */
+  .calendar-header-box .level {
+    flex-wrap: wrap;
+    gap: 15px;
+  }
+
+  .calendar-header-box .level-left {
+    flex-shrink: 1;
+    min-width: 250px;
+  }
+
+  .calendar-header-box .level-right {
+    flex-shrink: 0;
   }
 
   /* Month Grid Styles */
