@@ -837,8 +837,10 @@ post '/course/:id/module/:module_id/create_tasks' do
     date_str = nil if date_str.blank?
 
     due_date = date_str.present? ? (Time.parse(date_str) rescue nil) : nil
-    # Fallback if parsing failed or was never there
-    due_date ||= @course&.end_of_week_date
+    # Fallback to course end-of-week if no date provided
+    if due_date.nil? && @course.respond_to?(:end_of_week_date)
+      due_date = @course.end_of_week_date(Time.now)
+    end
 
     # Determine ext_id using index to keep it unique per module
     ext_id = "syn_#{node_module_id}_#{idx}"
@@ -1960,6 +1962,10 @@ post '/api/v1/synthetic_tasks' do
   if payload['due_date'].present?
     due_date = Time.parse(payload['due_date'].to_s) rescue nil
   end
+  
+  if due_date.nil? && @course.respond_to?(:end_of_week_date)
+    due_date = @course.end_of_week_date(Time.now)
+  end
   due_date ||= (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
 
   task = Assignment.create(
@@ -1979,7 +1985,6 @@ post '/api/v1/synthetic_tasks' do
   end
 end
 
-# Dedicated route for internal UI synthetic task creation
 post '/course/:id/synthetic_tasks' do
   content_type :json
   payload = JSON.parse(request.body.read) rescue {}
@@ -1987,6 +1992,10 @@ post '/course/:id/synthetic_tasks' do
   due_date = nil
   if payload['due_date'].present?
     due_date = Time.parse(payload['due_date'].to_s) rescue nil
+  end
+  
+  if due_date.nil? && @course.respond_to?(:end_of_week_date)
+    due_date = @course.end_of_week_date(Time.now)
   end
   due_date ||= (Time.now.end_of_week - 1.day).change(hour: 23, min: 59)
 

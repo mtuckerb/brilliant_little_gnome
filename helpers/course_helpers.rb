@@ -477,9 +477,11 @@ module CourseHelpers
     
     inferred_date ||= parent_date
     
-    # NEW: If still no date, and we have a course reference, use the course's end-of-week
-    if inferred_date.nil? && @course.respond_to?(:end_of_week_date)
-      inferred_date = @course.end_of_week_date
+    # Apply course end-of-week setting to the inferred date if it was just a raw date from a title
+    if inferred_date && @course.respond_to?(:end_of_week_date)
+      inferred_date = @course.end_of_week_date(inferred_date)
+    elsif inferred_date.nil? && @course.respond_to?(:end_of_week_date)
+      inferred_date = @course.end_of_week_date(Time.now)
     end
 
     # 1. PROCESS TOPICS (Structural Identifying)
