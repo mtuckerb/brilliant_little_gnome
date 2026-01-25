@@ -74,9 +74,9 @@
               </div>
             <% end %>
           </div>
-          <div class="day-content">
+          <div class="day-content" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="<%= date_key %>">
             <% items.sort_by { |i| i[:time] }.each do |item| %>
-              <div class="calendar-item-wrapper" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>">
+              <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>">
                 <a href="<%= item[:url] %>" class="calendar-item <%= item[:type] %> <%= 'is-completed' if item[:completed] %>" title="<%= item[:name] %>">
                   <span class="item-time"><%= item[:time].strftime("%H:%M") %></span>
                   <% if item[:course_name] %>
@@ -107,13 +107,13 @@
             <div class="week-day-name"><%= day.strftime("%A") %></div>
             <div class="week-day-number <%= 'has-text-primary' if is_today %>"><%= day.strftime("%b %d") %></div>
           </div>
-          <div class="week-items-column">
+          <div class="week-items-column" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="<%= date_key %>">
             <% if items.empty? %>
-              <div class="has-text-grey-light is-size-7 mt-2">No items due.</div>
-            <% else %>
-              <div class="week-items-grid">
-                <% items.sort_by { |i| i[:time] }.each do |item| %>
-                  <div class="calendar-item-wrapper" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>">
+              <div class="has-text-grey-light is-size-7 mt-2 no-items-msg">No items due.</div>
+            <% end %>
+            <div class="week-items-grid">
+              <% items.sort_by { |i| i[:time] }.each do |item| %>
+                <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" data-type="<%= item[:type] %>" data-id="<%= item[:id] %>" data-name="<%= item[:name] %>" data-date="<%= item[:time].strftime("%Y-%m-%d") %>">
                     <a href="<%= item[:url] %>" class="calendar-item is-large <%= item[:type] %> <%= 'is-completed' if item[:completed] %>">
                       <div class="level is-mobile mb-0">
                         <div class="level-left">
@@ -195,13 +195,17 @@
     const id = document.getElementById('modal-item-id').value;
     const dueDate = document.getElementById('modal-due-date').value;
     
+    updateItemDate(type, id, dueDate);
+  }
+
+  function updateItemDate(type, id, newDate) {
     fetch('/calendar/update_due_date', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'X-Requested-With': 'XMLHttpRequest'
       },
-      body: `type=${type}&id=${id}&due_date=${dueDate}`
+      body: `type=${type}&id=${id}&due_date=${newDate}`
     })
     .then(response => response.json())
     .then(data => {
@@ -213,8 +217,57 @@
     })
     .catch(error => {
       console.error('Error:', error);
-      alert('Error: ' + error.message);
+      alert('Error updating date');
     });
+  }
+
+  // --- Drag and Drop Handlers ---
+  function handleDragStart(event) {
+    const wrapper = event.target.closest('.calendar-item-wrapper');
+    const data = {
+      type: wrapper.dataset.type,
+      id: wrapper.dataset.id,
+      name: wrapper.dataset.name,
+      originalDate: wrapper.dataset.date
+    };
+    event.dataTransfer.setData('application/json', JSON.stringify(data));
+    event.dataTransfer.effectAllowed = 'move';
+    
+    // Slight delay to allow the drag image to be created before we change opacity
+    setTimeout(() => wrapper.style.opacity = '0.4', 0);
+  }
+
+  document.addEventListener('dragend', (event) => {
+    const wrapper = event.target.closest('.calendar-item-wrapper');
+    if (wrapper) wrapper.style.opacity = '1';
+  });
+
+  function handleDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const container = event.target.closest('.day-content, .week-items-column');
+    if (container) container.classList.add('drag-over');
+  }
+
+  function handleDragLeave(event) {
+    const container = event.target.closest('.day-content, .week-items-column');
+    if (container) container.classList.remove('drag-over');
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    const container = event.target.closest('.day-content, .week-items-column');
+    if (container) container.classList.remove('drag-over');
+
+    const newDate = container.dataset.date;
+    try {
+      const data = JSON.parse(event.dataTransfer.getData('application/json'));
+      if (data.originalDate !== newDate) {
+        updateItemDate(data.type, data.id, newDate);
+      }
+    } catch (e) {
+      console.error('Drop error:', e);
+    }
   }
 </script>
 
@@ -431,6 +484,21 @@
     font-weight: bold;
     margin-right: 4px;
     opacity: 0.8;
+  }
+
+  /* Drag and Drop Feedback */
+  .calendar-item-wrapper[draggable="true"] {
+    cursor: grab;
+  }
+
+  .calendar-item-wrapper[draggable="true"]:active {
+    cursor: grabbing;
+  }
+
+  .day-content.drag-over, .week-items-column.drag-over {
+    background-color: rgba(115, 154, 195, 0.1);
+    outline: 2px dashed #739AC3;
+    border-radius: 4px;
   }
 
   @media screen and (max-width: 768px) {
