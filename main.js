@@ -140,7 +140,7 @@ ipcMain.on('start-login', (event, host) => {
   const standardUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
   loginWindow.webContents.setUserAgent(standardUA);
 
-  loginWindow.loadURL(`https://${host}/d2l/lp/auth/login/login.d2l`);
+  loginWindow.loadURL(`https://${host}/d2l/login`);
 
   loginWindow.webContents.on('dom-ready', () => {
     const script = "window.alert = function(){}; window.confirm = function(){return true;}; window.prompt = function(){return null;};";

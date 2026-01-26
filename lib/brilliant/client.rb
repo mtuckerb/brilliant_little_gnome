@@ -493,7 +493,13 @@ class BrilliantClient
 
   def get_who_am_i
     data = do_get("/d2l/api/lp/#{@api_version}/users/whoami")
-    @user_display_name = data['DisplayName'] if data
+    if data
+      @user_display_name = data['DisplayName']
+      # Store identity in UserPreference for Polyglot Identity
+      UserPreference.set('brightspace_uid', data['UniqueIdentifier'])
+      UserPreference.set('brightspace_user_id', data['Identifier'])
+      UserPreference.set('last_login_at', Time.now)
+    end
     data
   end
 

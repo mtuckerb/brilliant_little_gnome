@@ -49,6 +49,8 @@ class BaseController < Sinatra::Base
     end
 
     def generate_jwt_token(payload)
+      payload[:uid] ||= @user_prefs.brightspace_uid
+      payload[:bs_user_id] ||= @user_prefs.brightspace_user_id
       expiry = Time.now.to_i + (3600 * 24 * 30) # 30 days
       payload[:exp] = expiry
       JWT.encode(payload, @user_prefs.jwt_secret, 'HS256')

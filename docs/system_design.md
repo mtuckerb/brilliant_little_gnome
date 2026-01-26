@@ -52,6 +52,13 @@ To ensure unified support for clickable resources across synthesized content:
 - **Background Sync**: Every course view triggers a background thread that fetches the latest LMS content, updates Markdown descriptions, and refreshes the cache without blocking the UI.
 - **HTML-to-Markdown Pipeline**: A refined regex pipeline handles common LMS formatting (bold, links, lists, headers) to ensure consistent rendering across the app.
 
+### 3.8. Hybrid Discussion Content Strategy
+Discussion data is handled through a tiered persistence model to balance synchronization speed with deep data availability:
+- **Structural Persistence (DB)**: Discussion Forums and Topics are fully synchronized to the SQLite database. This ensures the course hierarchy is always available offline and supports fast navigation.
+- **Content Caching (Stale-While-Revalidate)**: Individual Threads and Posts are managed via the `api_cache` system rather than strict ActiveRecord models. Content is fetched on-demand when a user views a topic and cached as raw JSON.
+- **Metadata Enrichment**: To support advanced UI features like "Mine & Replied" sorting, the system dynamically enriches cached JSON payloads with participation metadata (e.g., `UserIsAuthor`, `UserParticipated`) calculated during retrieval.
+- **Design Rationale**: This hybrid approach avoids the significant database overhead of mapping thousands of transient LMS posts to local records, ensuring the main sync process remains lightweight while providing rich, filterable content for active topics.
+
 ## 4. Portability & Distribution
 Brilliant is designed to be "Zero-Dependency" for the end user:
 - **Vendored Ruby**:

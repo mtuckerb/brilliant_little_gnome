@@ -177,6 +177,20 @@ module CourseHelpers
     nil
   end
 
+  def find_topic(modules, id)
+    return nil unless modules
+    modules.each do |m|
+      if m['Topics']
+        topic = m['Topics'].find { |t| (t['Id'] || t['TopicId'] || t['Identifier']).to_s == id.to_s }
+        return topic if topic
+      end
+      found = find_topic(m['Modules'], id)
+      return found if found
+    end
+    nil
+  end
+
+
   def find_syllabus_items(modules, items = { modules: [], topics: [] })
     return items unless modules
     modules.each do |m|

@@ -19,6 +19,7 @@
   const COURSE_ID = "<%= @course_id %>";
   const FORUM_ID = "<%= @forum_id %>";
   const TOPIC_ID = "<%= @topic_id %>";
+  let threadData = [];
 
   async function loadTopic(forceRefresh = false) {
     const root = document.getElementById('topic-root');
@@ -29,7 +30,15 @@
       const response = await fetch(url);
       if (!response.ok) throw new Error("Failed to fetch topic");
       const data = await response.json();
+      threadData = data.threads_with_posts || [];
       renderTopic(data);
+      
+      // Load and apply persistent sort
+      const savedSort = localStorage.getItem('discussion_sort_pref') || 'activity';
+      const select = document.getElementById('threadSortSelect');
+      if (select) select.value = savedSort;
+      
+      applySort();
     } catch (err) {
       console.error(err);
       root.innerHTML = `
@@ -40,6 +49,45 @@
         </div>
       `;
     }
+  }
+
+  function applySort() {
+    const sortBy = document.getElementById('threadSortSelect').value;
+    localStorage.setItem('discussion_sort_pref', sortBy);
+    
+    const container = document.getElementById('threads-list');
+    if (!container) return;
+
+    const sorted = [...threadData].sort((a, b) => {
+      const tA = a.thread;
+      const tB = b.thread;
+
+      // Pins always come first if not strictly sorting by something else
+      if (sortBy !== 'created' && sortBy !== 'author') {
+        if (tA.IsPinned && !tB.IsPinned) return -1;
+        if (!tA.IsPinned && tB.IsPinned) return 1;
+      }
+
+      if (sortBy === 'mine') {
+        // 1. User is Author
+        if (tA.UserIsAuthor && !tB.UserIsAuthor) return -1;
+        if (!tA.UserIsAuthor && tB.UserIsAuthor) return 1;
+        // 2. User participated
+        if (tA.UserParticipated && !tB.UserParticipated) return -1;
+        if (!tA.UserParticipated && tB.UserParticipated) return 1;
+        // Fallback to last reply
+        return new Date(tB.LastReplyDate || 0) - new Date(tA.LastReplyDate || 0);
+      } else if (sortBy === 'created') {
+        return new Date(tB.ThreadDate || 0) - new Date(tA.ThreadDate || 0);
+      } else if (sortBy === 'author') {
+        return (tA.PostingUserDisplayName || '').localeCompare(tB.PostingUserDisplayName || '');
+      } else {
+        // 'activity' - Last Reply
+        return new Date(tB.LastReplyDate || 0) - new Date(tA.LastReplyDate || 0);
+      }
+    });
+
+    container.innerHTML = renderThreads(sorted);
   }
 
   function renderTopic(data) {
@@ -98,8 +146,32 @@
           ${renderEvaluation(evaluation, feedback_collapsed)}
         </div>
 
-        <h5 class="title is-5 mb-4">Threads</h5>
-        ${renderThreads(threads_with_posts)}
+        <div class="level mb-4">
+          <div class="level-left">
+            <h5 class="title is-5 mb-0">Threads</h5>
+          </div>
+          <div class="level-right">
+            <div class="field has-addons">
+              <p class="control">
+                <span class="button is-static is-small">Sort By</span>
+              </p>
+              <p class="control">
+                <span class="select is-small">
+                  <select id="threadSortSelect" onchange="applySort()">
+                    <option value="activity">Last Reply</option>
+                    <option value="mine">Mine & Replied</option>
+                    <option value="created">Date Created</option>
+                    <option value="author">Author</option>
+                  </select>
+                </span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div id="threads-list">
+          <!-- Threads will be rendered here -->
+        </div>
 
         <div class="notification is-info is-light mt-6">
           <i class="fas fa-info-circle mr-2"></i> All discussions for this topic are listed above. To post, use the portal.
@@ -157,13 +229,21 @@
                 </h5>
                 <div class="is-size-7 has-text-grey">
                   <span class="has-text-weight-semibold author-name"><i class="fas fa-user-circle mr-1"></i> ${thread.PostingUserDisplayName || 'Anonymous'}</span>
-                  ${thread.LastModified ? `
+                  ${thread.ThreadDate ? `
                     <span class="mx-2">&bull;</span>
-                    <i class="fas fa-clock mr-1"></i> <span>${new Date(thread.LastModified).toLocaleString()}</span>
+                    <i class="fas fa-calendar-plus mr-1"></i> <span>${new Date(thread.ThreadDate).toLocaleString()}</span>
+                  ` : ''}
+                  ${thread.LastReplyDate ? `
+                    <span class="mx-2">&bull;</span>
+                    <i class="fas fa-clock mr-1"></i> <span>Last reply: ${new Date(thread.LastReplyDate).toLocaleString()}</span>
                   ` : ''}
                   ${thread.ReplyCount !== undefined ? `
                     <span class="mx-2">&bull;</span>
                     <span class="tag is-white py-0 px-0"><i class="fas fa-comments mr-1"></i> ${thread.ReplyCount} replies</span>
+                  ` : ''}
+                  ${thread.UserParticipated ? `
+                    <span class="mx-2">&bull;</span>
+                    <span class="tag is-success is-light is-small"><i class="fas fa-user-check mr-1"></i> Participated</span>
                   ` : ''}
                 </div>
               </div>

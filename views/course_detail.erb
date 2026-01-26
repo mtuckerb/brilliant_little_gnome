@@ -203,7 +203,7 @@
                       Due: ${new Date(a.due_date).toLocaleString()}
                     </p>
                     <div class="buttons is-right">
-                      <a href="/course/${COURSE_ID}/assignments/${a.brightspace_id}" class="button is-small is-link is-light">View Details</a>
+                      <button type="button" class="button is-small is-link is-light" onclick="showAssignmentDetail('${a.brightspace_id}')">View Details</button>
                     </div>
                   </div>
                 </div>
@@ -217,19 +217,53 @@
 
   function renderSyllabusItems(syllabus) {
     if (!syllabus || (!syllabus.modules.length && !syllabus.topics.length)) return '';
-    return `
+    
+    let html = `
       <div class="mt-5">
         <h5 class="title is-5"><span class="icon has-text-primary mr-2"><i class="fas fa-search"></i></span> Items Found in Content</h5>
-        ${syllabus.modules.map(mod => `
-          <div class="box is-light">
-            <div class="is-flex is-justify-content-space-between is-align-items-center">
-              <span class="has-text-weight-bold">${mod.Title} (Module)</span>
-              <a href="/course/${COURSE_ID}/module/${mod.ModuleId}" class="button is-small is-primary is-outlined">View Module</a>
+    `;
+
+    // Render Modules
+    html += syllabus.modules.map(mod => `
+      <div class="box is-light mb-3">
+        <div class="is-flex is-justify-content-space-between is-align-items-center">
+          <div>
+            <span class="tag is-info is-light mr-2">Module</span>
+            <span class="has-text-weight-bold">${mod.Title}</span>
+          </div>
+          <a href="/course/${COURSE_ID}/module/${mod.ModuleId}" class="button is-small is-primary is-outlined">View Module</a>
+        </div>
+      </div>
+    `).join('');
+
+    // Render Topics
+    html += syllabus.topics.map(topic => {
+      const type = topic.Type;
+      // Topic types: 1 = Document/HTML, 2 = File, 3 = Link
+      let icon = 'fa-file-alt';
+      if (type === 3 || type === 'Link') icon = 'fa-link';
+      if (topic.Url && topic.Url.toLowerCase().endsWith('.pdf')) icon = 'fa-file-pdf';
+
+      return `
+        <div class="box is-light mb-3">
+          <div class="is-flex is-justify-content-space-between is-align-items-center">
+            <div>
+              <span class="tag is-success is-light mr-2">Topic</span>
+              <span class="has-text-weight-bold"><i class="fas ${icon} mr-2"></i> ${topic.Title}</span>
+            </div>
+            <div class="buttons">
+              <button type="button" class="button is-small is-info is-light" onclick="showTopicDetail('${topic.Id || topic.TopicId}', '${topic.Title}')">View Details</button>
+              <a href="/course/${COURSE_ID}/download?path=${encodeURIComponent(topic.Url)}&name=${encodeURIComponent(topic.Title)}" class="button is-small is-link is-light ${topic.Url ? '' : 'is-hidden'}">
+                <i class="fas fa-download"></i>
+              </a>
             </div>
           </div>
-        `).join('')}
-      </div>
-    `;
+        </div>
+      `;
+    }).join('');
+
+    html += `</div>`;
+    return html;
   }
 
   document.addEventListener('DOMContentLoaded', () => loadCourse());
@@ -262,7 +296,74 @@
   </div>
 </div>
 
+<!-- Simple Detail Modal -->
+<div id="detailModal" class="modal">
+  <div class="modal-background" onclick="closeDetailModal()"></div>
+  <div class="modal-card">
+    <header class="modal-card-head">
+      <p class="modal-card-title" id="detailModalTitle">Task Details</p>
+      <button class="delete" aria-label="close" onclick="closeDetailModal()"></button>
+    </header>
+    <section class="modal-card-body">
+      <div id="detailModalContent">
+        <div class="has-text-centered p-6">
+          <span class="icon is-large has-text-grey-light"><i class="fas fa-circle-notch fa-spin fa-2x"></i></span>
+        </div>
+      </div>
+    </section>
+    <footer class="modal-card-foot is-justify-content-flex-end">
+      <button class="button" onclick="closeDetailModal()">Close</button>
+    </footer>
+  </div>
+</div>
+
 <script>
+  async function showAssignmentDetail(id) {
+    const modal = document.getElementById('detailModal');
+    const content = document.getElementById('detailModalContent');
+    const titleEl = document.getElementById('detailModalTitle');
+    
+    titleEl.innerText = "Task Details";
+    content.innerHTML = '<div class="has-text-centered p-6"><span class="icon is-large has-text-grey-light"><i class="fas fa-circle-notch fa-spin fa-2x"></i></span></div>';
+    
+    modal.classList.add('is-active');
+    document.documentElement.classList.add('is-clipped');
+
+    try {
+      const response = await fetch(`/api/v1/item_details?type=assignment&id=${id}&course_id=${COURSE_ID}`);
+      const data = await response.json();
+      content.innerHTML = data.html || "<p class='has-text-grey italic'>No details found.</p>";
+    } catch (err) {
+      content.innerHTML = "<div class='notification is-danger'>Failed to load data.</div>";
+    }
+  }
+
+function closeDetailModal() {
+  const modal = document.getElementById('detailModal');
+  modal.classList.remove('is-active');
+  document.documentElement.classList.remove('is-clipped');
+}
+
+async function showTopicDetail(id, title) {
+  const modal = document.getElementById('detailModal');
+  const content = document.getElementById('detailModalContent');
+  const titleEl = document.getElementById('detailModalTitle');
+  
+  titleEl.innerText = title;
+  content.innerHTML = '<div class="has-text-centered p-6"><span class="icon is-large has-text-grey-light"><i class="fas fa-circle-notch fa-spin fa-2x"></i></span></div>';
+  
+  modal.classList.add('is-active');
+  document.documentElement.classList.add('is-clipped');
+
+  try {
+    const response = await fetch(`/api/v1/item_details?type=topic&id=${id}&course_id=${COURSE_ID}`);
+    const data = await response.json();
+    content.innerHTML = data.html || "<p class='has-text-grey italic'>No details found.</p>";
+  } catch (err) {
+    content.innerHTML = "<div class='notification is-danger'>Failed to load data.</div>";
+  }
+}
+
 function openPdfViewer(viewUrl, downloadUrl, title) {
   const modal = document.getElementById('pdfModal');
   const frame = document.getElementById('pdfFrame');

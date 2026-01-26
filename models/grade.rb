@@ -1,6 +1,7 @@
 class Grade < ActiveRecord::Base
+  include HasUserIdentity
   validates :brightspace_id, presence: true, uniqueness: { scope: :course_id }
-  belongs_to :course, foreign_key: :course_id, primary_key: :org_unit_id
+  belongs_to :course, foreign_key: :org_unit_id, primary_key: :org_unit_id
 
   def percentage
     return 0 if denominator.nil? || denominator == 0

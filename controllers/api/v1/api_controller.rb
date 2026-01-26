@@ -98,17 +98,30 @@ module Api
         posts_data_raw = $client.get_topic_posts(course_id, forum_id, topic_id, force_refresh: force_refresh)
         all_posts = posts_data_raw.is_a?(Hash) ? (posts_data_raw['Items'] || []) : (posts_data_raw || [])
 
-        target_name = @user_prefs.display_name.to_s.strip.downcase
-        participated = DiscussionPost.where(topic_id: topic_id.to_s).where("lower(author_name) = ?", target_name).exists?
+        # Sync posts to DB for local querying
+        DiscussionPost.sync_from_api(course_id, forum_id, topic_id, all_posts)
+
+        current_bs_user_id = @user_prefs.brightspace_user_id
+        participated = DiscussionPost.where(topic_id: topic_id.to_s, author_id: current_bs_user_id).exists?
         
         threads_groups = all_posts.group_by { |p| p['ThreadId'] }
         threads_with_posts = threads_groups.map do |thread_id, posts|
-          root_post = posts.find { |p| p['ParentPostId'].nil? } || posts.min_by { |p| p['DatePosted'] }
+          root_post = posts.find { |p| p['ParentPostId'].nil? } || posts.min_by { |p| p['DatePosted'] || "9999" }
+          
+          root_author_id = root_post.dig('Author', 'Identifier') || root_post['UserId']
+          user_is_author = current_bs_user_id.present? && root_author_id.to_s == current_bs_user_id.to_s
+          user_participated = posts.any? { |p| (p.dig('Author', 'Identifier') || p['UserId']).to_s == current_bs_user_id.to_s }
+
           thread = {
-            'ThreadId' => thread_id, 'Subject' => root_post['Subject'] || "No Subject",
+            'ThreadId' => thread_id, 
+            'Subject' => root_post['Subject'] || "No Subject",
             'PostingUserDisplayName' => root_post['PostingUserDisplayName'],
-            'LastModified' => root_post['DatePosted'], 'IsPinned' => root_post['IsPinned'] || false,
-            'ReplyCount' => posts.size - 1
+            'ThreadDate' => root_post['DatePosted'],
+            'LastReplyDate' => posts.map { |p| p['DatePosted'] }.compact.max,
+            'IsPinned' => root_post['IsPinned'] || false,
+            'ReplyCount' => posts.size - 1,
+            'UserIsAuthor' => user_is_author,
+            'UserParticipated' => user_participated
           }
           { thread: thread, post_tree: build_post_tree(posts) }
         end.sort_by { |item| item[:thread]['IsPinned'] ? 0 : 1 }
@@ -472,6 +485,17 @@ module Api
             end
 
             html = desc_text.present? ? "<div class='mb-3'><h6 class='is-size-7 has-text-weight-bold mb-2'><i class='fas fa-info-circle mr-1 has-text-primary'></i> Instructions</h6><div class='box is-light p-3' style='box-shadow: none; border: 1px solid #efefef;'>#{render_content(desc_text)}</div></div>" : "<p class='has-text-grey italic'>No description available.</p>"
+          end
+        when 'topic'
+          topic = $client.get_toc(course_id).then { |toc| find_topic(toc['Modules'], item_id) }
+          if topic
+            desc_text = topic['Description']
+            desc_text = desc_text.is_a?(Hash) ? (desc_text['Html'] || desc_text['Text'] || "") : desc_text.to_s
+            html = desc_text.present? ? "<div class='mb-3'><h6 class='is-size-7 has-text-weight-bold mb-2'><i class='fas fa-info-circle mr-1 has-text-primary'></i> Description / Contents</h6><div class='box is-light p-3' style='box-shadow: none; border: 1px solid #efefef;'>#{render_content(desc_text)}</div></div>" : "<p class='has-text-grey italic'>No description available.</p>"
+            
+            if topic['Url'] && topic['Url'].start_with?('/content/enforced/')
+               html += "<div class='mt-4'><a href='/course/#{course_id}/download?path=#{URI.encode_www_form_component(topic['Url'])}&name=#{URI.encode_www_form_component(topic['Title'])}' class='button is-primary is-small'><i class='fas fa-download mr-1'></i> Download File</a></div>"
+            end
           end
         when 'grade'
           grade = Grade.find_by(brightspace_id: item_id, course_id: course_id)

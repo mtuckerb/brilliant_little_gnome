@@ -19,7 +19,9 @@ class UserPreference < ActiveRecord::Base
       show_upcoming_assignments: true,
       show_course_list: true,
       show_recent_updates: true,
-      jwt_secret: SecureRandom.hex(32)
+      jwt_secret: SecureRandom.hex(32),
+      brightspace_uid: nil,
+      brightspace_user_id: nil
     )
   end
 

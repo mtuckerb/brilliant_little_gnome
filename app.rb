@@ -20,9 +20,11 @@ require 'rack-flash'
 require 'jwt'
 
 # --- Load Models & Helpers ---
+require_relative 'models/concerns/has_user_identity'
 Dir.glob('./models/*.rb').each { |f| require_relative f }
 require_relative 'helpers/course_helpers'
 require_relative 'lib/brilliant/client'
+require_relative 'lib/brilliant/auth'
 require_relative 'lib/brilliant/auth_helper'
 
 # --- Initialization ---
@@ -36,7 +38,12 @@ begin
   else
     ActiveRecord::Base.establish_connection(db_url)
   end
-  ActiveRecord::Base.default_timezone = :utc
+  # Timezone configuration (handle different ActiveRecord versions)
+  if ActiveRecord.respond_to?(:default_timezone=)
+    ActiveRecord.default_timezone = :utc
+  elsif ActiveRecord::Base.respond_to?(:default_timezone=)
+    ActiveRecord::Base.default_timezone = :utc
+  end
   
   # WAL mode & migrations
   ActiveRecord::Base.connection.execute("PRAGMA journal_mode=WAL;") rescue nil

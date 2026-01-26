@@ -142,6 +142,33 @@
   </div>
 
   <script>
+    // JWT Management
+    async function ensureToken() {
+      let token = localStorage.getItem('brilliant_jwt');
+      if (!token) {
+        const res = await originalFetch('/api/v1/token');
+        const data = await res.json();
+        token = data.token;
+        localStorage.setItem('brilliant_jwt', token);
+      }
+      return token;
+    }
+
+    // Wrap fetch to include Authorization header
+    const originalFetch = window.fetch;
+    window.fetch = async function() {
+      const args = [...arguments];
+      const url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof URL ? args[0].href : '');
+      
+      if (url && (url.startsWith('/api/v1/') || url.startsWith('/sync/')) && !url.includes('/api/v1/token')) {
+        const token = await ensureToken();
+        args[1] = args[1] || {};
+        args[1].headers = args[1].headers || {};
+        args[1].headers['Authorization'] = `Bearer ${token}`;
+      }
+      return originalFetch.apply(this, args);
+    };
+
     function showToast(message, type = 'is-info', duration = 5000) {
       const container = document.getElementById('toast-container');
       const toast = document.createElement('div');

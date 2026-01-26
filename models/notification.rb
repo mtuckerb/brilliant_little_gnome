@@ -1,3 +1,4 @@
 class Notification < ActiveRecord::Base
-  validates :external_id, presence: true
+  include HasUserIdentity
+  validates :message, presence: true
 end

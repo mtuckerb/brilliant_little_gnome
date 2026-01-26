@@ -1,4 +1,5 @@
 class DiscussionPost < ActiveRecord::Base
+  include HasUserIdentity
   validates :brightspace_id, presence: true, uniqueness: { scope: [:topic_id, :thread_id] }
   
   belongs_to :discussion_topic, foreign_key: :topic_id, primary_key: :brightspace_id
@@ -32,6 +33,7 @@ class DiscussionPost < ActiveRecord::Base
         post.subject = p['Subject']
         post.body = p.dig('Body', 'Html') || p.dig('Body', 'Text')
         post.author_name = p['PostingUserDisplayName']
+        post.author_id = p.dig('Author', 'Identifier') || p['UserId'] # Common fields
         post.posted_at = Time.parse(p['DatePosted']) rescue nil
         
         # Determine if instructor based on DisplayName or other metadata
