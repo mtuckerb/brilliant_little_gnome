@@ -3,201 +3,238 @@
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
   </div>
-  <div class="column is-9">
-    <div class="box">
-      <div class="topic-header mb-6">
-        <div class="level mb-2">
-          <div class="level-left">
-            <%
-               # Normalize topic attributes for both ActiveRecord and Hash
-               top_obj = @topic.is_a?(DiscussionTopic)
-               t_name = top_obj ? @topic.name : @topic['Name']
-               t_post_count = top_obj ? @topic.post_count : @topic['PostCount']
-               t_desc = top_obj ? @topic.description : @topic['Description']
-               t_end = top_obj ? nil : @topic['EndDate'] # DB doesn't have end date yet
-               t_start = top_obj ? nil : @topic['StartDate']
-            %>
-            <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> <%= render_markdown_inline(t_name) %></h4>
-          </div>
-          <div class="level-right">
-            <form action="" method="get" class="mr-2">
-              <input type="hidden" name="force_refresh" value="true">
-              <button type="submit" class="button is-small is-white has-text-grey"><i class="fas fa-sync mr-1"></i> Refresh</button>
-            </form>
-            <a href="<%= $client.portal_url_for(:discussion_topic, {course_id: @course_id, id: @topic_id}) %>" class="button is-small is-link is-light" target="_blank">
-              <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
-              <span>View in Brightspace</span>
-            </a>
-          </div>
+  <div class="column is-9" id="topic-root">
+    <div class="is-flex is-justify-content-center is-align-items-center" style="min-height: 400px;">
+      <div class="has-text-centered">
+        <span class="icon is-large has-text-primary mb-4">
+          <i class="fas fa-circle-notch fa-spin fa-3x"></i>
+        </span>
+        <p class="is-size-5 has-text-grey">Loading Topic Details...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const COURSE_ID = "<%= @course_id %>";
+  const FORUM_ID = "<%= @forum_id %>";
+  const TOPIC_ID = "<%= @topic_id %>";
+
+  async function loadTopic(forceRefresh = false) {
+    const root = document.getElementById('topic-root');
+    try {
+      let url = `/api/v1/courses/${COURSE_ID}/discussions/${FORUM_ID}/topics/${TOPIC_ID}`;
+      if (forceRefresh) url += '?force_refresh=true';
+      
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Failed to fetch topic");
+      const data = await response.json();
+      renderTopic(data);
+    } catch (err) {
+      console.error(err);
+      root.innerHTML = `
+        <div class="notification is-danger">
+          <h3 class="title is-5">Error Connection Lost</h3>
+          <p>Failed to load topic details. Please ensure the backend is running.</p>
+          <button class="button is-white is-small mt-2" onclick="location.reload()">Retry</button>
         </div>
+      `;
+    }
+  }
 
-        <div class="tags">
-          <% if t_end %>
-            <span class="tag is-danger is-light">
-              <i class="fas fa-calendar-times mr-1"></i> Due: <%= format_date(t_end) %>
-            </span>
-          <% end %>
-          <% if t_start %>
-            <span class="tag is-info is-light">
-              <i class="fas fa-calendar-check mr-1"></i> Available: <%= format_date(t_start, "%b %d, %Y") %>
-            </span>
-          <% end %>
-          <span class="tag is-white">
-            <i class="fas fa-reply-all mr-1"></i> <%= t_post_count %> Posts
-          </span>
-        </div>
+  function renderTopic(data) {
+    const root = document.getElementById('topic-root');
+    const { forum, topic, evaluation, threads_with_posts, instructions_collapsed, feedback_collapsed, participated } = data;
 
-        <div class="content box is-light is-size-6 py-4 px-5 pos-relative">
-           <!-- DEBUG: @instructions_collapsed = <%= @instructions_collapsed.inspect %> -->
-           <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
-             <p class="has-text-weight-bold mb-0">Instructions / Description:</p>
-             <button class="button is-small is-ghost" onclick="toggleSection('instructions')" title="Toggle instructions">
-               <span class="icon is-small">
-                 <i id="instructions-chevron" class="fas fa-chevron-<%= @instructions_collapsed ? 'right' : 'down' %>"></i>
-               </span>
-             </button>
-           </div>
-           
-           <div id="instructions-content" class="<%= 'is-hidden' if @instructions_collapsed %>">
-              <% 
-                 desc = t_desc
-                 desc_html = desc.is_a?(Hash) ? (desc['Html'] || desc['Text']) : desc
-              %>
-              <%= desc_html && !desc_html.strip.empty? ? fix_links(desc_html) : "<p class='has-text-grey italic'>No description provided.</p>" %>
-           </div>
-        </div>
-
-        <script>
-          function toggleSection(section) {
-            const content = document.getElementById(section + '-content');
-            const chevron = document.getElementById(section + '-chevron');
-            const isHidden = content.classList.contains('is-hidden');
-            
-            if (isHidden) {
-              content.classList.remove('is-hidden');
-              chevron.classList.remove('fa-chevron-right');
-              chevron.classList.add('fa-chevron-down');
-            } else {
-              content.classList.add('is-hidden');
-              chevron.classList.remove('fa-chevron-down');
-              chevron.classList.add('fa-chevron-right');
-            }
-
-            // Persistence via AJAX
-            fetch('/course/<%= @course_id %>/discussions/toggle_collapse', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: 'topic_id=<%= @topic_id %>&section=' + section
-            });
-          }
-        </script>
-
-        <%# Instructor Feedback / Evaluation Section %>
-        <% if @evaluation %>
-          <div class="notification is-success is-light">
-            <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
-              <p class="has-text-weight-bold mb-0"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
-              <button class="button is-small is-ghost has-text-success" onclick="toggleSection('feedback')" title="Toggle feedback">
-                 <span class="icon is-small">
-                   <i id="feedback-chevron" class="fas fa-chevron-<%= @feedback_collapsed ? 'right' : 'down' %>"></i>
-                 </span>
+    let html = `
+      <div class="box">
+        <div class="topic-header mb-6">
+          <div class="level mb-2">
+            <div class="level-left">
+              <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> ${topic.name}</h4>
+            </div>
+            <div class="level-right">
+              <button class="button is-small is-white has-text-grey mr-2" onclick="loadTopic(true)">
+                <i class="fas fa-sync mr-1"></i> Refresh
               </button>
-            </div>
-            
-            <div id="feedback-content" class="<%= 'is-hidden' if @feedback_collapsed %>">
-              <% if @evaluation['Feedback'] %>
-                <div class="content mt-2">
-                  <%= fix_links(@evaluation['Feedback']['Html'] || @evaluation['Feedback']['Text']) %>
-                </div>
-              <% end %>
-              <% if @evaluation['Score'] %>
-                <div class="mt-2">
-                  <span class="tag is-success">Score: <%= @evaluation['Score'] %></span>
-                </div>
-              <% end %>
+              <a href="https://${window.location.host}/d2l/le/1.40/${COURSE_ID}/discussions/topics/${TOPIC_ID}/View" class="button is-small is-link is-light" target="_blank">
+                <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
+                <span>View in Brightspace</span>
+              </a>
             </div>
           </div>
-        <% elsif @topic['Feedback'] %>
-          <div class="notification is-success is-light">
-            <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
-               <p class="has-text-weight-bold mb-0"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
-               <button class="button is-small is-ghost has-text-success" onclick="toggleSection('feedback')" title="Toggle feedback">
+
+          <div class="tags">
+            ${topic.end_date ? `
+              <span class="tag is-danger is-light">
+                <i class="fas fa-calendar-times mr-1"></i> Due: ${new Date(topic.end_date).toLocaleString()}
+              </span>
+            ` : ''}
+            ${topic.start_date ? `
+              <span class="tag is-info is-light">
+                <i class="fas fa-calendar-check mr-1"></i> Available: ${new Date(topic.start_date).toLocaleDateString()}
+              </span>
+            ` : ''}
+            <span class="tag is-white">
+              <i class="fas fa-reply-all mr-1"></i> ${topic.display_post_count || 0} Posts
+            </span>
+          </div>
+
+          <div class="content box is-light is-size-6 py-4 px-5 pos-relative">
+             <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
+               <p class="has-text-weight-bold mb-0">Instructions / Description:</p>
+               <button class="button is-small is-ghost" onclick="toggleSection('instructions')">
                  <span class="icon is-small">
-                   <i id="feedback-chevron" class="fas fa-chevron-<%= @feedback_collapsed ? 'right' : 'down' %>"></i>
+                   <i id="instructions-chevron" class="fas fa-chevron-${instructions_collapsed ? 'right' : 'down'}"></i>
                  </span>
                </button>
-            </div>
-
-            <div id="feedback-content" class="<%= 'is-hidden' if @feedback_collapsed %>">
-              <div class="content mt-2">
-                <%= fix_links(@topic['Feedback']['Html'] || @topic['Feedback']['Text']) %>
-              </div>
-            </div>
+             </div>
+             
+             <div id="instructions-content" class="${instructions_collapsed ? 'is-hidden' : ''}">
+                ${topic.description || "<p class='has-text-grey italic'>No description provided.</p>"}
+             </div>
           </div>
-        <% end %>
+
+          ${renderEvaluation(evaluation, feedback_collapsed)}
+        </div>
+
+        <h5 class="title is-5 mb-4">Threads</h5>
+        ${renderThreads(threads_with_posts)}
+
+        <div class="notification is-info is-light mt-6">
+          <i class="fas fa-info-circle mr-2"></i> All discussions for this topic are listed above. To post, use the portal.
+        </div>
       </div>
+    `;
 
-      <style>
-        .thread-container { border-top: 2px solid #f5f5f5; padding-top: 2rem; margin-top: 3rem; }
-        .post-replies { margin-left: 1.5rem; border-left: 2px solid #f0f4f8; padding-left: 1rem; position: relative; }
-        .post-card { border: 1px solid #eee; border-radius: 6px; margin-bottom: 1rem; transition: all 0.2s; background: white; }
-        .post-card:hover { border-color: #739AC3; }
-        .post-header { background: #fafafa; padding: 0.5rem 1rem; border-bottom: 1px solid #eee; border-radius: 6px 6px 0 0; }
-        .post-body { padding: 1rem; font-size: 0.95rem; line-height: 1.6; }
-        .is-instructor { border-left: 4px solid #739AC3 !important; background: #f9fbfd; }
-        .instructor-tag { background: #739AC3; color: white; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
-        .post-date { color: #888; font-size: 0.75rem; }
-      </style>
+    root.innerHTML = html;
+  }
 
-      <h5 class="title is-5 mb-4">Threads</h5>
-      
-      <% if @threads_with_posts && @threads_with_posts.any? %>
-        <% @threads_with_posts.each_with_index do |item, index| %>
-          <% thread = item[:thread] %>
-          <div class="thread-container" id="thread-<%= thread['ThreadId'] %>">
-            <div class="is-clickable py-3" onclick="toggleThread('<%= thread['ThreadId'] %>')" style="cursor: pointer; border-bottom: 1px solid #f5f5f5;">
-              <div class="is-flex is-align-items-start">
-                <span id="icon-<%= thread['ThreadId'] %>" class="mt-1"><i class="fas fa-chevron-right ml-4 mr-3 has-text-grey-light"></i></span>
-                <div style="flex: 1;">
-                  <h5 class="title is-5 mb-1">
-                    <%= thread['IsPinned'] ? '<i class="fas fa-thumbtack mr-2 has-text-primary"></i>' : '' %>
-                    <%= render_markdown_inline(thread['Subject'] || thread['Title']) %>
-                  </h5>
-                  <div class="is-size-7 has-text-grey">
-                    <span class="has-text-weight-semibold author-name"><i class="fas fa-user-circle mr-1"></i> <%= author_name(thread) %></span>
-                    <% if thread['LastModified'] %>
-                      <span class="mx-2">&bull;</span>
-                      <i class="fas fa-clock mr-1"></i> <span><%= format_date(thread["LastModified"]) %></span>
-                    <% end %>
-                    <% if thread['ReplyCount'] %>
-                      <span class="mx-2">&bull;</span>
-                      <span class="tag is-white py-0 px-0"><i class="fas fa-comments mr-1"></i> <%= thread['ReplyCount'] %> replies</span>
-                    <% end %>
-                    
-                    <a href="<%= $client.portal_url_for(:discussion_thread, {course_id: @course_id, id: thread['ThreadId']}) %>" 
-                       class="button is-ghost is-small py-0 px-2 has-text-grey" 
-                       target="_blank" 
-                       onclick="event.stopPropagation();" 
-                       style="height: auto; vertical-align: baseline;">
-                       <i class="fas fa-external-link-alt is-size-7"></i>
-                    </a>
-                  </div>
+  function renderEvaluation(evaluation, feedback_collapsed) {
+    if (!evaluation) return '';
+    
+    return `
+      <div class="notification is-success is-light">
+        <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
+          <p class="has-text-weight-bold mb-0"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
+          <button class="button is-small is-ghost has-text-success" onclick="toggleSection('feedback')">
+             <span class="icon is-small">
+               <i id="feedback-chevron" class="fas fa-chevron-${feedback_collapsed ? 'right' : 'down'}"></i>
+             </span>
+          </button>
+        </div>
+        
+        <div id="feedback-content" class="${feedback_collapsed ? 'is-hidden' : ''}">
+          <div class="content mt-2">
+            ${evaluation.Feedback ? (evaluation.Feedback.Html || evaluation.Feedback.Text) : ''}
+          </div>
+          ${evaluation.Score ? `
+            <div class="mt-2">
+              <span class="tag is-success">Score: ${evaluation.Score}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderThreads(threads) {
+    if (!threads || threads.length === 0) {
+      return '<p class="has-text-grey">No threads found in this topic.</p>';
+    }
+
+    return threads.map(item => {
+      const thread = item.thread;
+      return `
+        <div class="thread-container" id="thread-${thread.ThreadId}">
+          <div class="is-clickable py-3" onclick="toggleThread('${thread.ThreadId}')" style="cursor: pointer; border-bottom: 1px solid #f5f5f5;">
+            <div class="is-flex is-align-items-start">
+              <span id="icon-${thread.ThreadId}" class="mt-1"><i class="fas fa-chevron-right ml-4 mr-3 has-text-grey-light"></i></span>
+              <div style="flex: 1;">
+                <h5 class="title is-5 mb-1">
+                  ${thread.IsPinned ? '<i class="fas fa-thumbtack mr-2 has-text-primary"></i>' : ''}
+                  ${thread.Subject || thread.Title}
+                </h5>
+                <div class="is-size-7 has-text-grey">
+                  <span class="has-text-weight-semibold author-name"><i class="fas fa-user-circle mr-1"></i> ${thread.PostingUserDisplayName || 'Anonymous'}</span>
+                  ${thread.LastModified ? `
+                    <span class="mx-2">&bull;</span>
+                    <i class="fas fa-clock mr-1"></i> <span>${new Date(thread.LastModified).toLocaleString()}</span>
+                  ` : ''}
+                  ${thread.ReplyCount !== undefined ? `
+                    <span class="mx-2">&bull;</span>
+                    <span class="tag is-white py-0 px-0"><i class="fas fa-comments mr-1"></i> ${thread.ReplyCount} replies</span>
+                  ` : ''}
                 </div>
               </div>
             </div>
-            
-            <div id="content-<%= thread['ThreadId'] %>" class="discussion-timeline is-hidden ml-5 mt-4">
-              <% item[:post_tree].each do |post| %>
-                <%= erb :'partials/discussion_post', locals: { post: post, depth: 1 } %>
-              <% end %>
-            </div>
           </div>
-        <% end %>
-      <% else %>
-        <p class="has-text-grey">No threads found in this topic.</p>
-      <% end %>
+          
+          <div id="content-${thread.ThreadId}" class="discussion-timeline is-hidden ml-5 mt-4">
+            ${item.post_tree.map(post => renderPost(post, 1)).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
 
-      <script>
+  function renderPost(post, depth) {
+    const isInstructor = post.IsInstructor || (post.Author && (post.Author.IsInstructor || /Instructor/i.test(post.Author.RoleName)));
+    const author = post.PostingUserDisplayName || (post.Author ? post.Author.DisplayName : 'Anonymous');
+    
+    return `
+      <div class="post-item ${depth > 1 ? 'post-replies' : ''}">
+        <div class="post-card ${isInstructor ? 'is-instructor' : ''}" id="post-${post.PostId}">
+          <div class="post-header is-flex is-align-items-center is-justify-content-space-between">
+            <div class="is-flex is-align-items-center">
+              <div class="image is-24x24 mr-2">
+                <img class="is-rounded" src="https://ui-avatars.com/api/?name=${encodeURIComponent(author)}&background=${isInstructor ? '739AC3' : 'ddd'}&color=fff" alt="Avatar">
+              </div>
+              <div class="is-size-7">
+                <span class="has-text-weight-bold">${author}</span>
+                ${isInstructor ? '<span class="instructor-tag ml-1">INSTRUCTOR</span>' : ''}
+              </div>
+            </div>
+            <div class="post-date">${new Date(post.DatePosted).toLocaleString()}</div>
+          </div>
+          <div class="post-body content">
+             ${post.Message ? (post.Message.Html || post.Message.Text) : ''}
+          </div>
+        </div>
+        ${post.Replies && post.Replies.length > 0 ? `
+          <div class="ml-4 mb-2">
+            <a class="is-size-7 has-text-link" onclick="toggleReplies('${post.PostId}')" id="toggle-link-${post.PostId}" style="cursor: pointer;">
+              <i class="fas fa-reply fa-flip-horizontal mr-1"></i> Show ${post.Replies.length} replies
+            </a>
+          </div>
+          <div id="replies-${post.PostId}" class="is-hidden">
+            ${post.Replies.map(reply => renderPost(reply, depth + 1)).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function toggleSection(section) {
+    const content = document.getElementById(section + '-content');
+    const chevron = document.getElementById(section + '-chevron');
+    const isHidden = content.classList.contains('is-hidden');
+    
+    if (isHidden) {
+      content.classList.remove('is-hidden');
+      chevron.classList.replace('fa-chevron-right', 'fa-chevron-down');
+    } else {
+      content.classList.add('is-hidden');
+      chevron.classList.replace('fa-chevron-down', 'fa-chevron-right');
+    }
+
+    fetch(`/course/${COURSE_ID}/discussions/toggle_collapse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `topic_id=${TOPIC_ID}&section=${section}`
+    });
+  }
+
   function toggleThread(id) {
     const content = document.getElementById('content-' + id);
     const icon = document.getElementById('icon-' + id);
@@ -209,11 +246,30 @@
       icon.innerHTML = '<i class="fas fa-chevron-right ml-4 mr-2 has-text-grey-light"></i>';
     }
   }
-      </script>
 
-      <div class="notification is-info is-light mt-6">
-        <i class="fas fa-info-circle mr-2"></i> All discussions for this topic are listed above. To post, use the portal.
-      </div>
-    </div>
-  </div>
-</div>
+  window.toggleReplies = function(id) {
+    const el = document.getElementById('replies-' + id);
+    const link = document.getElementById('toggle-link-' + id);
+    if (el.classList.contains('is-hidden')) {
+      el.classList.remove('is-hidden');
+      link.innerHTML = '<i class="fas fa-chevron-up mr-1"></i> Hide replies';
+    } else {
+      el.classList.add('is-hidden');
+      link.innerHTML = '<i class="fas fa-reply fa-flip-horizontal mr-1"></i> Show replies';
+    }
+  };
+
+  document.addEventListener('DOMContentLoaded', () => loadTopic());
+</script>
+
+<style>
+  .thread-container { border-top: 1px solid #f5f5f5; padding-top: 1rem; margin-top: 1rem; }
+  .post-replies { margin-left: 1.5rem; border-left: 2px solid #f0f4f8; padding-left: 1rem; position: relative; }
+  .post-card { border: 1px solid #eee; border-radius: 6px; margin-bottom: 1rem; transition: all 0.2s; background: white; }
+  .post-card:hover { border-color: #739AC3; }
+  .post-header { background: #fafafa; padding: 0.5rem 1rem; border-bottom: 1px solid #eee; border-radius: 6px 6px 0 0; }
+  .post-body { padding: 1rem; font-size: 0.95rem; line-height: 1.6; }
+  .is-instructor { border-left: 4px solid #739AC3 !important; background: #f9fbfd; }
+  .instructor-tag { background: #739AC3; color: white; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
+  .post-date { color: #888; font-size: 0.75rem; }
+</style>

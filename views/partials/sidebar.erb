@@ -4,7 +4,7 @@
     <li><a href="/course/<%= @course_id %>" class="<%= 'is-active' if @active_tab == 'overview' %>">
       <span class="icon is-small mr-2"><i class="fas fa-info-circle"></i></span> Syllabus / Overview</a>
     </li>
-    <li><a href="/course/<%= @course_id %>/notifications" class="<%= 'is-active' if @active_tab == 'notifications' %>">
+    <li><a href="/course/<%= @course_id %>/announcements" class="<%= 'is-active' if @active_tab == 'announcements' %>">
       <span class="icon is-small mr-2"><i class="fas fa-bullhorn"></i></span> Announcements & Notifications</a>
     </li>
     <li><a href="/course/<%= @course_id %>/assignments" class="<%= 'is-active' if @active_tab == 'assignments' %>">
@@ -43,12 +43,18 @@
   </div>
 
   <ul class="menu-list" style="list-style-type: none; margin-left: 0;">
-    <% if @toc && @toc['Modules'] %>
+    <% if @toc && @toc['Modules'] && !@toc['Modules'].empty? %>
       <% @toc['Modules'].each do |mod| %>
         <%= erb :'partials/toc_recursive', locals: { mod: mod, depth: 0 } %>
       <% end %>
     <% else %>
-      <li><span class="has-text-grey-light">No modules found.</span></li>
+      <div class="p-4 has-text-centered">
+        <span class="icon is-large has-text-grey-lighter mb-2">
+          <i class="fas fa-book-open fa-2x"></i>
+        </span>
+        <p class="is-size-7 has-text-grey">No modules found.</p>
+        <p class="is-size-7 has-text-grey-light">Try refreshing or syncing the course.</p>
+      </div>
     <% end %>
   </ul>
 </aside>

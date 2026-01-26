@@ -1,0 +1,17 @@
+<div class="section">
+  <div class="container">
+    <nav class="breadcrumb" aria-label="breadcrumbs">
+      <ul>
+        <li><a href="/dashboard"><span class="icon is-small"><i class="fas fa-home"></i></span> Dashboard</a></li>
+        <li class="is-active"><a href="#" aria-current="page">Course Archives</a></li>
+      </ul>
+    </nav>
+    
+    <%= erb :'partials/course_list', locals: { 
+        courses: @courses, 
+        semesters: @all_semesters, 
+        title: 'Course Archives',
+        filter: params[:semester] || 'all'
+    } %>
+  </div>
+</div>

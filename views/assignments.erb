@@ -3,69 +3,86 @@
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
   </div>
-  <div class="column is-9">
-    <div class="box">
-      <div class="level">
-        <div class="level-left">
-          <h4 class="title is-4"><i class="fas fa-tasks mr-2"></i> Assignments</h4>
-        </div>
-        <div class="level-right">
-          <div id="bulk-action-bar" class="is-hidden mr-4">
-            <span class="has-text-grey-light is-size-7 mr-2"><span id="selected-count">0</span> selected</span>
-            <div class="buttons are-small">
-              <button class="button is-light" onclick="bulkOptional(true)">
-                <span class="icon is-small"><i class="fas fa-hand-paper"></i></span>
-                <span>Mark Optional</span>
-              </button>
-              <button class="button is-light" onclick="bulkOptional(false)">
-                <span class="icon is-small"><i class="fas fa-check-circle"></i></span>
-                <span>Mark Required</span>
-              </button>
-            </div>
-          </div>
-          <a href="/course/<%= @course_id %>/assignments?show_completed=<%= !@show_completed %>" class="button is-small <%= !@show_completed ? 'is-info' : 'is-white' %> mr-2">
-            <span class="icon is-small mr-1">
-              <i class="<%= @show_completed ? 'fas fa-eye' : 'fas fa-eye-slash' %>"></i>
-            </span>
-            <span><%= @show_completed ? "Hide Completed" : "Show Completed" %></span>
-          </a>
-          <a href="/course/<%= @course_id %>/assignments/export.ics" class="button is-small is-primary is-outlined">
-            <span class="icon is-small"><i class="fas fa-calendar-alt"></i></span>
-            <span>Export to Calendar</span>
-          </a>
-        </div>
+  <div class="column is-9" id="assignments-root">
+    <div class="is-flex is-justify-content-center is-align-items-center" style="min-height: 400px;">
+      <div class="has-text-centered">
+        <span class="icon is-large has-text-primary mb-4">
+          <i class="fas fa-circle-notch fa-spin fa-3x"></i>
+        </span>
+        <p class="is-size-5 has-text-grey">Loading Assignments...</p>
       </div>
-      <style>
-        .completion-toggle-label .icon {
-          transition: transform 0.1s ease;
-        }
-        .completion-toggle-label:hover .icon {
-          transform: scale(1.1);
-        }
-        .completion-toggle-label:active .icon {
-          transform: scale(0.9);
-        }
-        
-        /* Row States */
-        .assignment-row.is-completed {
-          opacity: 0.6;
-          background-color: #fafafa;
-        }
-        .assignment-row.is-completed strong {
-          text-decoration: line-through;
-        }
-        .assignment-row.is-optional {
-          border-left: 4px solid #dbdbdb;
-          background-color: #fcfcfc;
-        }
-      </style>
-      <% if @assignments && !@assignments.empty? %>
+    </div>
+  </div>
+<%= erb :'partials/edit_assignment_modal' %>
+
+</div>
+
+<script>
+  const COURSE_ID = "<%= @course_id %>";
+  let showCompleted = <%= @show_completed %>;
+
+  async function loadAssignments() {
+    const root = document.getElementById('assignments-root');
+    try {
+      const response = await fetch(`/api/v1/courses/${COURSE_ID}/assignments/summary?show_completed=${showCompleted}`);
+      if (!response.ok) throw new Error("Failed to fetch assignments");
+      const data = await response.json();
+      renderAssignments(data);
+    } catch (err) {
+      console.error(err);
+      root.innerHTML = `
+        <div class="notification is-danger">
+          <h3 class="title is-5">Error Connection Lost</h3>
+          <p>Failed to load assignments. Please ensure the backend is running.</p>
+          <button class="button is-white is-small mt-2" onclick="location.reload()">Retry</button>
+        </div>
+      `;
+    }
+  }
+
+  function renderAssignments(data) {
+    const root = document.getElementById('assignments-root');
+    const { assignments } = data;
+
+    let html = `
+      <div class="box">
+        <div class="level">
+          <div class="level-left">
+            <h4 class="title is-4"><i class="fas fa-tasks mr-2"></i> Assignments</h4>
+          </div>
+          <div class="level-right">
+            <div id="bulk-action-bar" class="is-hidden mr-4">
+              <span class="has-text-grey-light is-size-7 mr-2"><span id="selected-count">0</span> selected</span>
+              <div class="buttons are-small">
+                <button class="button is-light" onclick="bulkOptional(true)">
+                  <span class="icon is-small"><i class="fas fa-hand-paper"></i></span>
+                  <span>Mark Optional</span>
+                </button>
+                <button class="button is-light" onclick="bulkOptional(false)">
+                  <span class="icon is-small"><i class="fas fa-check-circle"></i></span>
+                  <span>Mark Required</span>
+                </button>
+              </div>
+            </div>
+            <button class="button is-small ${!showCompleted ? 'is-info' : 'is-white'} mr-2" onclick="toggleShowCompleted()">
+              <span class="icon is-small mr-1">
+                <i class="${showCompleted ? 'fas fa-eye' : 'fas fa-eye-slash'}"></i>
+              </span>
+              <span>${showCompleted ? "Hide Completed" : "Show Completed"}</span>
+            </button>
+            <a href="/course/${COURSE_ID}/assignments/export.ics" class="button is-small is-primary is-outlined">
+              <span class="icon is-small"><i class="fas fa-calendar-alt"></i></span>
+              <span>Export to Calendar</span>
+            </a>
+          </div>
+        </div>
+
         <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
               <th width="80">
                 <div class="is-flex is-align-items-center">
-                  <input type="checkbox" id="select-all" class="mr-2" onchange="toggleSelectAll(this)" title="Select all for bulk actions">
+                  <input type="checkbox" id="select-all" class="mr-2" onchange="toggleSelectAll(this)">
                   <span class="is-size-7 has-text-grey-light has-text-weight-normal">Select</span>
                 </div>
               </th>
@@ -74,278 +91,245 @@
             </tr>
           </thead>
           <tbody>
-            <% @assignments.order(completed: :asc, due_date: :asc).each do |a| %>
-              <%
-                id = a.is_a?(Hash) ? a['Id'] : a.brightspace_id
-                db_id = a.is_a?(Assignment) ? a.id : ''
-                name = a.is_a?(Hash) ? a['Name'] : a.name
-                due_date = a.is_a?(Hash) ? a['DueDate'] : a.due_date
-                
-                is_quiz = false
-                link_id = id
-                if id.to_s.start_with?('quiz_')
-                  is_quiz = true
-                  link_id = id.to_s.sub('quiz_', '')
-                end
-                
-                base_url = is_quiz ? "/course/#{@course_id}/quizzes" : "/course/#{@course_id}/assignments"
-                view_url = "#{base_url}/#{link_id}"
-                is_completed = a.respond_to?(:completed) && a.completed
-                is_optional = a.respond_to?(:optional) && a.optional
-              %>
-              <tr class="assignment-row <%= 'is-completed' if is_completed %> <%= 'is-optional' if is_optional %>" data-id="<%= db_id %>" data-type="assignment" data-brightspace-id="<%= id %>">
-                <td class="is-vcentered">
-                  <div class="is-flex is-align-items-center" style="gap: 12px;">
-                    <!-- Selection Checkbox -->
-                    <input type="checkbox" class="assignment-bulk-checkbox" data-id="<%= db_id %>" onchange="updateBulkSelection()" title="Select for bulk action">
-                    
-                    <!-- Completion Toggle -->
-                    <div class="completion-toggle-container">
-                      <input type="checkbox" id="complete-<%= db_id %>" class="assignment-checkbox is-hidden" data-id="<%= db_id %>" <%= 'checked' if is_completed %> onchange="toggleAssignment(this)" <%= 'disabled' if a.is_a?(Hash) %>>
-                      <label for="complete-<%= db_id %>" class="completion-toggle-label is-clickable" title="Mark as <%= is_completed ? 'Incomplete' : 'Complete' %>">
-                        <span class="icon is-medium has-text-success status-icon-completed <%= 'is-hidden' unless is_completed %>">
-                          <i class="fas fa-check-circle fa-lg"></i>
-                        </span>
-                        <span class="icon is-medium has-text-grey-lighter status-icon-incomplete <%= 'is-hidden' if is_completed %>">
-                          <i class="far fa-circle fa-lg"></i>
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                </td>
-                <td class="assignment-info">
-                  <div class="is-flex is-align-items-start">
-                    <button class="button is-ghost is-small p-0 ml-4 mt-1" onclick="expandAssignmentRow('<%= db_id %>', event)">
-                      <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
-                    </button>
-                    <div style="flex: 1;">
-                      <div class="mb-1">
-                        <strong>
-                          <a href="<%= view_url %>" class="assignment-link has-text-dark"><%= render_markdown_inline(name) %></a>
-                        </strong>
-                        <% if is_quiz %><span class="tag is-info is-light is-small ml-2">Quiz</span><% end %>
-                        <span class="tag is-light is-small ml-2 optional-tag <%= 'is-hidden' unless is_optional %>">
-                          <i class="fas fa-hand-paper mr-1"></i> Optional
-                        </span>
-                      </div>
-                      <div class="is-size-7 has-text-grey">
-                        <i class="fas fa-calendar-alt mr-1"></i> Due: 
-                        <span class="due-date-display is-clickable" onclick="editDueDate(this, '<%= a.is_a?(Assignment) ? a.id : '' %>')" title="Click to edit date">
-                          <%= due_date ? format_date(due_date) : "No due date" %>
-                        </span>
-                        <input type="date" class="due-date-input is-hidden input is-small py-0 px-1" 
-                               value="<%= due_date ? (due_date.is_a?(String) ? Time.parse(due_date) : due_date).strftime('%Y-%m-%d') : '' %>"
-                               onblur="saveDueDate(this, '<%= a.is_a?(Assignment) ? a.id : '' %>')" style="width: 130px; display: none;">
-                      </div>
-                      <!-- Expanded Content Area -->
-                      <div id="expand-<%= db_id %>" class="assignment-details-content is-hidden mt-3 p-3 has-background-white-bis" style="border-radius: 4px; border-left: 3px solid #dbdbdb;">
-                        <div class="content is-size-7">
-                          <p class="has-text-grey">Loading details...</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </td>
-                <td class="has-text-right is-vcentered">
-                  <div class="buttons is-right">
-                    <% if a.respond_to?(:synthetic) && a.synthetic %>
-                      <% 
-                        modal_data = {
-                          name: name,
-                          dueDate: (due_date.is_a?(String) ? Time.parse(due_date) : due_date)&.strftime('%Y-%m-%d'),
-                          dueTime: (due_date.is_a?(String) ? Time.parse(due_date) : due_date)&.strftime('%H:%M'),
-                          externalUrl: a.respond_to?(:external_url) ? a.external_url : '',
-                          description: a.respond_to?(:description) ? a.description : '',
-                          courseId: @course_id,
-                          brightspaceId: id
-                        }.to_json
-                      %>
-                      <button class="button is-small is-info is-light" onclick="openEditAssignmentModal(<%= modal_data.gsub('"', '&quot;') %>)">
-                        <span class="icon is-small"><i class="fas fa-edit"></i></span>
-                      </button>
-                    <% end %>
-                    <a href="<%= view_url %>" class="button is-small is-primary is-light">View Details</a>
-                  </div>
-                </td>
-              </tr>
-            <% end %>
+            ${assignments.length === 0 ? '<tr><td colspan="3" class="has-text-grey has-text-centered p-5">No assignments found.</td></tr>' : 
+              assignments.map(a => renderAssignmentRow(a)).join('')}
           </tbody>
         </table>
-      <% else %>
-        <p class="has-text-grey">No assignments found for this course.</p>
-      <% end %>
-    </div>
-  </div>
-</div>
+      </div>
+    `;
 
-<script>
-function toggleSelectAll(checkbox) {
-  const checkboxes = document.querySelectorAll('.assignment-bulk-checkbox');
-  checkboxes.forEach(cb => cb.checked = checkbox.checked);
-  updateBulkSelection();
-}
-
-function updateBulkSelection() {
-  const selected = document.querySelectorAll('.assignment-bulk-checkbox:checked');
-  const count = selected.length;
-  const bar = document.getElementById('bulk-action-bar');
-  const countSpan = document.getElementById('selected-count');
-  
-  if (count > 0) {
-    bar.classList.remove('is-hidden');
-    countSpan.textContent = count;
-  } else {
-    bar.classList.add('is-hidden');
+    root.innerHTML = html;
   }
-}
 
-function bulkOptional(isOptional) {
-  const selected = document.querySelectorAll('.assignment-bulk-checkbox:checked');
-  const ids = Array.from(selected).map(cb => cb.getAttribute('data-id')).filter(id => id !== '');
-  
-  if (ids.length === 0) return;
-  
-  const courseId = '<%= @course_id %>';
-  const formData = new URLSearchParams();
-  ids.forEach(id => formData.append('ids[]', id));
-  formData.append('optional', isOptional);
-  
-  // Optimistic UI Update
-  selected.forEach(cb => {
-    const row = cb.closest('tr');
-    if (isOptional) {
-      row.classList.add('is-optional');
-      row.querySelector('.optional-tag').classList.remove('is-hidden');
+  function renderAssignmentRow(a) {
+    const id = a.brightspace_id;
+    const db_id = a.id;
+    const isCompleted = a.is_completed;
+    const isOptional = a.is_optional;
+    const isQuiz = a.is_quiz;
+    const viewUrl = isQuiz ? `/course/${COURSE_ID}/quizzes/${id.replace('quiz_', '')}` : `/course/${COURSE_ID}/assignments/${id}`;
+
+    return `
+      <tr class="assignment-row ${isCompleted ? 'is-completed' : ''} ${isOptional ? 'is-optional' : ''}" data-id="${db_id}" data-type="assignment" data-brightspace-id="${id}">
+        <td class="is-vcentered">
+          <div class="is-flex is-align-items-center" style="gap: 12px;">
+            <input type="checkbox" class="assignment-bulk-checkbox" data-id="${db_id}" onchange="updateBulkSelection()">
+            <div class="completion-toggle-container">
+              <input type="checkbox" id="complete-${db_id}" class="assignment-checkbox is-hidden" data-id="${db_id}" ${isCompleted ? 'checked' : ''} onchange="toggleAssignmentInline(this)">
+              <label for="complete-${db_id}" class="completion-toggle-label is-clickable">
+                <span class="icon is-medium has-text-success status-icon-completed ${!isCompleted ? 'is-hidden' : ''}">
+                  <i class="fas fa-check-circle fa-lg"></i>
+                </span>
+                <span class="icon is-medium has-text-grey-lighter status-icon-incomplete ${isCompleted ? 'is-hidden' : ''}">
+                  <i class="far fa-circle fa-lg"></i>
+                </span>
+              </label>
+            </div>
+          </div>
+        </td>
+        <td class="assignment-info">
+          <div class="is-flex is-align-items-start">
+            <button class="button is-ghost is-small p-0 ml-4 mt-1" onclick="expandAssignmentRow('${db_id}', event)">
+              <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
+            </button>
+            <div style="flex: 1;">
+              <div class="mb-1">
+                <strong>
+                  <a href="${viewUrl}" class="assignment-link has-text-dark">${a.name_html}</a>
+                </strong>
+                ${isQuiz ? '<span class="tag is-info is-light is-small ml-2">Quiz</span>' : ''}
+                <span class="tag is-light is-small ml-2 optional-tag ${!isOptional ? 'is-hidden' : ''}">
+                  <i class="fas fa-hand-paper mr-1"></i> Optional
+                </span>
+              </div>
+              <div class="is-size-7 has-text-grey">
+                <i class="fas fa-calendar-alt mr-1"></i> Due: 
+                <span class="due-date-display is-clickable" onclick="editDueDateInline(this, '${db_id}')">
+                  ${a.due_date ? new Date(a.due_date).toLocaleString() : "No due date"}
+                </span>
+                <input type="date" class="due-date-input is-hidden input is-small py-0 px-1" 
+                       value="${a.due_date ? new Date(a.due_date).toISOString().split('T')[0] : ''}"
+                       onblur="saveDueDateInline(this, '${db_id}')" style="width: 130px; display: none;">
+              </div>
+              <div id="expand-${db_id}" class="assignment-details-content is-hidden mt-3 p-3 has-background-white-bis" style="border-radius: 4px; border-left: 3px solid #dbdbdb;">
+                <div class="content is-size-7">
+                  <p class="has-text-grey">Loading details...</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </td>
+        <td class="has-text-right is-vcentered">
+          <div class="buttons is-right">
+            ${a.synthetic ? `
+              <button class="button is-small is-info is-light" onclick="openEditModalFromRow('${db_id}')">
+                <span class="icon is-small"><i class="fas fa-edit"></i></span>
+              </button>
+            ` : ''}
+            <a href="${viewUrl}" class="button is-small is-primary is-light">View Details</a>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function toggleShowCompleted() {
+    showCompleted = !showCompleted;
+    loadAssignments();
+  }
+
+  function toggleSelectAll(checkbox) {
+    const checkboxes = document.querySelectorAll('.assignment-bulk-checkbox');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateBulkSelection();
+  }
+
+  function updateBulkSelection() {
+    const selected = document.querySelectorAll('.assignment-bulk-checkbox:checked');
+    const count = selected.length;
+    const bar = document.getElementById('bulk-action-bar');
+    const countSpan = document.getElementById('selected-count');
+    
+    if (count > 0) {
+      bar.classList.remove('is-hidden');
+      countSpan.textContent = count;
     } else {
-      row.classList.remove('is-optional');
-      row.querySelector('.optional-tag').classList.add('is-hidden');
+      bar.classList.add('is-hidden');
     }
-    cb.checked = false; // Clear selection after action
-  });
-  updateBulkSelection();
-  
-  fetch(`/course/${courseId}/assignments/bulk_optional`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: formData.toString()
-  })
-  .then(res => res.json())
-  .then(data => {
-    if (data.status !== 'ok') {
-      window.location.reload(); // Revert on error
-    }
-  })
-  .catch(err => {
-    console.error("Error updated bulk optional:", err);
-    window.location.reload();
-  });
-}
+  }
 
-function toggleAssignment(checkbox) {
-  const id = checkbox.getAttribute('data-id');
-  if (!id) return;
-  
-  const row = checkbox.closest('.assignment-row');
-  const container = checkbox.closest('.completion-toggle-container');
-  const label = container.querySelector('label');
-  const completedIcon = container.querySelector('.status-icon-completed');
-  const incompleteIcon = container.querySelector('.status-icon-incomplete');
-  
-  fetch(`/assignments/${id}/toggle_complete`, {
-    method: 'POST',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-  })
-  .then(response => response.json())
-  .then(data => {
-    if (data.status === 'ok') {
-      if (data.completed) {
-        row.classList.add('is-completed');
-        completedIcon.classList.remove('is-hidden');
-        incompleteIcon.classList.add('is-hidden');
-        label.setAttribute('title', 'Mark as Incomplete');
-      } else {
-        row.classList.remove('is-completed');
-        completedIcon.classList.add('is-hidden');
-        incompleteIcon.classList.remove('is-hidden');
-        label.setAttribute('title', 'Mark as Complete');
+  function bulkOptional(isOptional) {
+    const selected = document.querySelectorAll('.assignment-bulk-checkbox:checked');
+    const ids = Array.from(selected).map(cb => cb.getAttribute('data-id')).filter(id => id !== '');
+    if (ids.length === 0) return;
+    
+    const formData = new URLSearchParams();
+    ids.forEach(id => formData.append('ids[]', id));
+    formData.append('optional', isOptional);
+    
+    fetch(`/course/${COURSE_ID}/assignments/bulk_optional`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData.toString()
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'ok') loadAssignments();
+    });
+  }
+
+  function toggleAssignmentInline(checkbox) {
+    const id = checkbox.getAttribute('data-id');
+    fetch(`/assignments/${id}/toggle_complete`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'ok') {
+        const row = checkbox.closest('.assignment-row');
+        if (data.completed) {
+          row.classList.add('is-completed');
+          row.querySelector('.status-icon-completed').classList.remove('is-hidden');
+          row.querySelector('.status-icon-incomplete').classList.add('is-hidden');
+        } else {
+          row.classList.remove('is-completed');
+          row.querySelector('.status-icon-completed').classList.add('is-hidden');
+          row.querySelector('.status-icon-incomplete').classList.remove('is-hidden');
+        }
       }
-    }
-  })
-  .catch(err => console.error("Error toggling assignment:", err));
-}
-
-function editDueDate(span, assignmentId) {
-  if (!assignmentId) return;
-  const container = span.parentElement;
-  const input = container.querySelector('.due-date-input');
-  span.classList.add('is-hidden');
-  span.style.display = 'none';
-  input.classList.remove('is-hidden');
-  input.style.display = 'inline-block';
-  input.focus();
-}
-
-function saveDueDate(input, assignmentId) {
-  const container = input.parentElement;
-  const span = container.querySelector('.due-date-display');
-  const newDate = input.value;
-
-  fetch(`/assignments/${assignmentId}/update_due_date`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `due_date=${newDate}`
-  })
-  .then(res => res.json())
-  .then(data => {
-    if (data.status === 'ok') {
-      window.location.reload(); // Simplest to reload to get formatted date, but could update span text
-    }
-  });
-
-  input.classList.add('is-hidden');
-  input.style.display = 'none';
-  span.classList.remove('is-hidden');
-  span.style.display = 'inline-block';
-}
-
-function expandAssignmentRow(dbId, event) {
-  if (event) {
-    event.preventDefault();
-    event.stopPropagation();
+    });
   }
-  
-  const detailsDiv = document.getElementById(`expand-${dbId}`);
-  const icon = event.currentTarget.querySelector('.toggle-icon');
-  
-  if (!detailsDiv.classList.contains('is-hidden')) {
-    detailsDiv.classList.add('is-hidden');
-    icon.classList.remove('fa-chevron-down');
-    icon.classList.add('fa-chevron-right');
-    return;
+
+  function editDueDateInline(span, id) {
+    const container = span.parentElement;
+    const input = container.querySelector('.due-date-input');
+    span.classList.add('is-hidden');
+    span.style.display = 'none';
+    input.classList.remove('is-hidden');
+    input.style.display = 'inline-block';
+    input.focus();
   }
-  
-  // Show and change icon
-  detailsDiv.classList.remove('is-hidden');
-  icon.classList.remove('fa-chevron-right');
-  icon.classList.add('fa-chevron-down');
-  
-  // Fetch if needed
-  if (detailsDiv.dataset.loaded !== 'true') {
-    const row = detailsDiv.closest('.assignment-row');
-    const type = row.dataset.type;
+
+  function saveDueDateInline(input, id) {
+    fetch(`/assignments/${id}/update_due_date`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `due_date=${input.value}`
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'ok') loadAssignments();
+    });
+  }
+
+  function expandAssignmentRow(dbId, event) {
+    const detailsDiv = document.getElementById(`expand-${dbId}`);
+    const icon = event.currentTarget.querySelector('.toggle-icon');
+    
+    if (!detailsDiv.classList.contains('is-hidden')) {
+      detailsDiv.classList.add('is-hidden');
+      icon.classList.replace('fa-chevron-down', 'fa-chevron-right');
+      return;
+    }
+    
+    detailsDiv.classList.remove('is-hidden');
+    icon.classList.replace('fa-chevron-right', 'fa-chevron-down');
+    
+    if (detailsDiv.dataset.loaded !== 'true') {
+      const row = detailsDiv.closest('.assignment-row');
+      const itemId = row.dataset.brightspaceId;
+
+      fetch(`/api/v1/item_details?type=assignment&id=${itemId}&course_id=${COURSE_ID}`)
+        .then(r => r.json())
+        .then(data => {
+          detailsDiv.querySelector('.content').innerHTML = data.html || '<p class="has-text-grey">No description available.</p>';
+          detailsDiv.dataset.loaded = 'true';
+        });
+    }
+  }
+
+  function openEditModalFromRow(dbId) {
+    const row = document.querySelector(`.assignment-row[data-id="${dbId}"]`);
+    if (!row) return;
+
     const itemId = row.dataset.brightspaceId;
-    const courseId = '<%= @course_id %>';
-
-    fetch(`/api/v1/item_details?type=${type}&id=${itemId}&course_id=${courseId}`)
+    const name = row.querySelector('.assignment-link').innerText;
+    const dueDateRaw = row.querySelector('.due-date-input').value;
+    
+    // To get the description, we can check if the expand div is loaded, 
+    // or just fetch the assignment details via API
+    fetch(`/api/v1/courses/${COURSE_ID}/assignments/summary`) // This is a bit heavy, maybe better to have a specific endpoint or use the expand div logic
       .then(r => r.json())
       .then(data => {
-        detailsDiv.querySelector('.content').innerHTML = data.html || '<p class="has-text-grey">No description available.</p>';
-        detailsDiv.dataset.loaded = 'true';
+        // We'll just open the modal with what we have and let the user fill the rest if needed, 
+        // OR we can do a proper fetch for a single assignment.
+        // Actually, the assignment_controller has: get '/course/:id/assignments/:assignment_id'
+        
+        return fetch(`/course/${COURSE_ID}/assignments/${itemId}`, { headers: {'Accept': 'application/json'}})
       })
-      .catch(err => {
-        detailsDiv.querySelector('.content').innerHTML = '<p class="has-text-danger">Error loading details.</p>';
+      .then(r => r.json())
+      .then(assignment => {
+         const dt = assignment.DueDate ? new Date(assignment.DueDate) : null;
+         openEditAssignmentModal({
+           courseId: COURSE_ID,
+           brightspaceId: itemId,
+           name: assignment.Name,
+           dueDate: dt ? dt.toISOString().split('T')[0] : '',
+           dueTime: dt ? dt.toTimeString().split(' ')[0].substring(0, 5) : '',
+           externalUrl: assignment.ExternalUrl,
+           description: assignment.Instructions?.Text || assignment.description || ''
+         });
       });
   }
-}
+
+  document.addEventListener('DOMContentLoaded', () => loadAssignments());
 </script>
-<%= erb :'partials/edit_assignment_modal' %>
+
+<style>
+  .completion-toggle-label .icon { transition: transform 0.1s ease; }
+  .completion-toggle-label:hover .icon { transform: scale(1.1); }
+  .assignment-row.is-completed { opacity: 0.6; background-color: #fafafa; }
+  .assignment-row.is-completed strong a { text-decoration: line-through; }
+  .assignment-row.is-optional { border-left: 4px solid #dbdbdb; background-color: #fcfcfc; }
+</style>

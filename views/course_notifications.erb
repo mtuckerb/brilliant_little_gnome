@@ -2,98 +2,154 @@
 <div class="columns">
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
+    
+    <div class="box mt-4">
+      <h3 class="title is-6 mb-3"><i class="fas fa-filter mr-2"></i> Filter News</h3>
+      <form id="filter-form">
+        <input type="hidden" name="course_id" value="<%= @course_id %>">
+        <div class="field mb-3">
+          <label class="label is-size-7">Type</label>
+          <div class="control">
+            <div class="select is-fullwidth is-small">
+              <select name="type" onchange="runFilter()">
+                <option value="">All Types</option>
+                <option value="News">Announcements</option>
+                <option value="Grade">Grades</option>
+                <option value="Assignment">Assignments</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label class="checkbox is-size-7">
+            <input type="checkbox" name="show_read" value="true" onchange="runFilter()">
+            Show Read
+          </label>
+        </div>
+      </form>
+    </div>
   </div>
+  
   <div class="column is-9">
-    <div class="box">
-      <div class="level mb-5">
-        <div class="level-left">
-          <h2 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Announcements</h2>
-        </div>
-        <div class="level-right">
-          <form id="course-filter-form" action="/course/<%= @course_id %>/notifications" method="get" class="is-flex is-align-items-center mr-3">
-             <div class="field is-narrow mr-2 mb-0">
-               <div class="control">
-                 <div class="select is-small">
-                   <select name="type">
-                     <option value="">All Types</option>
-                     <% 
-                       types = Notification.where(course_id: @course_id).where.not(notification_type: [nil, ""]).pluck(:notification_type).uniq.sort
-                       types.each do |t| 
-                     %>
-                       <option value="<%= t %>" <%= 'selected' if params[:type] == t %>><%= t %></option>
-                     <% end %>
-                   </select>
-                 </div>
-               </div>
-             </div>
-
-             <div class="field is-narrow mr-2 mb-0">
-               <div class="control">
-                 <div class="select is-small">
-                   <select name="urgency">
-                     <option value="">Any Urgency</option>
-                     <option value="3" <%= 'selected' if params[:urgency] == '3' %>>High</option>
-                     <option value="2" <%= 'selected' if params[:urgency] == '2' %>>Medium</option>
-                     <option value="1" <%= 'selected' if params[:urgency] == '1' %>>Low</option>
-                   </select>
-                 </div>
-               </div>
-             </div>
-
-             <div class="field is-narrow mb-0">
-               <label class="checkbox is-size-7 mr-2">
-                 <input type="checkbox" name="show_read" value="true" <%= 'checked' if params[:show_read] == 'true' %>>
-                 Read
-               </label>
-             </div>
-          </form>
-
-          <form action="/notifications/mark_all_read" method="post" class="mr-2">
-            <button type="submit" class="button is-link is-light is-small">
-              <i class="fas fa-check-double mr-2"></i> Mark All Read
-            </button>
-          </form>
-        </div>
+    <div class="level mb-5">
+      <div class="level-left">
+        <h1 class="title">Announcements & Notifications</h1>
       </div>
-      <div id="notifications-container">
-        <%= erb :'partials/notifications_list' %>
+      <div class="level-right">
+        <button onclick="refreshData()" class="button is-small is-light" id="refresh-btn">
+          <i class="fas fa-sync"></i>
+        </button>
       </div>
     </div>
+
+    <div id="notifications-container">
+       <div class="has-text-centered py-6">
+         <span class="icon is-large has-text-grey-light">
+           <i class="fas fa-spinner fa-pulse fa-2x"></i>
+         </span>
+       </div>
+    </div>
+
+    <div id="pagination-container" class="mt-4"></div>
   </div>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', () => {
-  const filterForm = document.querySelector('form[action="/course/<%= @course_id %>/notifications"]');
-  if (!filterForm) return;
+  let currentPage = 1;
+  const PER_PAGE = 20;
 
-  const container = document.getElementById('notifications-container');
-
-  filterForm.addEventListener('change', (e) => {
-    // Collect form data
-    const formData = new FormData(filterForm);
+  async function loadNotifications() {
+    const form = document.getElementById('filter-form');
+    const formData = new FormData(form);
     const params = new URLSearchParams(formData);
-    
-    // Update URL without reload
-    const newUrl = `${window.location.pathname}?${params.toString()}`;
-    window.history.pushState({ path: newUrl }, '', newUrl);
+    params.set('limit', PER_PAGE);
+    params.set('offset', (currentPage - 1) * PER_PAGE);
 
-    // Fetch updated list via AJAX
+    const container = document.getElementById('notifications-container');
     container.style.opacity = '0.5';
-    fetch(newUrl, {
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest'
-      }
-    })
-    .then(res => res.text())
-    .then(html => {
-      container.innerHTML = html;
+
+    try {
+      const response = await fetch(`/api/v1/notifications?${params.toString()}`);
+      const data = await response.json();
+      renderNotifications(data.notifications);
+      renderPagination(data.total);
+    } catch (err) {
+      container.innerHTML = `<div class="notification is-danger">Failed to load notifications.</div>`;
+    } finally {
       container.style.opacity = '1';
-    })
-    .catch(err => {
-      console.error("Filter Error:", err);
-      container.style.opacity = '1';
-    });
-  });
-});
+    }
+  }
+
+  function renderNotifications(items) {
+    const container = document.getElementById('notifications-container');
+    if (!items || items.length === 0) {
+      container.innerHTML = '<div class="box has-text-centered py-6 has-text-grey">No recent activities found for this course.</div>';
+      return;
+    }
+
+    container.innerHTML = items.map(n => `
+      <div class="box p-4 mb-3 notification-card ${n.is_read ? 'is-read' : ''}" id="notif-${n.id}">
+        <div class="is-flex is-justify-content-space-between is-align-items-start mb-2">
+          <div>
+            <span class="tag is-small is-light mb-1">${n.notification_type}</span>
+            <h5 class="title is-6 mb-0">${n.display_title || n.title}</h5>
+          </div>
+          <span class="is-size-7 has-text-grey">${n.simple_date}</span>
+        </div>
+        <div class="content is-size-7 has-text-grey-darker">
+          ${n.body_html || n.body}
+        </div>
+        ${!n.is_read ? `
+          <div class="has-text-right mt-2">
+            <button class="button is-ghost is-small" onclick="markRead(${n.id})">Mark as Read</button>
+          </div>
+        ` : ''}
+      </div>
+    `).join('');
+  }
+
+  function renderPagination(total) {
+    const totalPages = Math.ceil(total / PER_PAGE);
+    const container = document.getElementById('pagination-container');
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+    
+    let html = `<nav class="pagination is-small is-centered">`;
+    html += `<ul class="pagination-list">`;
+    for (let i = 1; i <= totalPages; i++) {
+      html += `<li><a class="pagination-link ${i === currentPage ? 'is-current' : ''}" onclick="changePage(${i})">${i}</a></li>`;
+    }
+    html += `</ul></nav>`;
+    container.innerHTML = html;
+  }
+
+  function changePage(p) {
+    currentPage = p;
+    loadNotifications();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function markRead(id) {
+    await fetch(`/notifications/${id}/mark_read`, { method: 'POST' });
+    loadNotifications();
+  }
+
+  function runFilter() {
+    currentPage = 1;
+    loadNotifications();
+  }
+
+  async function refreshData() {
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('is-loading');
+    await loadNotifications();
+    btn.classList.remove('is-loading');
+  }
+
+  document.addEventListener('DOMContentLoaded', loadNotifications);
 </script>
+
+<style>
+  .notification-card { border-left: 4px solid #739AC3; transition: transform 0.1s; }
+  .notification-card:hover { transform: translateX(3px); }
+  .notification-card.is-read { opacity: 0.7; border-left-color: #dbdbdb; }
+</style>

@@ -40,22 +40,30 @@
       overflow-wrap: break-word;
     }
 
-    /* Flash Notifications */
-    #flash-container {
+    /* Toast Notifications */
+    #toast-container {
       position: fixed;
       top: 20px;
       right: 20px;
-      z-index: 1000;
+      z-index: 2000;
       width: 350px;
+      pointer-events: none;
     }
-    .notification.is-flash {
+    .toast {
+      pointer-events: auto;
+      margin-bottom: 10px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       border-left: 5px solid;
-      transition: opacity 0.5s ease-out;
+      transform: translateX(120%);
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
-    .notification.is-flash.is-danger {
-      border-left-color: #f14668;
+    .toast.is-active {
+      transform: translateX(0);
     }
+    .toast.is-danger { border-left-color: #f14668; }
+    .toast.is-success { border-left-color: #48c78e; }
+    .toast.is-warning { border-left-color: #ffe08a; }
+    .toast.is-info { border-left-color: #3e8ed0; }
 
     /* Auth Banner */
     #auth-banner {
@@ -74,7 +82,7 @@
 <body>
   <div id="auth-banner" class="is-hidden">
     <span class="icon mr-1"><i class="fas fa-exclamation-triangle"></i></span>
-    Brightspace session expired. <a href="/settings">Click here to re-authenticate</a> to keep your data in sync.
+    Brightspace session expired. <a href="javascript:void(0)" onclick="startAppLogin()">Click here to re-authenticate</a> to keep your data in sync.
   </div>
   <nav class="navbar is-white">
     <div class="navbar-brand">
@@ -83,6 +91,12 @@
        </a>
     </div>
     <div class="navbar-end">
+       <div class="navbar-item">
+          <a href="/archive" class="button is-white <%= 'has-text-primary' if @active_tab == 'archive' %>" title="Archives">
+            <span class="icon"><i class="fas fa-archive"></i></span>
+            <span>Archives</span>
+          </a>
+       </div>
        <div class="navbar-item">
           <a href="/calendar" class="button is-white <%= 'has-text-primary' if @active_tab == 'calendar' %>" title="Calendar">
             <span class="icon"><i class="fas fa-calendar-alt"></i></span>
@@ -109,34 +123,74 @@
   </nav>
 
   <div class="main-content container">
-    <div id="flash-container">
-      <% if flash[:error] %>
-        <div class="notification is-danger is-flash" id="flash-message">
-          <button class="delete" onclick="this.parentElement.remove()"></button>
-          <%= flash[:error] %>
-        </div>
-      <% end %>
-      <% if flash[:success] %>
-        <div class="notification is-success is-flash" id="flash-message">
-          <button class="delete" onclick="this.parentElement.remove()"></button>
-          <%= flash[:success] %>
-        </div>
-      <% end %>
-    </div>
+    <div id="toast-container"></div>
+
+    <% if flash[:error] || flash[:success] %>
+      <script>
+        document.addEventListener('DOMContentLoaded', () => {
+          <% if flash[:error] %>
+            showToast("<%= flash[:error] %>", 'is-danger');
+          <% end %>
+          <% if flash[:success] %>
+            showToast("<%= flash[:success] %>", 'is-success');
+          <% end %>
+        });
+      </script>
+    <% end %>
 
     <%= yield %>
   </div>
 
   <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      const flashes = document.querySelectorAll('.is-flash');
-      flashes.forEach(flash => {
-        setTimeout(() => {
-          flash.style.opacity = '0';
-          setTimeout(() => flash.remove(), 500);
-        }, 5000);
+    function showToast(message, type = 'is-info', duration = 5000) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `notification toast ${type}`;
+      toast.innerHTML = `
+        <button class="delete"></button>
+        ${message}
+      `;
+      
+      const deleteBtn = toast.querySelector('.delete');
+      deleteBtn.onclick = () => {
+        toast.classList.remove('is-active');
+        setTimeout(() => toast.remove(), 300);
+      };
+
+      container.appendChild(toast);
+      
+      // Trigger slide-in
+      requestAnimationFrame(() => {
+        toast.classList.add('is-active');
       });
 
+      if (duration > 0) {
+        setTimeout(() => {
+          if (toast.parentNode) {
+            toast.classList.remove('is-active');
+            setTimeout(() => toast.remove(), 300);
+          }
+        }, duration);
+      }
+    }
+
+    function startAppLogin() {
+      // Prioritize Electron relay for relogin to ensure cookie capture works
+      if (window.electron && window.electron.startLogin) {
+        fetch('/api/v1/status')
+          .then(r => r.json())
+          .then(data => {
+            window.electron.startLogin(data.host || location.hostname);
+          })
+          .catch(() => {
+            window.electron.startLogin(location.hostname);
+          });
+      } else {
+        window.location.href = '/login';
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
       // Global Sync Status Polling
       function pollSyncStatus() {
         fetch('/sync/status')

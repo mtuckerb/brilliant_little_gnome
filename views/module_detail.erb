@@ -3,40 +3,61 @@
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
   </div>
-  <div class="column is-9">
-    <% if @module %>
+  <div class="column is-9" id="module-root">
+    <div class="is-flex is-justify-content-center is-align-items-center" style="min-height: 400px;">
+      <div class="has-text-centered">
+        <span class="icon is-large has-text-primary mb-4">
+          <i class="fas fa-circle-notch fa-spin fa-3x"></i>
+        </span>
+        <p class="is-size-5 has-text-grey">Loading Module Content...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const COURSE_ID = "<%= @course_id %>";
+  const MODULE_ID = "<%= @module_id %>";
+
+  async function loadModule() {
+    const root = document.getElementById('module-root');
+    try {
+      const response = await fetch(`/api/v1/courses/${COURSE_ID}/modules/${MODULE_ID}`);
+      if (!response.ok) throw new Error("Failed to fetch module");
+      const data = await response.json();
+      renderModule(data);
+    } catch (err) {
+      console.error(err);
+      root.innerHTML = `
+        <div class="notification is-danger">
+          <h3 class="title is-5">Error Connection Lost</h3>
+          <p>Failed to load module details. Please ensure the backend is running.</p>
+          <button class="button is-white is-small mt-2" onclick="location.reload()">Retry</button>
+        </div>
+      `;
+    }
+  }
+
+  function renderModule(data) {
+    const root = document.getElementById('module-root');
+    const { course, module, breadcrumbs, synthetic_tasks, course_info, download_count } = data;
+
+    let html = `
       <div class="box">
         <div class="mb-5">
-          <h4 class="title is-4 mb-2"><%= @module['Title'] %></h4>
-          <% 
-             # Count downloadable files
-             download_count = collect_all_files(@course_id, @module, "").size
-          %>
-          <% if download_count > 1 %>
+          <h4 class="title is-4 mb-2">${module.Title}</h4>
+          ${download_count > 1 ? `
             <div class="is-flex is-justify-content-end">
-              <a href="/course/<%= @course_id %>/module/<%= @module_id %>/download_all" class="button is-primary is-small">
+              <a href="/course/${COURSE_ID}/module/${MODULE_ID}/download_all" class="button is-primary is-small">
                  <span class="icon is-small mr-1"><i class="fas fa-file-zipper"></i></span>
-                 Download all in Module (<%= download_count %>)
+                 Download all in Module (${download_count})
               </a>
             </div>
-          <% end %>
+          ` : ''}
         </div>
 
-        <%# --- DESCRIPTION --- %>
-        <% 
-           desc = @module['Description']
-           desc_text = ""
-           if desc.is_a?(Hash)
-             desc_text = (desc['Html'] || desc['Text'] || "").to_s
-           else
-             desc_text = desc.to_s
-           end
-           synthetic_tasks = synthesize_tasks(@module)
-           course_info = extract_course_info(@course_name)
-        %>
-        
-        <%# --- DESCRIPTION SECTION --- %>
-        <% unless desc_text.strip.empty? %>
+        <!-- Description -->
+        ${module.description_html && module.description_html.trim() !== '' ? `
           <div class="mb-5">
             <details class="section-details" open>
               <summary class="is-clickable p-2 has-background-light" style="list-style: none; outline: none; border-radius: 4px;">
@@ -49,259 +70,289 @@
               </summary>
               <div class="content p-4 has-background-white border-light">
                 <div class="description-body">
-                  <%= fix_links(desc_text) %>
+                  ${module.description_html}
                 </div>
               </div>
             </details>
           </div>
-        <% end %>
+        ` : ''}
 
-        <%# --- SYNTHESIZED TASKS SECTION --- %>
-        <% if synthetic_tasks.any? %>
-          <div class="box has-background-white-bis mb-5">
-            <form action="/course/<%= @course_id %>/module/<%= @module_id %>/create_tasks" method="POST">
-              <input type="hidden" name="module_title" value="<%= @module['Title'] %>">
-              <div class="level is-mobile mb-4">
-                 <div class="level-left">
-                    <h5 class="title is-5 mb-0"><i class="fas fa-magic mr-2 has-text-info"></i> Synthesized Tasks Found</h5>
-                 </div>
-                 <div class="level-right">
-                    <button type="submit" class="button is-info is-small">
-                      <span class="icon is-small"><i class="fas fa-plus"></i></span>
-                      <span>Add Selected to Assignments</span>
-                    </button>
-                 </div>
-              </div>
-              
-              <div class="table-container">
-                <table class="table is-fullwidth is-narrow is-hoverable is-size-7">
-                  <thead>
-                    <tr>
-                      <th width="40"><input type="checkbox" onclick="toggleAllTasks(this)"></th>
-                      <th width="100">Type</th>
-                      <th>Name</th>
-                      <th width="120">Due Date</th>
-                      <th>Context</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <% synthetic_tasks.each_with_index do |task, idx| %>
-                      <tr>
-                        <td>
-                          <input type="checkbox" name="tasks[]" value="<%= idx %>" checked>
-                          <input type="hidden" name="task_names_<%= idx %>" value="<%= task[:name] %>">
-                          <input type="hidden" name="task_types_<%= idx %>" value="<%= task[:type] %>">
-                          <input type="hidden" name="task_urls_<%= idx %>" value="<%= task[:url] %>">
-                          <input type="hidden" name="task_module_ids_<%= idx %>" value="<%= task[:module_id] %>">
-                        </td>
-                        <td><span class="tag is-primary is-light"><%= task[:type] %></span></td>
-                        <td>
-                          <% if task[:external_url] %>
-                            <% 
-                              task_url = task[:external_url]
-                              if task_url.start_with?("/")
-                                task_url = "https://#{$client.host}#{task_url}"
-                              end
-                            %>
-                            <a href="<%= task_url %>" target="_blank"><%= task[:name] %></a>
-                          <% else %>
-                            <%= task[:name] %>
-                          <% end %>
-                        </td>
-                        <td>
-                          <input type="date" name="task_dates_<%= idx %>" 
-                                 class="input is-narrow is-small pt-0 pb-0" 
-                                 value="<%= task[:due_date]&.strftime('%Y-%m-%d') %>"
-                                 style="width: 130px; line-height: 1;">
-                        </td>
-                        <td>
-                          <div class="is-size-7 has-text-grey">
-                            <%= course_info[:course_display] %> (<%= course_info[:semester] %>)
-                          </div>
-                        </td>
-                      </tr>
-                    <% end %>
-                  </tbody>
-                </table>
-              </div>
-            </form>
+        <!-- Synthesized Tasks -->
+        ${renderSyntheticTasks(synthetic_tasks, module.Title, course_info)}
+
+        <!-- Module Items (Topics) -->
+        ${renderModuleItems(module.Topics)}
+
+        <!-- Sub-modules -->
+        ${renderSubModules(module.Modules)}
+      </div>
+    `;
+
+    root.innerHTML = html;
+    setupSelectionPopover(module.Title);
+  }
+
+  function renderSyntheticTasks(tasks, moduleTitle, courseInfo) {
+    if (!tasks || tasks.length === 0) return '';
+
+    return `
+      <div class="box has-background-white-bis mb-5">
+        <form action="/course/${COURSE_ID}/module/${MODULE_ID}/create_tasks" method="POST">
+          <input type="hidden" name="module_title" value="${moduleTitle}">
+          <div class="level is-mobile mb-4">
+             <div class="level-left">
+                <h5 class="title is-5 mb-0"><i class="fas fa-magic mr-2 has-text-info"></i> Synthesized Tasks Found</h5>
+             </div>
+             <div class="level-right">
+                <button type="submit" class="button is-info is-small">
+                  <span class="icon is-small"><i class="fas fa-plus"></i></span>
+                  <span>Add Selected to Assignments</span>
+                </button>
+             </div>
           </div>
           
-          <script>
-            function toggleAllTasks(master) {
-              const checkboxes = document.querySelectorAll('input[name="tasks[]"]');
-              checkboxes.forEach(c => c.checked = master.checked);
-            }
-          </script>
-        <% end %>
+          <div class="table-container">
+            <table class="table is-fullwidth is-narrow is-hoverable is-size-7">
+              <thead>
+                <tr>
+                  <th width="40"><input type="checkbox" onclick="toggleAllTasks(this)"></th>
+                  <th width="100">Type</th>
+                  <th>Name</th>
+                  <th width="120">Due Date</th>
+                  <th>Context</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tasks.map((task, idx) => `
+                  <tr>
+                    <td>
+                      <input type="checkbox" name="tasks[]" value="${idx}" checked>
+                      <input type="hidden" name="task_names_${idx}" value="${task.name}">
+                      <input type="hidden" name="task_types_${idx}" value="${task.type}">
+                      <input type="hidden" name="task_urls_${idx}" value="${task.url}">
+                      <input type="hidden" name="task_module_ids_${idx}" value="${task.module_id}">
+                    </td>
+                    <td><span class="tag is-primary is-light">${task.type}</span></td>
+                    <td>
+                      ${task.external_url ? `
+                        <a href="${task.external_url.startsWith('/') ? 'https://' + window.location.host + task.external_url : task.external_url}" target="_blank">${task.name}</a>
+                      ` : task.name}
+                    </td>
+                    <td>
+                      <input type="date" name="task_dates_${idx}" 
+                             class="input is-narrow is-small pt-0 pb-0" 
+                             value="${task.due_date ? new Date(task.due_date).toISOString().split('T')[0] : ''}"
+                             style="width: 130px; line-height: 1;">
+                    </td>
+                    <td>
+                      <div class="is-size-7 has-text-grey">
+                        ${courseInfo.course_display} (${courseInfo.semester})
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </form>
+      </div>
+    `;
+  }
 
-        <% if @module['Topics'] && !@module['Topics'].empty? %>
-          <div class="list is-hoverable mb-5">
-            <h5 class="subtitle is-5 border-bottom pb-2">Module Items</h5>
-            <% @module['Topics'].each do |topic| %>
-              <div class="list-item p-3">
-                <div class="is-flex is-justify-content-space-between is-align-items-center">
-                  <div>
-                    <span class="topic-icon mr-2">
-                      <% if topic['Type'] == 1 %> <!-- File -->
-                        <i class="fas fa-file"></i>
-                      <% elsif topic['Type'] == 3 %> <!-- Link -->
-                        <i class="fas fa-link"></i>
-                      <% else %>
-                        <i class="fas fa-info-circle"></i>
-                      <% end %>
-                    </span>
-                    <span class="has-text-weight-medium">
-                      <% if topic['Url'] %>
-                        <% 
-                          full_url = topic['Url']
-                          if full_url.start_with?("/") 
-                            full_url = "https://#{$client.host}#{full_url}"
-                          end
-                        %>
-                        <a href="<%= full_url %>" target="_blank"><%= topic['Title'] %></a>
-                      <% else %>
-                        <%= topic['Title'] %>
-                      <% end %>
-                    </span>
-                  </div>
-                  <div class="buttons">
-                    <% if topic['Url'] && topic['Url'].start_with?('/content/enforced/') %>
-                      <% if topic['Title'].downcase.end_with?('.pdf') %>
-                        <button class="button is-small is-info is-outlined" onclick="openPdfViewer('<%= @course_id %>', '<%= topic['Id'] || topic['TopicId'] %>', '<%= topic['Title'].gsub("'","\\\\'") %>')">
-                          <i class="fas fa-eye mr-1"></i> View
-                        </button>
-                      <% end %>
-                      <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] %>/download" class="button is-small is-link is-outlined" target="_blank">
-                        <i class="fas fa-download mr-1"></i> Download
-                      </a>
-                    <% end %>
-                  </div>
+  function renderModuleItems(topics) {
+    if (!topics || topics.length === 0) return '';
+
+    return `
+      <div class="list is-hoverable mb-5">
+        <h5 class="subtitle is-5 border-bottom pb-2">Module Items</h5>
+        ${topics.map(topic => {
+          const typeIcon = topic.Type === 1 ? 'fa-file' : (topic.Type === 3 ? 'fa-link' : 'fa-info-circle');
+          const isDownloadable = topic.Url && topic.Url.startsWith('/content/enforced/');
+          const isPdf = topic.Title.toLowerCase().endsWith('.pdf');
+          
+          return `
+            <div class="list-item p-3">
+              <div class="is-flex is-justify-content-space-between is-align-items-center">
+                <div>
+                  <span class="topic-icon mr-2">
+                    <i class="fas ${typeIcon}"></i>
+                  </span>
+                  <span class="has-text-weight-medium">
+                    ${topic.Url ? `
+                      <a href="${topic.Url.startsWith('/') ? 'https://' + window.location.host + topic.Url : topic.Url}" target="_blank">${topic.Title}</a>
+                    ` : topic.Title}
+                  </span>
+                </div>
+                <div class="buttons">
+                  ${(isDownloadable && isPdf) ? `
+                    <button class="button is-small is-info is-outlined" onclick="openPdfViewer('${COURSE_ID}', '${topic.Id}', '${topic.Title.replace(/'/g, "\\'")}')">
+                      <i class="fas fa-eye mr-1"></i> View
+                    </button>
+                  ` : ''}
+                  ${isDownloadable ? `
+                    <a href="/course/${COURSE_ID}/topic/${topic.Id}/download" class="button is-small is-link is-outlined" target="_blank">
+                      <i class="fas fa-download mr-1"></i> Download
+                    </a>
+                  ` : ''}
                 </div>
               </div>
-            <% end %>
-          </div>
-        <% end %>
-
-        <% if @module['Modules'] && !@module['Modules'].empty? %>
-          <div class="submodules-section mt-6">
-            <h5 class="subtitle is-5 border-bottom pb-2">Sub-modules</h5>
-            <% @module['Modules'].each do |sub| %>
-              <%= erb :'partials/module_collapsible', locals: { mod: sub } %>
-            <% end %>
-          </div>
-        <% end %>
+            </div>
+          `;
+        }).join('')}
       </div>
+    `;
+  }
 
-      <script>
-        function toggleCollapsibleModule(id) {
-          const content = document.getElementById('content-' + id);
-          const icon = document.getElementById('icon-' + id);
-          if (content.style.display === 'none') {
-            content.style.display = 'block';
-            icon.classList.remove('fa-chevron-right');
-            icon.classList.add('fa-chevron-down');
-          } else {
-            content.style.display = 'none';
-            icon.classList.remove('fa-chevron-down');
-            icon.classList.add('fa-chevron-right');
-          }
-        }
-      </script>
+  function renderSubModules(modules) {
+    if (!modules || modules.length === 0) return '';
 
-      <style>
-        .border-left { border-left: 2px solid #f5f5f5; }
-        .border-bottom { border-bottom: 2px solid #f5f5f5; }
+    // Note: This relies on a partial which we might need to recreate in JS or leave as is if it can be rendered client-side.
+    // For now, consistent with the SPA pattern, we'll need a way to render these recursively.
+    // Since partials are server-side, let's build the recursive helper here.
+    
+    return `
+      <div class="submodules-section mt-6">
+        <h5 class="subtitle is-5 border-bottom pb-2">Sub-modules</h5>
+        ${modules.map(mod => renderCollapsibleModule(mod)).join('')}
+      </div>
+    `;
+  }
+
+  function renderCollapsibleModule(mod) {
+    // Basic recursive collapsible module renderer
+    const hasItems = (mod.Topics && mod.Topics.length > 0) || (mod.Modules && mod.Modules.length > 0);
+    
+    return `
+      <div class="box p-0 mb-3" style="border: 1px solid #f0f0f0; box-shadow: none;">
+        <div class="is-clickable p-3 has-background-white-bis" onclick="toggleCollapsibleModule('${mod.ModuleId}')" style="border-radius: 4px;">
+          <div class="is-flex is-justify-content-space-between is-align-items-center">
+            <span class="has-text-weight-bold">
+              <i id="icon-${mod.ModuleId}" class="fas fa-chevron-right mr-2 is-size-7 has-text-grey"></i>
+              ${mod.Title}
+            </span>
+            <a href="/course/${COURSE_ID}/module/${mod.ModuleId}" class="button is-ghost is-small p-0" onclick="event.stopPropagation()">
+               Jump to Module <i class="fas fa-arrow-right ml-1"></i>
+            </a>
+          </div>
+        </div>
+        <div id="content-${mod.ModuleId}" class="p-3 border-top" style="display: none;">
+           ${mod.Topics.map(t => `
+             <div class="mb-2 is-size-7">
+               <i class="fas ${t.Type === 1 ? 'fa-file' : (t.Type === 3 ? 'fa-link' : 'fa-circle')} mr-2 has-text-grey-light"></i>
+               <a href="${t.Url.startsWith('/') ? 'https://' + window.location.host + t.Url : t.Url}" target="_blank">${t.Title}</a>
+             </div>
+           `).join('')}
+           ${mod.Modules.map(m => renderCollapsibleModule(m)).join('')}
+           ${!hasItems ? '<p class="is-size-7 italic has-text-grey">Empty module</p>' : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function toggleAllTasks(master) {
+    const checkboxes = document.querySelectorAll('input[name="tasks[]"]');
+    checkboxes.forEach(c => c.checked = master.checked);
+  }
+
+  function toggleCollapsibleModule(id) {
+    const content = document.getElementById('content-' + id);
+    const icon = document.getElementById('icon-' + id);
+    if (content.style.display === 'none') {
+      content.style.display = 'block';
+      icon.classList.replace('fa-chevron-right', 'fa-chevron-down');
+    } else {
+      content.style.display = 'none';
+      icon.classList.replace('fa-chevron-down', 'fa-chevron-right');
+    }
+  }
+
+  // --- Selection Popover ---
+  let lastSelection = "";
+  function setupSelectionPopover(moduleTitle) {
+    const popover = document.getElementById('selection-popover');
+    
+    document.addEventListener('mouseup', function(e) {
+      if (popover.contains(e.target)) return;
+
+      const selection = window.getSelection();
+      const text = selection.toString().trim();
+      
+      if (text.length > 2 && text.length < 200) {
+        lastSelection = text;
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
         
-        .section-details summary::-webkit-details-marker { display: none; }
-        .section-details[open] summary .fa-chevron-down { transform: rotate(180deg); }
-        .section-details summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
-        .border-light { border: 1px solid #eee; border-top: none; border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }
+        popover.style.display = 'block';
+        popover.style.top = (rect.top + window.scrollY - 40) + 'px';
+        popover.style.left = (rect.left + window.scrollX + (rect.width/2) - 40) + 'px';
+      } else {
+        popover.style.display = 'none';
+      }
+    });
 
-        #selection-popover {
-          position: absolute;
-          display: none;
-          z-index: 1000;
-          background: white;
-          border: 1px solid #dbdbdb;
-          border-radius: 4px;
-          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-          padding: 4px;
-        }
-      </style>
+    window.createTaskFromSelection = function() {
+      const selectionText = lastSelection;
+      popover.style.display = 'none';
+      if (!selectionText) return;
+      
+      const name = prompt("Confirm Task Name:", selectionText);
+      if (!name) return;
+      
+      const dateInput = prompt("Due Date (YYYY-MM-DD) - Leave blank for end-of-week default:", "");
+      if (dateInput === null) return;
 
-      <div id="selection-popover" class="has-background-white">
-        <button class="button is-small is-info is-light" onclick="createTaskFromSelection()">
-          <span class="icon is-small"><i class="fas fa-magic"></i></span>
-          <span>Create Task</span>
-        </button>
-      </div>
+      fetch(`/course/${COURSE_ID}/synthetic_tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          course_id: COURSE_ID,
+          name: name,
+          due_date: dateInput,
+          description: `Manually highlighted from module: ${moduleTitle}`
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        window.getSelection().removeAllRanges();
+        alert("Synthetic task created!");
+      })
+      .catch(err => {
+        console.error(err);
+        alert("Error creating task. Check console.");
+      });
+    };
+  }
 
-      <script>
-        let lastSelection = "";
-        document.addEventListener('mouseup', function(e) {
-          const popover = document.getElementById('selection-popover');
-          if (popover.contains(e.target)) return;
+  document.addEventListener('DOMContentLoaded', () => loadModule());
+</script>
 
-          const selection = window.getSelection();
-          const text = selection.toString().trim();
-          
-          if (text.length > 2 && text.length < 200) {
-            lastSelection = text;
-            const range = selection.getRangeAt(0);
-            const rect = range.getBoundingClientRect();
-            
-            popover.style.display = 'block';
-            popover.style.top = (rect.top + window.scrollY - 40) + 'px';
-            popover.style.left = (rect.left + window.scrollX + (rect.width/2) - 40) + 'px';
-          } else {
-            popover.style.display = 'none';
-          }
-        });
+<style>
+  .border-left { border-left: 2px solid #f5f5f5; }
+  .border-bottom { border-bottom: 2px solid #f5f5f5; }
+  .border-top { border-top: 1px solid #f0f0f0; }
+  
+  .section-details summary::-webkit-details-marker { display: none; }
+  .section-details[open] summary .fa-chevron-down { transform: rotate(180deg); }
+  .section-details summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
+  .border-light { border: 1px solid #eee; border-top: none; border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }
 
-        function createTaskFromSelection() {
-          const popover = document.getElementById('selection-popover');
-          const selectionText = lastSelection;
-          
-          // Hide immediately so it doesn't linger during prompts
-          popover.style.display = 'none';
-          if (!selectionText) return;
-          
-          const name = prompt("Confirm Task Name:", selectionText);
-          if (!name) return;
-          
-          const dateInput = prompt("Due Date (YYYY-MM-DD) - Leave blank for end-of-week default:", "");
-          if (dateInput === null) return; // User cancelled
+  #selection-popover {
+    position: absolute;
+    display: none;
+    z-index: 1000;
+    background: white;
+    border: 1px solid #dbdbdb;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    padding: 4px;
+  }
+</style>
 
-          const course_id = "<%= @course_id %>";
-          
-          fetch('/course/' + course_id + '/synthetic_tasks', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              course_id: course_id,
-              name: name,
-              due_date: dateInput,
-              description: "Manually highlighted from module: <%= @module['Title'] %>"
-            })
-          })
-          .then(res => res.json())
-          .then(data => {
-            window.getSelection().removeAllRanges();
-            alert("Synthetic task created!");
-          })
-          .catch(err => {
-            console.error(err);
-            alert("Error creating task. Check console.");
-          });
-        }
-      </script>
-    <% else %>
-      <div class="notification is-danger">Module not found.</div>
-    <% end %>
-  </div>
+<div id="selection-popover" class="has-background-white">
+  <button class="button is-small is-info is-light" onclick="createTaskFromSelection()">
+    <span class="icon is-small"><i class="fas fa-magic"></i></span>
+    <span>Create Task</span>
+  </button>
 </div>
 
 <!-- PDF Viewer Modal -->
@@ -348,6 +399,6 @@ function closePdfModal() {
   
   modal.classList.remove('is-active');
   document.documentElement.classList.remove('is-clipped');
-  frame.src = ""; // Stop loading/playing
+  frame.src = ""; 
 }
 </script>

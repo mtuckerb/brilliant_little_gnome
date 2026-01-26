@@ -3,149 +3,74 @@
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
   </div>
-  <div class="column is-9">
-    <div class="box">
-      <div class="mb-5">
-          <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
-            <h4 class="title is-4 mb-0">Syllabus / Overview</h4>
-            <div class="buttons">
-              <% if @overview && (@overview['HasAttachment'] || @overview['Attachment']) %>
-                <button class="button is-info is-small" onclick="openPdfViewer('/course/<%= @course_id %>/overview/view', '/course/<%= @course_id %>/overview/download', 'Syllabus')">
-                    <span class="icon is-small mr-1"><i class="fas fa-eye"></i></span>
-                    View Syllabus
-                </button>
-                <a href="/course/<%= @course_id %>/overview/download" class="button is-link is-small" target="_blank">
-                    <span class="icon is-small mr-1"><i class="fas fa-file-download"></i></span>
-                    Download 
-                </a>
-              <% end %>
-              <a href="/course/<%= @course_id %>/download_all" class="button is-primary is-small">
-                  <span class="icon is-small mr-1"><i class="fas fa-archive"></i></span>
-                  Download Everything (Zip)
-              </a>
-            </div>
-          </div>
-
-          <!-- Course Settings Section -->
-          <div class="notification is-light py-3 px-4 mb-5" style="border: 1px solid #eee; background: #fafafa;">
-            <p class="is-size-7 uppercase has-text-weight-bold has-text-grey mb-3" style="text-transform: uppercase; letter-spacing: 0.5px;">
-              <i class="fas fa-cog mr-1"></i> Course Settings
-            </p>
-            <div class="columns is-multiline is-mobile">
-              <div class="column is-6-mobile is-3-tablet">
-                <form action="/course/<%= @course_id %>/update_units" method="post">
-                  <label class="label is-is-size-7 mb-1">Units (Credits)</label>
-                  <div class="field has-addons">
-                    <div class="control is-expanded">
-                      <input class="input is-small" type="number" name="units" value="<%= @course&.units || 3 %>">
-                    </div>
-                    <div class="control">
-                      <button type="submit" class="button is-small is-primary">Save</button>
-                    </div>
-                  </div>
-                </form>
-              </div>
-
-              <div class="column is-6-mobile is-3-tablet">
-                <form action="/course/<%= @course_id %>/update_target_grade" method="post">
-                  <label class="label is-is-size-7 mb-1">Target Grade (%)</label>
-                  <div class="field has-addons">
-                    <div class="control is-expanded">
-                      <input class="input is-small" type="number" step="0.1" name="target_grade" value="<%= @course&.target_grade || 93.0 %>">
-                    </div>
-                    <div class="control">
-                      <button type="submit" class="button is-small is-info">Apply</button>
-                    </div>
-                  </div>
-                </form>
-              </div>
-
-              <div class="column is-6-mobile is-3-tablet">
-                <form action="/course/<%= @course_id %>/update_end_of_week" method="post">
-                  <label class="label is-is-size-7 mb-1">End of Week</label>
-                  <div class="field has-addons">
-                    <div class="control is-expanded">
-                      <div class="select is-small is-fullwidth">
-                        <select name="end_of_week_day">
-                          <% ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].each_with_index do |day, i| %>
-                            <option value="<%= i %>" <%= 'selected' if (@course.end_of_week_day || 0) == i %>><%= day %></option>
-                          <% end %>
-                        </select>
-                      </div>
-                    </div>
-                    <div class="control">
-                      <button type="submit" class="button is-small is-success">Set</button>
-                    </div>
-                  </div>
-                </form>
-              </div>
-
-              <div class="column is-6-mobile is-3-tablet">
-                <form action="/course/<%= @course_id %>/update_color" method="post">
-                  <label class="label is-is-size-7 mb-1">Custom Color</label>
-                  <div class="field has-addons">
-                    <div class="control is-expanded">
-                      <%# Support for hex picker %>
-                      <% 
-                        current_color = @course.custom_color || ""
-                        # Convert hue number back to hex if needed for the color picker
-                        unless current_color.start_with?('#')
-                          hue = current_color.empty? ? ((@course.name[0..6].upcase.strip.chars.map(&:ord).reduce(0, :+) * 137) % 360) : current_color.to_i
-                          # Quick HSL to HEX for UI representation (approximate)
-                          # We'll just display it as a color picker and let the user pick a new one
-                          current_color = "#739AC3" 
-                        end
-                      %>
-                      <input class="input is-small p-0" type="color" name="custom_color" value="<%= current_color %>" style="height: 27px; width: 100%;">
-                    </div>
-                    <div class="control">
-                      <button type="submit" class="button is-small is-link">Update</button>
-                    </div>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
+  <div class="column is-9" id="course-root">
+    <div class="is-flex is-justify-content-center is-align-items-center" style="min-height: 400px;">
+      <div class="has-text-centered">
+        <span class="icon is-large has-text-primary mb-4">
+          <i class="fas fa-circle-notch fa-spin fa-3x"></i>
+        </span>
+        <p class="is-size-5 has-text-grey">Loading Course Content...</p>
       </div>
+    </div>
+  </div>
+</div>
 
-      <% if @overview && ((@overview['Attachments'] && !@overview['Attachments'].empty?) || (@overview['LinkAttachments'] && !@overview['LinkAttachments'].empty?)) %>
-        <div class="box is-light mb-5">
-          <h5 class="subtitle is-5"><span class="icon mr-2"><i class="fas fa-paperclip"></i></span> Additional Overview Attachments</h5>
-          <div class="buttons">
-            <% if @overview['Attachments'] %>
-              <% @overview['Attachments'].each_with_index do |att, idx| %>
-                <% 
-                    # Some APIs return simple strings or hashes
-                    name = att['FileName'] || att['Name'] || "Attachment #{idx+1}"
-                    id = att['Id'] || att['FileId']
-                %>
-                <a href="/course/<%= @course_id %>/download?path=<%= att['Path'] || "/d2l/api/le/1.40/#{@course_id}/overview/attachments/#{id}" %>&name=<%= URI.encode_www_form_component(name) %>" class="button is-small is-outlined is-link">
-                  <span class="icon is-small"><i class="fas fa-file"></i></span>
-                  <span><%= render_markdown_inline(name) %></span>
-                </a>
-              <% end %>
-            <% end %>
+<script>
+  const COURSE_ID = "<%= @course_id %>";
 
-            <% if @overview['LinkAttachments'] %>
-              <% @overview['LinkAttachments'].each do |link| %>
-                <a href="<%= link['Url'] %>" target="_blank" class="button is-small is-outlined is-info">
-                  <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
-                  <span><%= render_markdown_inline(link['Title'] || link['Url']) %></span>
-                </a>
-              <% end %>
-            <% end %>
-          </div>
+  async function loadCourse() {
+    const root = document.getElementById('course-root');
+    try {
+      const response = await fetch(`/api/v1/courses/${COURSE_ID}/summary`);
+      if (!response.ok) throw new Error("Failed to fetch");
+      const data = await response.json();
+      renderCourse(data);
+    } catch (err) {
+      console.error(err);
+      root.innerHTML = `
+        <div class="notification is-danger">
+          <h3 class="title is-5">Error Connection Lost</h3>
+          <p>Failed to load course details. Please ensure the backend is running.</p>
+          <button class="button is-white is-small mt-2" onclick="location.reload()">Retry</button>
         </div>
-      <% end %>
+      `;
+    }
+  }
 
-      <div class="content">
-        <%# --- DESCRIPTION --- %>
-        <% if @overview %>
-          <% 
-              desc = @overview['Description']
-              desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
-          %>
-          <% unless desc_text.strip.empty? %>
+  function renderCourse(data) {
+    const root = document.getElementById('course-root');
+    const { course, overview, syllabus_info, upcoming_assignments, grade_stats, toc } = data;
+
+    let html = `
+      <div class="box">
+        <div class="mb-5">
+            <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
+              <h4 class="title is-4 mb-0">Syllabus / Overview</h4>
+              <div class="buttons">
+                ${(overview && (overview.HasAttachment || overview.Attachment)) ? `
+                  <button class="button is-info is-small" onclick="openPdfViewer('/course/${COURSE_ID}/overview/view', '/course/${COURSE_ID}/overview/download', 'Syllabus')">
+                      <span class="icon is-small mr-1"><i class="fas fa-eye"></i></span>
+                      View Syllabus
+                  </button>
+                  <a href="/course/${COURSE_ID}/overview/download" class="button is-link is-small" target="_blank">
+                      <span class="icon is-small mr-1"><i class="fas fa-file-download"></i></span>
+                      Download 
+                  </a>
+                ` : ''}
+                <a href="/course/${COURSE_ID}/download_all" class="button is-primary is-small">
+                    <span class="icon is-small mr-1"><i class="fas fa-archive"></i></span>
+                    Download Everything (Zip)
+                </a>
+              </div>
+            </div>
+
+            <!-- Course Settings -->
+            ${renderSettings(course)}
+        </div>
+
+        <div class="content">
+          <!-- Description -->
+          ${(overview && overview.description_html) ? `
             <div class="mb-5">
               <details class="section-details">
                 <summary class="is-clickable p-2 has-background-light" style="list-style: none; outline: none; border-radius: 4px;">
@@ -157,154 +82,158 @@
                   </div>
                 </summary>
                 <div class="content p-4 has-background-white border-light">
-                  <%= render_content(desc_text) %>
+                  ${overview.description_html}
                 </div>
               </details>
             </div>
-          <% end %>
-        <% end %>
+          ` : ''}
 
-        <%# --- UPCOMING ASSIGNMENTS (Next 7 Days) --- %>
-        <% if @course_upcoming && !@course_upcoming.empty? %>
-          <div class="mb-5">
-            <details class="section-details" open>
-              <summary class="is-clickable p-2 has-background-warning-light" style="list-style: none; outline: none; border-radius: 4px; border: 1px solid #ffe8cc;">
-                <div class="is-flex is-justify-content-space-between is-align-items-center">
-                  <h5 class="title is-5 mb-0"><i class="fas fa-calendar-day mr-2 has-text-warning-dark"></i> Upcoming Assignments (Next 7 Days)</h5>
-                  <span class="icon is-small has-text-warning-dark">
-                    <i class="fas fa-chevron-down"></i>
-                  </span>
-                </div>
-              </summary>
-              <div class="p-4 has-background-white border-light">
-                <% @course_upcoming.each do |a| %>
-                  <div class="box p-3 mb-2" style="background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.05);">
-                    <div class="is-flex is-justify-content-space-between is-align-items-center">
-                      <div class="is-flex is-align-items-center">
-                        <div class="control mr-3">
-                          <input type="checkbox" class="assignment-checkbox" data-id="<%= a.id %>" onchange="toggleAssignmentInline(this)">
-                        </div>
-                        <strong class="is-size-6"><%= render_markdown_inline(a.name) %></strong>
-                      </div>
-                      <div class="has-text-right">
-                        <p class="has-text-danger is-size-7 mb-1">
-                          Due: <%= format_date(a.due_date, "%A, %b %d at %I:%M %p") %>
-                        </p>
-                        <div class="buttons is-right">
-                          <% if a.synthetic %>
-                            <% 
-                              modal_data = {
-                                name: a.name,
-                                dueDate: a.due_date&.strftime('%Y-%m-%d'),
-                                dueTime: a.due_date&.strftime('%H:%M'),
-                                externalUrl: a.external_url,
-                                description: a.description,
-                                courseId: a.course_id,
-                                brightspaceId: a.brightspace_id
-                              }.to_json
-                            %>
-                            <button class="button is-small is-info is-light" onclick="openEditAssignmentModal(<%= modal_data.gsub('"', '&quot;') %>)" title="Edit Task">
-                              <span class="icon is-small"><i class="fas fa-edit"></i></span>
-                            </button>
-                          <% end %>
-                          <a href="/course/<%= @course_id %>/assignments/<%= a.brightspace_id %>" class="button is-small is-link is-light">View Details</a>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                <% end %>
-              </div>
-            </details>
-          </div>
-        <% end %>
+          <!-- Upcoming Assignments -->
+          ${renderUpcoming(upcoming_assignments)}
 
-        <% if @syllabus_info && (@syllabus_info[:modules].any? || @syllabus_info[:topics].any?) %>
-          <div class="mt-5">
-            <h5 class="title is-5"><span class="icon has-text-primary mr-2"><i class="fas fa-search"></i></span> Items Found in Content</h5>
-            
-            <% @syllabus_info[:modules].each do |mod| %>
-                <div class="box is-light">
-                  <div class="is-flex is-justify-content-space-between is-align-items-center">
-                    <span class="has-text-weight-bold"><%= render_markdown_inline(mod['Title']) %> (Module)</span>
-                    <a href="/course/<%= @course_id %>/module/<%= mod['ModuleId'] %>" class="button is-small is-primary is-outlined">View Module</a>
-                  </div>
-                  <% if mod['Topics'] && !mod['Topics'].empty? %>
-                    <div class="list mt-2">
-                      <% mod['Topics'].each do |topic| %>
-                          <div class="list-item">
-                            <div class="is-flex is-justify-content-space-between is-align-items-center">
-                              <span>
-                                <span class="icon is-small mr-2"><i class="fas fa-file-alt"></i></span>
-                                <% if topic['Url'] %>
-                                  <% 
-                                    full_url = topic['Url']
-                                    if full_url.start_with?("/") 
-                                      full_url = "https://#{$client.host}#{full_url}"
-                                    end
-                                  %>
-                                  <a href="<%= full_url %>" target="_blank"><%= render_markdown_inline(topic['Title']) %></a>
-                                <% else %>
-                                  <%= render_markdown_inline(topic['Title']) %>
-                                <% end %>
-                              </span>
-                              <div class="buttons">
-                                <% if topic['Title'] && topic['Title'].downcase.end_with?('.pdf') %>
-                                  <button class="button is-small is-info is-inverted" onclick="openPdfViewer('/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/view', '/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/download', '<%= topic['Title'].gsub("'","\\\\'") %>')">View</button>
-                                <% end %>
-                                <% if topic['Url'] && topic['Url'].start_with?("/content/enforced/") %>
-                                  <a href="/course/<%= @course_id %>/topic/<%= topic['TopicId'] || topic['Id'] || topic['Identifier'] %>/download" class="button is-small is-link is-inverted">Download</a>
-                                <% end %>
-                              </div>
-                            </div>
-                          </div>
-                      <% end %>
-                    </div>
-                  <% end %>
-                </div>
-            <% end %>
-
-            <% if @syllabus_info[:topics].any? %>
-              <div class="list is-hoverable mt-3">
-                <% @syllabus_info[:topics].each do |topic| %>
-                    <div class="list-item">
-                      <div class="is-flex is-justify-content-space-between is-align-items-center">
-                          <div>
-                            <span class="icon is-small has-text-info mr-2"><i class="fas fa-file-pdf"></i></span>
-                            <span class="has-text-weight-medium">
-                              <% if topic['Url'] %>
-                                <% 
-                                  full_url = topic['Url']
-                                  if full_url.start_with?("/") 
-                                    full_url = "https://#{$client.host}#{full_url}"
-                                  end
-                                %>
-                                <a href="<%= full_url %>" target="_blank"><%= render_markdown_inline(topic['Title']) %></a>
-                              <% else %>
-                                <%= render_markdown_inline(topic['Title']) %>
-                              <% end %>
-                            </span>
-                          </div>
-                          <div class="buttons">
-                            <% if topic['Title'] && topic['Title'].downcase.end_with?('.pdf') %>
-                              <button class="button is-small is-info is-outlined" onclick="openPdfViewer('/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/view', '/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/download', '<%= topic['Title'].gsub("'","\\\\'") %>')">View</button>
-                            <% end %>
-                            <% if topic['Url'] && topic['Url'].start_with?("/content/enforced/") %>
-                              <a href="/course/<%= @course_id %>/topic/<%= topic['Id'] || topic['TopicId'] || topic['Identifier'] %>/download" class="button is-small is-link is-outlined" target="_blank">Download</a>
-                            <% end %>
-                          </div>
-                      </div>
-                    </div>
-                <% end %>
-              </div>
-            <% end %>
-          </div>
-        <% elsif !@overview %>
-          <p class="has-text-grey-light mb-5">No specific "Overview" found and no syllabus-like items detected in course content yet.</p>
-        <% end %>
+          <!-- Syllabus Items Found -->
+          ${renderSyllabusItems(syllabus_info)}
+        </div>
       </div>
-    </div>
-  </div>
-</div>
+    `;
+
+    root.innerHTML = html;
+  }
+
+  function renderSettings(course) {
+    return `
+      <div class="notification is-light py-3 px-4 mb-5" style="border: 1px solid #eee; background: #fafafa;">
+        <p class="is-size-7 uppercase has-text-weight-bold has-text-grey mb-3" style="text-transform: uppercase; letter-spacing: 0.5px;">
+          <i class="fas fa-cog mr-1"></i> Course Settings
+        </p>
+        <div class="columns is-multiline is-mobile">
+          <div class="column is-6-mobile is-3-tablet">
+            <form action="/course/${COURSE_ID}/update_units" method="post">
+              <label class="label is-size-7 mb-1">Units (Credits)</label>
+              <div class="field has-addons">
+                <div class="control is-expanded">
+                  <input class="input is-small" type="number" name="units" value="${course.units || 3}">
+                </div>
+                <div class="control">
+                  <button type="submit" class="button is-small is-primary">Save</button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <div class="column is-6-mobile is-3-tablet">
+            <form action="/course/${COURSE_ID}/update_target_grade" method="post">
+              <label class="label is-size-7 mb-1">Target Grade (%)</label>
+              <div class="field has-addons">
+                <div class="control is-expanded">
+                  <input class="input is-small" type="number" step="0.1" name="target_grade" value="${course.target_grade || 93.0}">
+                </div>
+                <div class="control">
+                  <button type="submit" class="button is-small is-info">Apply</button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <div class="column is-6-mobile is-3-tablet">
+            <form action="/course/${COURSE_ID}/update_end_of_week" method="post">
+              <label class="label is-size-7 mb-1">End of Week</label>
+              <div class="field has-addons">
+                <div class="control is-expanded">
+                  <div class="select is-small is-fullwidth">
+                    <select name="end_of_week_day">
+                      ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day, i) => `
+                        <option value="${i}" ${course.end_of_week_day === i ? 'selected' : ''}>${day}</option>
+                      `).join('')}
+                    </select>
+                  </div>
+                </div>
+                <div class="control">
+                  <button type="submit" class="button is-small is-success">Set</button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <div class="column is-6-mobile is-3-tablet">
+            <form action="/course/${COURSE_ID}/update_color" method="post">
+              <label class="label is-size-7 mb-1">Custom Color</label>
+              <div class="field has-addons">
+                <div class="control is-expanded">
+                  <input class="input is-small p-0" type="color" name="custom_color" value="${course.custom_color || '#739AC3'}" style="height: 27px; width: 100%;">
+                </div>
+                <div class="control">
+                  <button type="submit" class="button is-small is-link">Update</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderUpcoming(assignments) {
+    if (!assignments || assignments.length === 0) return '';
+    return `
+      <div class="mb-5">
+        <details class="section-details" open>
+          <summary class="is-clickable p-2 has-background-warning-light" style="list-style: none; outline: none; border-radius: 4px; border: 1px solid #ffe8cc;">
+            <div class="is-flex is-justify-content-space-between is-align-items-center">
+              <h5 class="title is-5 mb-0"><i class="fas fa-calendar-day mr-2 has-text-warning-dark"></i> Upcoming Assignments (Next 7 Days)</h5>
+              <span class="icon is-small has-text-warning-dark">
+                <i class="fas fa-chevron-down"></i>
+              </span>
+            </div>
+          </summary>
+          <div class="p-4 has-background-white border-light">
+            ${assignments.map(a => `
+              <div class="box p-3 mb-2" style="background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.05); overflow: hidden;">
+                <div class="is-flex is-justify-content-space-between is-align-items-center" style="gap: 15px;">
+                  <div class="is-flex is-align-items-center" style="flex: 1; min-width: 0;">
+                    <div class="control mr-3">
+                      <input type="checkbox" class="assignment-checkbox" data-id="${a.id}" onchange="toggleAssignmentInline(this)">
+                    </div>
+                    <div style="flex: 1; min-width: 0; word-wrap: break-word; overflow-wrap: break-word;">
+                      <strong class="is-size-6">${a.name_html || a.name}</strong>
+                    </div>
+                  </div>
+                  <div class="has-text-right" style="flex-shrink: 0;">
+                    <p class="has-text-danger is-size-7 mb-1">
+                      Due: ${new Date(a.due_date).toLocaleString()}
+                    </p>
+                    <div class="buttons is-right">
+                      <a href="/course/${COURSE_ID}/assignments/${a.brightspace_id}" class="button is-small is-link is-light">View Details</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </details>
+      </div>
+    `;
+  }
+
+  function renderSyllabusItems(syllabus) {
+    if (!syllabus || (!syllabus.modules.length && !syllabus.topics.length)) return '';
+    return `
+      <div class="mt-5">
+        <h5 class="title is-5"><span class="icon has-text-primary mr-2"><i class="fas fa-search"></i></span> Items Found in Content</h5>
+        ${syllabus.modules.map(mod => `
+          <div class="box is-light">
+            <div class="is-flex is-justify-content-space-between is-align-items-center">
+              <span class="has-text-weight-bold">${mod.Title} (Module)</span>
+              <a href="/course/${COURSE_ID}/module/${mod.ModuleId}" class="button is-small is-primary is-outlined">View Module</a>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  document.addEventListener('DOMContentLoaded', () => loadCourse());
+</script>
 
 <style>
   .section-details summary::-webkit-details-marker { display: none; }
@@ -312,26 +241,6 @@
   .section-details summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
   .border-light { border: 1px solid #eee; border-top: none; border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }
 </style>
-
-<script>
-function toggleAssignmentInline(checkbox) {
-  const id = checkbox.getAttribute('data-id');
-  const box = checkbox.closest('.box');
-  
-  fetch(`/assignments/${id}/toggle_complete`, {
-    method: 'POST',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-  })
-  .then(response => response.json())
-  .then(data => {
-    if (data.status === 'ok' && data.completed) {
-      box.style.opacity = '0.5';
-      setTimeout(() => { box.style.display = 'none'; }, 800);
-    }
-  })
-  .catch(err => console.error("Error toggling assignment:", err));
-}
-</script>
 
 <!-- PDF Viewer Modal -->
 <div id="pdfModal" class="modal">
@@ -374,7 +283,23 @@ function closePdfModal() {
   
   modal.classList.remove('is-active');
   document.documentElement.classList.remove('is-clipped');
-  frame.src = ""; // Stop loading/playing
+  frame.src = ""; 
+}
+
+function toggleAssignmentInline(checkbox) {
+  const id = checkbox.getAttribute('data-id');
+  const box = checkbox.closest('.box');
+  
+  fetch(`/assignments/${id}/toggle_complete`, {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.status === 'ok' && data.completed) {
+      box.style.opacity = '0.5';
+      setTimeout(() => { box.style.display = 'none'; }, 800);
+    }
+  });
 }
 </script>
-<%= erb :'partials/edit_assignment_modal' %>

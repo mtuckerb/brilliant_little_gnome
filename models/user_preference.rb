@@ -1,5 +1,6 @@
 class UserPreference < ActiveRecord::Base
   serialize :collapsed_topics, type: Array, coder: JSON
+  serialize :semester_colors, type: Hash, coder: JSON
 
   def self.current
     first_or_create!(
@@ -10,7 +11,15 @@ class UserPreference < ActiveRecord::Base
       historic_gpa: 3.778,
       historic_units: 36,
       api_enabled: false,
-      api_listen_all: false
+      api_listen_all: false,
+      remote_server_enabled: false,
+      remote_server_ip: nil,
+      remote_server_port: 4567,
+      web_access_passcode: nil,
+      show_upcoming_assignments: true,
+      show_course_list: true,
+      show_recent_updates: true,
+      jwt_secret: SecureRandom.hex(32)
     )
   end
 

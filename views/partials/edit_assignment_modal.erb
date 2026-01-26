@@ -43,7 +43,7 @@
 
         <div class="buttons is-right mt-5">
           <button type="button" class="button" onclick="closeEditAssignmentModal()">Cancel</button>
-          <button type="submit" class="button is-primary">Save Changes</button>
+          <button type="button" class="button is-primary" id="save-assignment-btn" onclick="saveAssignmentEdits()">Save Changes</button>
         </div>
       </form>
     </section>
@@ -54,6 +54,7 @@
 function openEditAssignmentModal(data) {
   const modal = document.getElementById('editAssignmentModal');
   const form = document.getElementById('editAssignmentForm');
+  const btn = document.getElementById('save-assignment-btn');
   
   // Populate fields
   document.getElementById('edit-assignment-name').value = data.name || '';
@@ -64,9 +65,35 @@ function openEditAssignmentModal(data) {
   
   // Set form action
   form.action = `/course/${data.courseId}/assignments/${data.brightspaceId}/update`;
+  form.dataset.courseId = data.courseId;
+  form.dataset.id = data.brightspaceId;
   
   modal.classList.add('is-active');
   document.documentElement.classList.add('is-clipped');
+}
+
+async function saveAssignmentEdits() {
+  const form = document.getElementById('editAssignmentForm');
+  const btn = document.getElementById('save-assignment-btn');
+  const formData = new FormData(form);
+  
+  btn.classList.add('is-loading');
+  
+  try {
+    const response = await fetch(form.action, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams(formData)
+    });
+    const data = await response.json();
+    if (data.status === 'ok') {
+      location.reload(); // Refresh to show changes or update DOM
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    btn.classList.remove('is-loading');
+  }
 }
 
 function closeEditAssignmentModal() {

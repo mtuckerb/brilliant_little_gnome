@@ -15,9 +15,14 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      spellcheck: true
     }
   });
+
+  // Set a standard browser User Agent to help with 1Password/Password Manager detection
+  const standardUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+  mainWindow.webContents.setUserAgent(standardUA);
 
   // Load the splash screen immediately
   mainWindow.loadFile(path.join(__dirname, 'public', 'splash.html'));
@@ -121,16 +126,19 @@ function createWindow() {
 
 ipcMain.on('start-login', (event, host) => {
   const loginWindow = new BrowserWindow({
-    width: 600,
-    height: 800,
-    parent: mainWindow,
-    modal: true,
-    title: "Brilliant Login",
+    width: 800,
+    height: 900,
+    title: "Brilliant | Sign In to " + host,
     webPreferences: {
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      spellcheck: true
     }
   });
+
+  // Set a standard browser User Agent to help with 1Password/Password Manager detection
+  const standardUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+  loginWindow.webContents.setUserAgent(standardUA);
 
   loginWindow.loadURL(`https://${host}/d2l/lp/auth/login/login.d2l`);
 

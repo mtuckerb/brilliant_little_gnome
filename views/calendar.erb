@@ -1,244 +1,72 @@
-<div class="calendar-container">
+<div id="calendar-root">
   <div class="calendar-header-box mb-5">
     <div class="level">
       <div class="level-left">
         <div>
           <h1 class="title is-3 is-spaced mb-1">
             <span class="icon mr-2"><i class="fas fa-calendar-alt"></i></span>
-            <%= @view == 'month' ? "Month Grid" : "Multi-Week List" %>
+            <span id="view-title">Multi-Week List</span>
           </h1>
-          <p class="subtitle is-6 has-text-grey ml-1">
-            <%= @start_date.strftime("%b %d") %> - <%= @end_date.strftime("%b %d, %Y") %>
+          <p class="subtitle is-6 has-text-grey ml-1" id="date-range-display">
+            Loading...
           </p>
         </div>
       </div>
       <div class="level-right">
         <div class="mr-4">
-          <a href="/calendar?view=<%= @view %>&date=<%= @date.strftime("%Y-%m-%d") %>&show_completed=<%= !@show_completed %>" class="button is-small <%= @show_completed ? 'is-info' : 'is-white' %>">
+          <button id="toggle-completed-btn" onclick="toggleCompletedFilter()" class="button is-small is-white">
             <span class="icon is-small mr-1">
-              <i class="<%= @show_completed ? 'fas fa-eye' : 'fas fa-eye-slash' %>"></i>
+              <i class="fas fa-eye-slash" id="completed-icon"></i>
             </span>
-            <span><%= @show_completed ? "Hide Completed" : "Show Completed" %></span>
-          </a>
+            <span id="completed-text">Show Completed</span>
+          </button>
         </div>
 
         <div class="field has-addons mr-4">
           <p class="control">
-            <a href="/calendar?view=month&date=<%= @date.strftime("%Y-%m-%d") %>&show_completed=<%= @show_completed %>" class="button is-small <%= 'is-primary' if @view == 'month' %>">
-              Month
-            </a>
+            <button onclick="setView('month')" id="month-view-btn" class="button is-small">Month</button>
           </p>
           <p class="control">
-            <a href="/calendar?view=week&date=<%= @date.strftime("%Y-%m-%d") %>&show_completed=<%= @show_completed %>" class="button is-small <%= 'is-primary' if @view == 'week' %>">
-              Week
-            </a>
+            <button onclick="setView('week')" id="week-view-btn" class="button is-small">Week</button>
           </p>
         </div>
 
         <div class="field has-addons">
-          <% 
-            offset_params = "&weeks_before=#{@weeks_before}&weeks_after=#{@weeks_after}"
-            sc_param = "&show_completed=#{@show_completed}#{offset_params}"
-            prev_week = (@date - 1.week).strftime("%Y-%m-%d")
-            prev_day = (@date - 1.day).strftime("%Y-%m-%d")
-            next_day = (@date + 1.day).strftime("%Y-%m-%d")
-            next_week = (@date + 1.week).strftime("%Y-%m-%d")
-          %>
           <p class="control">
-            <a href="/calendar?view=<%= @view %>&date=<%= prev_week %><%= sc_param %>" class="button is-white" title="Previous Week">
+            <button onclick="navigate('prev-week')" class="button is-white" title="Previous Week">
               <span class="icon"><i class="fas fa-angle-double-left"></i></span>
-            </a>
+            </button>
           </p>
           <p class="control">
-            <a href="/calendar?view=<%= @view %>&date=<%= prev_day %><%= sc_param %>" class="button is-white" title="Previous Day">
+            <button onclick="navigate('prev-day')" class="button is-white" title="Previous Day">
               <span class="icon"><i class="fas fa-angle-left"></i></span>
-            </a>
+            </button>
           </p>
           <p class="control">
-            <a href="/calendar?view=<%= @view %>&date=<%= Time.zone.today.strftime("%Y-%m-%d") %><%= sc_param %>" class="button is-white">Today</a>
+            <button onclick="navigate('today')" class="button is-white">Today</button>
           </p>
           <p class="control">
-            <a href="/calendar?view=<%= @view %>&date=<%= next_day %><%= sc_param %>" class="button is-white" title="Next Day">
+            <button onclick="navigate('next-day')" class="button is-white" title="Next Day">
               <span class="icon"><i class="fas fa-angle-right"></i></span>
-            </a>
+            </button>
           </p>
           <p class="control">
-            <a href="/calendar?view=<%= @view %>&date=<%= next_week %><%= sc_param %>" class="button is-white" title="Next Week">
+            <button onclick="navigate('next-week')" class="button is-white" title="Next Week">
               <span class="icon"><i class="fas fa-angle-double-right"></i></span>
-            </a>
+            </button>
           </p>
         </div>
       </div>
     </div>
   </div>
 
-  <% if @view == 'month' %>
-    <!-- CALENDAR MONTH VIEW (GRID) -->
-    <div class="calendar-grid">
-      <% ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].each do |day_name| %>
-        <div class="day-header"><%= day_name %></div>
-      <% end %>
-
-      <% (@start_date..@end_date).each do |day| %>
-        <% 
-          is_today = (day == Time.zone.today)
-          date_key = day.to_s
-          items = @items_by_date[date_key] || []
-        %>
-        <div class="calendar-day <%= 'is-today' if is_today %>">
-          <div class="level is-mobile mb-1">
-            <div class="level-left">
-              <span class="is-size-7 has-text-grey-light font-weight-bold mr-1"><%= day.strftime("%a") %></span>
-              <div class="day-number <%= 'has-text-primary has-text-weight-bold' if is_today %>"><%= day.day %></div>
-            </div>
-            <% if day == @start_date || day.day == 1 %>
-              <div class="level-right">
-                <span class="tag is-light is-size-7"><%= day.strftime("%b") %></span>
-              </div>
-            <% end %>
-          </div>
-          <div class="day-content" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="<%= date_key %>">
-            <% items.sort_by { |i| [i[:optional] ? 1 : 0, i[:time]] }.each do |item| %>
-                <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" 
-                     data-type="<%= item[:type] %>" 
-                     data-db-id="<%= item[:db_id] %>" 
-                     data-id="<%= item[:id] %>" 
-                     data-name="<%= item[:name] %>" 
-                     data-course-id="<%= item[:course_id] %>"
-                     data-synthetic="<%= item[:synthetic] %>"
-                     data-description="<%= item[:description] %>"
-                     data-external-url="<%= item[:external_url] %>"
-                     data-date="<%= item[:time].strftime("%Y-%m-%d") %>" 
-                     data-full-date="<%= item[:time].iso8601 %>">
-                <% if item[:type] == 'assignment' %>
-                  <button class="button is-ghost is-small toggle-complete-btn p-0 mr-1" onclick="toggleComplete('<%= item[:db_id] %>', event)">
-                    <span class="icon is-small">
-                      <i class="<%= item[:completed] ? 'fas fa-check-circle has-text-success' : 'far fa-circle has-text-grey-light' %>"></i>
-                    </span>
-                  </button>
-                <% end %>
-                <div class="calendar-item <%= item[:type] %> <%= 'is-completed' if item[:completed] %> <%= 'is-optional' if item[:optional] %>" 
-                     onmouseenter="handleItemHover(this)"
-                     data-db-id="<%= item[:db_id] %>" 
-                     data-type="<%= item[:type] %>" 
-                     data-item-id="<%= item[:id] %>" 
-                     data-course-id="<%= item[:course_id] %>">
-                  <% if @view != 'month' %>
-                    <span class="item-time"><%= item[:time].in_time_zone(@user_prefs.time_zone).strftime("%I:%M %p") %></span>
-                  <% end %>
-                  <% if item[:course_name] %>
-                    <a href="/course/<%= item[:course_id] %>" class="has-text-weight-bold mr-1 px-1 course-pill-link" style="border-radius: 3px; font-size: 0.7rem; display: inline-block; <%= course_pill_style(item[:course_name]) %>" onclick="event.stopPropagation();"><%= item[:course_name][0..6] %></a>
-                  <% end %>
-                  <a href="<%= item[:url] %>" class="item-name has-text-dark" style="text-decoration: none;"><%= render_markdown_inline(item[:name]) %></a>
-                  
-                  <% if @view == 'month' %>
-                  <div class="calendar-hover-card">
-                    <div class="hover-card-content">
-                      <p class="has-text-weight-bold mb-1"><%= render_markdown_inline(item[:name]) %></p>
-                      <div class="is-size-7 has-text-grey mb-2">
-                        <span><i class="far fa-clock mr-1"></i><%= item[:time].in_time_zone(@user_prefs.time_zone).strftime("%I:%M %p") %></span>
-                        <% if item[:course_name] %>
-                          <span class="ml-2"><i class="fas fa-university mr-1"></i><%= item[:course_name] %></span>
-                        <% end %>
-                      </div>
-                      <div class="hover-details content is-size-7">
-                        <p class="has-text-grey-light">Loading details...</p>
-                      </div>
-                    </div>
-                  </div>
-                  <% end %>
-                </div>
-                <button class="button is-ghost is-small edit-date-btn p-1" onclick="openDateModal(this, event)">
-                  <span class="icon is-small"><i class="fas fa-edit"></i></span>
-                </button>
-              </div>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
+  <div id="calendar-view-container">
+    <div class="has-text-centered py-6">
+       <span class="icon is-large has-text-grey-light">
+          <i class="fas fa-spinner fa-pulse fa-2x"></i>
+       </span>
     </div>
-  <% else %>
-    <!-- ROLLING WEEK VIEW (LIST) -->
-    <div class="week-list">
-      <div class="extend-view-row p-2 has-background-white-bis" style="border-bottom: 1px solid #eee;">
-        <a href="/calendar?view=week&date=<%= @date.strftime("%Y-%m-%d") %>&weeks_before=<%= @weeks_before + 1 %>&weeks_after=<%= @weeks_after %>&show_completed=<%= @show_completed %>" class="button is-ghost is-fullwidth is-small has-text-grey">
-          <span class="icon"><i class="fas fa-plus-circle"></i></span>
-          <span>Extend View (Earlier)</span>
-        </a>
-      </div>
-      <% (@start_date..@end_date).each do |day| %>
-        <% 
-          is_today = (day == Time.zone.today)
-          date_key = day.to_s
-          items = @items_by_date[date_key] || []
-        %>
-        <div class="week-row <%= 'is-today' if is_today %>">
-          <div class="week-date-column">
-            <div class="week-day-name"><%= day.strftime("%A") %></div>
-            <div class="week-day-number <%= 'has-text-primary' if is_today %>"><%= day.strftime("%b %d") %></div>
-          </div>
-          <div class="week-items-column" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="<%= date_key %>">
-            <% if items.empty? %>
-              <div class="has-text-grey-light is-size-7 mt-2 no-items-msg">No items due.</div>
-            <% end %>
-            <div class="week-items-grid">
-                <% items.sort_by { |i| [i[:optional] ? 1 : 0, i[:time]] }.each do |item| %>
-                  <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" 
-                       data-type="<%= item[:type] %>" 
-                       data-db-id="<%= item[:db_id] %>" 
-                       data-id="<%= item[:id] %>" 
-                       data-name="<%= item[:name] %>" 
-                       data-course-id="<%= item[:course_id] %>"
-                       data-synthetic="<%= item[:synthetic] %>"
-                       data-description="<%= item[:description] %>"
-                       data-external-url="<%= item[:external_url] %>"
-                       data-date="<%= item[:time].strftime("%Y-%m-%d") %>" 
-                       data-full-date="<%= item[:time].iso8601 %>">
-                    <% if item[:type] == 'assignment' %>
-                      <button class="button is-ghost is-small toggle-complete-btn p-0 mr-2" onclick="toggleComplete('<%= item[:db_id] %>', event)">
-                        <span class="icon">
-                          <i class="<%= item[:completed] ? 'fas fa-check-circle fa-lg has-text-success' : 'far fa-circle fa-lg has-text-grey-light' %>"></i>
-                        </span>
-                      </button>
-                    <% end %>
-                    <div class="calendar-item is-large <%= item[:type] %> <%= 'is-completed' if item[:completed] %> <%= 'is-optional' if item[:optional] %>">
-                      <div class="level is-mobile mb-0">
-                        <div class="level-left" style="flex-shrink: 1; overflow: hidden;">
-                          <span class="tag is-white is-rounded mr-2"><%= item[:time].in_time_zone(@user_prefs.time_zone).strftime("%I:%M %p") %></span>
-                          <% if item[:course_name] %>
-                            <a href="/course/<%= item[:course_id] %>" class="tag mr-2 has-text-weight-bold" style="<%= course_pill_style(item[:course_name]) %>" onclick="event.stopPropagation();"><%= item[:course_name][0..6] %></a>
-                          <% end %>
-                          <a href="<%= item[:url] %>" class="item-name-full has-text-dark" style="text-decoration: none;"><%= render_markdown_inline(item[:name]) %></a>
-                        </div>
-                        <div class="level-right">
-                          <button class="button is-ghost is-small p-0 ml-4" onclick="expandItem('<%= item[:db_id] %>', event)">
-                            <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
-                          </button>
-                        </div>
-                      </div>
-                      <div id="expand-<%= item[:db_id] %>" class="item-details is-hidden mt-2 pt-2" style="border-top: 1px solid rgba(0,0,0,0.05);">
-                        <div class="content is-size-7" id="content-<%= item[:db_id] %>">
-                           <p>Loading details...</p>
-                        </div>
-                      </div>
-                    </div>
-                    <button class="button is-ghost is-small edit-date-btn p-1 ml-2" onclick="openDateModal(this, event)">
-                      <span class="icon is-small"><i class="fas fa-edit"></i></span>
-                    </button>
-                  </div>
-                <% end %>
-              </div>
-          </div>
-        </div>
-      <% end %>
-      <div class="extend-view-row p-2 has-background-white-bis" style="border-top: 1px solid #eee;">
-        <a href="/calendar?view=week&date=<%= @date.strftime("%Y-%m-%d") %>&weeks_before=<%= @weeks_before %>&weeks_after=<%= @weeks_after + 1 %>&show_completed=<%= @show_completed %>" class="button is-ghost is-fullwidth is-small has-text-grey">
-          <span class="icon"><i class="fas fa-plus-circle"></i></span>
-          <span>Extend View (Later)</span>
-        </a>
-      </div>
-    </div>
-  <% end %>
+  </div>
 </div>
 
 <!-- DATE PICKER MODAL -->
@@ -272,539 +100,347 @@
 </div>
 
 <script>
-  function openDateModal(btn, event) {
-    event.preventDefault();
+  let state = {
+    view: '<%= params[:view] || "week" %>',
+    date: '<%= params[:date] || Time.zone.today.strftime("%Y-%m-%d") %>',
+    show_completed: <%= params[:show_completed] == 'true' ? 'true' : 'false' %>,
+    weeks_before: <%= (params[:weeks_before] || 0).to_i %>,
+    weeks_after: <%= (params[:weeks_after] || 1).to_i %>,
+    data: null
+  };
+
+  async function loadCalendar() {
+    const params = new URLSearchParams({
+      view: state.view,
+      date: state.date,
+      show_completed: state.show_completed,
+      weeks_before: state.weeks_before,
+      weeks_after: state.weeks_after
+    });
+
+    const container = document.getElementById('calendar-view-container');
+    container.style.opacity = '0.5';
+
+    try {
+      const resp = await fetch(`/api/v1/calendar?${params.toString()}`);
+      state.data = await resp.json();
+      renderCalendar();
+      updateHeader();
+    } catch (err) {
+      console.error(err);
+      container.innerHTML = `<div class="notification is-danger">Failed to load calendar.</div>`;
+    } finally {
+      container.style.opacity = '1';
+    }
+  }
+
+  function updateHeader() {
+    const startObj = new Date(state.data.start_date);
+    const endObj = new Date(state.data.end_date);
+    
+    const rangeStr = `${startObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${endObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    document.getElementById('date-range-display').innerText = rangeStr;
+    document.getElementById('view-title').innerText = state.view === 'month' ? "Month Grid" : "Multi-Week List";
+
+    document.getElementById('month-view-btn').classList.toggle('is-primary', state.view === 'month');
+    document.getElementById('week-view-btn').classList.toggle('is-primary', state.view === 'week');
+
+    document.getElementById('toggle-completed-btn').classList.toggle('is-info', state.show_completed);
+    document.getElementById('completed-icon').className = state.show_completed ? 'fas fa-eye' : 'fas fa-eye-slash';
+    document.getElementById('completed-text').innerText = state.show_completed ? "Hide Completed" : "Show Completed";
+  }
+
+  function renderCalendar() {
+    const container = document.getElementById('calendar-view-container');
+    if (state.view === 'month') {
+      renderMonthView(container);
+    } else {
+      renderWeekView(container);
+    }
+  }
+
+  function renderMonthView(container) {
+    let html = `<div class="calendar-grid">`;
+    ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].forEach(d => {
+      html += `<div class="day-header">${d}</div>`;
+    });
+
+    const sortedDates = Object.keys(state.data.items_by_date).sort();
+    sortedDates.forEach(dateStr => {
+      const items = state.data.items_by_date[dateStr];
+      const dayObj = new Date(dateStr + "T00:00:00");
+      const isToday = dateStr === state.data.today;
+
+      html += `
+        <div class="calendar-day ${isToday ? 'is-today' : ''}">
+          <div class="level is-mobile mb-1">
+            <div class="level-left">
+              <span class="is-size-7 has-text-grey-light font-weight-bold mr-1">${dayObj.toLocaleDateString(undefined, {weekday: 'short'})}</span>
+              <div class="day-number ${isToday ? 'has-text-primary has-text-weight-bold' : ''}">${dayObj.getDate()}</div>
+            </div>
+            ${dayObj.getDate() === 1 ? `<div class="level-right"><span class="tag is-light is-size-7">${dayObj.toLocaleDateString(undefined, {month: 'short'})}</span></div>` : ''}
+          </div>
+          <div class="day-content" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="${dateStr}">
+            ${items.map(item => renderCalendarItem(item, 'tiny')).join('')}
+          </div>
+        </div>
+      `;
+    });
+    html += `</div>`;
+    container.innerHTML = html;
+  }
+
+  function renderWeekView(container) {
+    let html = `<div class="week-list">`;
+    html += `
+      <div class="extend-view-row p-2 has-background-white-bis" style="border-bottom: 1px solid #eee;">
+        <button onclick="extend('before')" class="button is-ghost is-fullwidth is-small has-text-grey">
+          <span class="icon"><i class="fas fa-plus-circle"></i></span>
+          <span>Extend View (Earlier)</span>
+        </button>
+      </div>
+    `;
+
+    const sortedDates = Object.keys(state.data.items_by_date).sort();
+    sortedDates.forEach(dateStr => {
+      const items = state.data.items_by_date[dateStr];
+      const dayObj = new Date(dateStr + "T00:00:00");
+      const isToday = dateStr === state.data.today;
+
+      html += `
+        <div class="week-row ${isToday ? 'is-today' : ''}">
+          <div class="week-date-column">
+            <div class="week-day-name">${dayObj.toLocaleDateString(undefined, {weekday: 'long'})}</div>
+            <div class="week-day-number ${isToday ? 'has-text-primary' : ''}">${dayObj.toLocaleDateString(undefined, {month: 'short', day: '2-digit'})}</div>
+          </div>
+          <div class="week-items-column" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="${dateStr}">
+            ${items.length === 0 ? `<div class="has-text-grey-light is-size-7 mt-2 no-items-msg">No items due.</div>` : ''}
+            <div class="week-items-grid">
+               ${items.map(item => renderCalendarItem(item, 'large')).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `
+      <div class="extend-view-row p-2 has-background-white-bis" style="border-top: 1px solid #eee;">
+        <button onclick="extend('after')" class="button is-ghost is-fullwidth is-small has-text-grey">
+          <span class="icon"><i class="fas fa-plus-circle"></i></span>
+          <span>Extend View (Later)</span>
+        </button>
+      </div>
+    </div>`;
+    container.innerHTML = html;
+  }
+
+  function renderCalendarItem(item, size) {
+    const isCompleted = item.completed;
+    const isOptional = item.optional;
+    const typeClass = item.type;
+    const compClass = isCompleted ? 'is-completed' : '';
+    const optClass = isOptional ? 'is-optional' : '';
+    
+    if (size === 'tiny') {
+        return `
+          <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" 
+               data-type="${item.type}" data-id="${item.id}" data-db-id="${item.db_id}" data-name="${item.name}" 
+               data-date="${item.date}" data-full-date="${item.time}">
+            ${item.type === 'assignment' ? `
+              <button class="button is-ghost is-small toggle-complete-btn p-0 mr-1" onclick="toggleComplete('${item.db_id}', event)">
+                <span class="icon is-small">
+                  <i class="${isCompleted ? 'fas fa-check-circle has-text-success' : 'far fa-circle has-text-grey-light'}"></i>
+                </span>
+              </button>` : ''}
+            <div class="calendar-item ${typeClass} ${compClass} ${optClass}" onmouseenter="handleItemHover(this)" 
+                 data-db-id="${item.db_id}" data-type="${item.type}" data-item-id="${item.id}" data-course-id="${item.course_id}">
+              <a href="${item.url}" class="item-name has-text-dark" style="text-decoration: none;">${item.name_html}</a>
+            </div>
+            <button class="button is-ghost is-small edit-date-btn p-1" onclick="openDateModalSPA(this, event)">
+              <span class="icon is-small"><i class="fas fa-edit"></i></span>
+            </button>
+          </div>
+        `;
+    }
+
+    return `
+      <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" 
+           data-type="${item.type}" data-id="${item.id}" data-db-id="${item.db_id}" data-name="${item.name}" 
+           data-date="${item.date}" data-full-date="${item.time}">
+        ${item.type === 'assignment' ? `
+          <button class="button is-ghost is-small toggle-complete-btn p-0 mr-2" onclick="toggleComplete('${item.db_id}', event)">
+            <span class="icon">
+              <i class="${isCompleted ? 'fas fa-check-circle fa-lg has-text-success' : 'far fa-circle fa-lg has-text-grey-light'}"></i>
+            </span>
+          </button>` : ''}
+        <div class="calendar-item is-large ${typeClass} ${compClass} ${optClass}" style="${item.pill_style || ''}">
+          <div class="level is-mobile mb-0">
+            <div class="level-left" style="flex-shrink: 1; overflow: hidden;">
+              <span class="tag is-white is-rounded mr-2">${item.time_display}</span>
+              ${item.course_prefix ? `<span class="tag mr-2 has-text-weight-bold" style="background:rgba(0,0,0,0.05)">${item.course_prefix}</span>` : ''}
+              <a href="${item.url}" class="item-name-full has-text-dark" style="text-decoration: none;">${item.name_html}</a>
+            </div>
+            <div class="level-right">
+              <button class="button is-ghost is-small p-0 ml-4" onclick="expandItemSPA('${item.db_id}', event)">
+                <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
+              </button>
+            </div>
+          </div>
+          <div id="expand-${item.db_id}" class="item-details is-hidden mt-2 pt-2" style="border-top: 1px solid rgba(0,0,0,0.05);">
+            <div class="content is-size-7" id="content-${item.db_id}">
+               <p>Loading details...</p>
+            </div>
+          </div>
+        </div>
+        <button class="button is-ghost is-small edit-date-btn p-1 ml-2" onclick="openDateModalSPA(this, event)">
+          <span class="icon is-small"><i class="fas fa-edit"></i></span>
+        </button>
+      </div>
+    `;
+  }
+
+  // Action Helpers
+  function setView(v) { state.view = v; loadCalendar(); }
+  function toggleCompletedFilter() { state.show_completed = !state.show_completed; loadCalendar(); }
+  function extend(dir) {
+    if (dir === 'before') state.weeks_before++;
+    else state.weeks_after++;
+    loadCalendar();
+  }
+  function navigate(dir) {
+    const d = new Date(state.date + "T12:00:00");
+    if (dir === 'prev-week') d.setDate(d.getDate() - 7);
+    else if (dir === 'prev-day') d.setDate(d.getDate() - 1);
+    else if (dir === 'next-day') d.setDate(d.getDate() + 1);
+    else if (dir === 'next-week') d.setDate(d.getDate() + 7);
+    else if (dir === 'today') {
+        state.date = state.data.today;
+        loadCalendar();
+        return;
+    }
+    state.date = d.toISOString().split('T')[0];
+    loadCalendar();
+  }
+
+  async function toggleComplete(dbId, event) {
     event.stopPropagation();
-    
-    const wrapper = btn.closest('.calendar-item-wrapper');
-    const type = wrapper.dataset.type;
-    const isSynthetic = wrapper.dataset.synthetic === 'true';
-    
-    if (type === 'assignment' && isSynthetic) {
-      const fullDate = wrapper.dataset.fullDate || wrapper.dataset.date;
-      const data = {
-        name: wrapper.dataset.name,
-        dueDate: wrapper.dataset.date,
-        dueTime: fullDate.includes('T') ? fullDate.split('T')[1].substring(0, 5) : '23:59',
-        externalUrl: wrapper.dataset.externalUrl,
-        description: wrapper.dataset.description,
-        courseId: wrapper.dataset.courseId,
-        brightspaceId: wrapper.dataset.id
-      };
-      openEditAssignmentModal(data);
-      return;
-    }
-
-    const id = wrapper.dataset.id;
-    const name = wrapper.dataset.name;
-    const fullDate = wrapper.dataset.fullDate || wrapper.dataset.date;
-    
-    // Split date and time if available
-    let datePart = fullDate;
-    let timePart = "23:59";
-    
-    if (fullDate.includes('T')) {
-      const parts = fullDate.split('T');
-      datePart = parts[0];
-      timePart = parts[1].substring(0, 5); // HH:MM
-    }
-    
-    document.getElementById('modal-item-name').innerText = name;
-    document.getElementById('modal-due-date').value = datePart;
-    document.getElementById('modal-due-time').value = timePart;
-    document.getElementById('modal-item-type').value = type;
-    document.getElementById('modal-item-id').value = id;
-    
-    document.getElementById('date-modal').classList.add('is-active');
-  }
-  
-  function closeDateModal() {
-    document.getElementById('date-modal').classList.remove('is-active');
-  }
-  
-  function saveDate() {
-    const type = document.getElementById('modal-item-type').value;
-    const id = document.getElementById('modal-item-id').value;
-    const date = document.getElementById('modal-due-date').value;
-    const time = document.getElementById('modal-due-time').value;
-    
-    const fullDateTime = time ? `${date}T${time}` : date;
-    updateItemDate(type, id, fullDateTime);
+    try {
+      const resp = await fetch(`/assignments/${dbId}/toggle_complete`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      const data = await resp.json();
+      if (data.status === 'ok') loadCalendar();
+    } catch (err) { console.error(err); }
   }
 
-  function toggleComplete(assignmentId, event) {
-    if (event) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    
-    fetch(`/assignments/${assignmentId}/toggle_complete`, {
-      method: 'POST',
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest'
-      }
-    })
-    .then(response => response.json())
-    .then(data => {
-      if (data.status === 'ok') {
-        window.location.reload();
-      }
-    })
-    .catch(error => {
-      console.error('Error toggling completion:', error);
-    });
-  }
-
-  function updateItemDate(type, id, newDate) {
-    fetch('/calendar/update_due_date', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: `type=${type}&id=${id}&due_date=${newDate}`
-    })
-    .then(response => response.json())
-    .then(data => {
-      if (data.status === 'ok') {
-        window.location.reload();
-      } else {
-        alert('Error: ' + (data.message || 'Unknown error'));
-      }
-    })
-    .catch(error => {
-      console.error('Error:', error);
-      alert('Error updating date');
-    });
-  }
-
-  function expandItem(dbId, event) {
-    if (event) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    
+  function expandItemSPA(dbId, event) {
+    event.stopPropagation();
     const detailsDiv = document.getElementById(`expand-${dbId}`);
     const icon = event.currentTarget.querySelector('.toggle-icon');
     
     if (!detailsDiv.classList.contains('is-hidden')) {
       detailsDiv.classList.add('is-hidden');
-      icon.classList.remove('fa-chevron-down');
-      icon.classList.add('fa-chevron-right');
+      icon.classList.replace('fa-chevron-down', 'fa-chevron-right');
       return;
     }
     
-    // Show and change icon
     detailsDiv.classList.remove('is-hidden');
-    icon.classList.remove('fa-chevron-right');
-    icon.classList.add('fa-chevron-down');
+    icon.classList.replace('fa-chevron-right', 'fa-chevron-down');
     
-    // Fetch if needed
     if (detailsDiv.dataset.loaded !== 'true') {
       const wrapper = detailsDiv.closest('.calendar-item-wrapper');
-      const type = wrapper.dataset.type;
-      const itemId = wrapper.dataset.id;
-      // Robustly find the course link (can be .course-pill-link or .tag)
-      const courseLink = wrapper.querySelector('a[href^="/course/"]');
-      const courseId = courseLink?.href.split('/').pop();
-
-      fetch(`/api/v1/item_details?type=${type}&id=${itemId}&course_id=${courseId}`)
+      const { type, id } = wrapper.dataset;
+      const course_id = wrapper.dataset.courseId;
+      
+      fetch(`/api/v1/item_details?type=${type}&id=${id}&course_id=${course_id}`)
         .then(r => r.json())
         .then(data => {
-          detailsDiv.querySelector('.content').innerHTML = data.html || '<p class="has-text-grey">No description available.</p>';
-          detailsDiv.dataset.loaded = 'true';
-        })
-        .catch(err => {
-          detailsDiv.querySelector('.content').innerHTML = '<p class="has-text-danger">Error loading details.</p>';
+            detailsDiv.querySelector('.content').innerHTML = data.html || '<p class="has-text-grey">No description.</p>';
+            detailsDiv.dataset.loaded = 'true';
         });
     }
   }
 
-  // --- Drag and Drop Handlers ---
+  function openDateModalSPA(btn, event) {
+    event.stopPropagation();
+    const wrapper = btn.closest('.calendar-item-wrapper');
+    const { type, id, name, date, fullDate } = wrapper.dataset;
+    
+    document.getElementById('modal-item-name').innerText = name;
+    document.getElementById('modal-due-date').value = date;
+    document.getElementById('modal-due-time').value = fullDate.includes('T') ? fullDate.split('T')[1].substring(0,5) : '23:59';
+    document.getElementById('modal-item-type').value = type;
+    document.getElementById('modal-item-id').value = id;
+    document.getElementById('date-modal').classList.add('is-active');
+  }
+
+  function closeDateModal() { document.getElementById('date-modal').classList.remove('is-active'); }
+
+  async function saveDate() {
+    const type = document.getElementById('modal-item-type').value;
+    const id = document.getElementById('modal-item-id').value;
+    const date = document.getElementById('modal-due-date').value;
+    const time = document.getElementById('modal-due-time').value;
+    
+    try {
+      const resp = await fetch('/calendar/update_due_date', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+        body: `type=${type}&id=${id}&due_date=${date}T${time}`
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') { closeDateModal(); loadCalendar(); }
+    } catch (err) { console.error(err); }
+  }
+
+  // Drag & Drop
   function handleDragStart(event) {
     const wrapper = event.target.closest('.calendar-item-wrapper');
-    const data = {
-      type: wrapper.dataset.type,
-      id: wrapper.dataset.id,
-      name: wrapper.dataset.name,
-      originalDate: wrapper.dataset.date
-    };
+    const data = { type: wrapper.dataset.type, id: wrapper.dataset.id, originalDate: wrapper.dataset.date };
     event.dataTransfer.setData('application/json', JSON.stringify(data));
-    event.dataTransfer.effectAllowed = 'move';
-    
-    // Slight delay to allow the drag image to be created before we change opacity
     setTimeout(() => wrapper.style.opacity = '0.4', 0);
   }
-
-  document.addEventListener('dragend', (event) => {
-    const wrapper = event.target.closest('.calendar-item-wrapper');
-    if (wrapper) wrapper.style.opacity = '1';
-  });
-
-  function handleDragOver(event) {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    const container = event.target.closest('.day-content, .week-items-column');
-    if (container) container.classList.add('drag-over');
-  }
-
-  function handleDragLeave(event) {
-    const container = event.target.closest('.day-content, .week-items-column');
-    if (container) container.classList.remove('drag-over');
-  }
-
-  function handleDrop(event) {
-    event.preventDefault();
-    const container = event.target.closest('.day-content, .week-items-column');
-    if (container) container.classList.remove('drag-over');
-
+  document.addEventListener('dragend', e => { e.target.closest('.calendar-item-wrapper').style.opacity = '1'; });
+  function handleDragOver(e) { e.preventDefault(); e.target.closest('[data-date]').classList.add('drag-over'); }
+  function handleDragLeave(e) { e.target.closest('[data-date]').classList.remove('drag-over'); }
+  async function handleDrop(e) {
+    e.preventDefault();
+    const container = e.target.closest('[data-date]');
+    container.classList.remove('drag-over');
     const newDate = container.dataset.date;
-    try {
-      const data = JSON.parse(event.dataTransfer.getData('application/json'));
-      if (data.originalDate !== newDate) {
-        updateItemDate(data.type, data.id, newDate);
-      }
-    } catch (e) {
-      console.error('Drop error:', e);
+    const data = JSON.parse(e.dataTransfer.getData('application/json'));
+    if (data.originalDate !== newDate) {
+        try {
+          await fetch('/calendar/update_due_date', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+            body: `type=${data.type}&id=${data.id}&due_date=${newDate}`
+          });
+          loadCalendar();
+        } catch(err) {}
     }
   }
 
-  function handleItemHover(el) {
-    const detailsDiv = el.querySelector('.hover-details');
-    if (!detailsDiv || detailsDiv.dataset.loaded === 'true') return;
-    
-    // Check if we already started loading (to avoid multiple requests)
-    if (detailsDiv.dataset.loading === 'true') return;
-    detailsDiv.dataset.loading = 'true';
-
-    const type = el.dataset.type;
-    const itemId = el.dataset.itemId;
-    const courseId = el.dataset.courseId;
-
-    fetch(`/api/v1/item_details?type=${type}&id=${itemId}&course_id=${courseId}`)
-      .then(r => r.json())
-      .then(data => {
-        detailsDiv.innerHTML = data.html || '<p class="has-text-grey">No description available.</p>';
-        detailsDiv.dataset.loaded = 'true';
-        detailsDiv.dataset.loading = 'false';
-      })
-      .catch(err => {
-        detailsDiv.innerHTML = '<p class="has-text-danger">Error loading details.</p>';
-        detailsDiv.dataset.loading = 'false';
-      });
-  }
+  document.addEventListener('DOMContentLoaded', loadCalendar);
 </script>
 
 <style>
-  /* Hover Card Popup Styles */
-  .calendar-hover-card {
-    display: none;
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    z-index: 1000;
-    width: 260px;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-    padding: 15px;
-    margin-bottom: 10px;
-    white-space: normal;
-    pointer-events: none;
-    border: 1px solid #eee;
-    color: #4a4a4a;
-    text-align: left;
-  }
-
-  .calendar-item:hover .calendar-hover-card {
-    display: block;
-  }
-
-  /* Triangle for the popup */
-  .calendar-hover-card::after {
-    content: "";
-    position: absolute;
-    top: 100%;
-    left: 20px;
-    border-width: 8px;
-    border-style: solid;
-    border-color: white transparent transparent transparent;
-  }
-
-  .hover-details {
-    max-height: 150px;
-    overflow-y: auto;
-    border-top: 1px solid #f5f5f5;
-    padding-top: 8px;
-  }
-
-  .calendar-container {
-    max-width: 1200px;
-    margin: 0 auto;
-  }
-
-  .calendar-header-box {
-    background: #fff;
-    padding: 25px;
-    border-radius: 8px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
-  }
-
-  /* Robust Header Layout */
-  .calendar-header-box .level {
-    flex-wrap: wrap;
-    gap: 15px;
-  }
-
-  .calendar-header-box .level-left {
-    flex-shrink: 1;
-    min-width: 250px;
-  }
-
-  .calendar-header-box .level-right {
-    flex-shrink: 0;
-  }
-
-  /* Month Grid Styles */
-  .calendar-grid {
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    border-top: 1px solid #eee;
-    border-left: 1px solid #eee;
-    background: #fff;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
-    width: 100%;
-  }
-  
-  .day-header {
-    background: #f9f9f9;
-    padding: 10px;
-    text-align: center;
-    font-weight: bold;
-    color: #666;
-    border-right: 1px solid #eee;
-    border-bottom: 1px solid #eee;
-    text-transform: uppercase;
-    font-size: 0.8rem;
-    letter-spacing: 0.5px;
-  }
-  
-  .calendar-day {
-    min-height: 120px;
-    padding: 8px;
-    border-right: 1px solid #eee;
-    border-bottom: 1px solid #eee;
-    transition: background 0.2s;
-  }
-  
-  .calendar-day:hover {
-    background: #fdfdfd;
-  }
-  
-  .calendar-day.is-today {
-    background: #f0f7ff;
-  }
-  
-  .day-number {
-    font-size: 0.9rem;
-    display: inline-block;
-    width: 24px;
-    height: 24px;
-    line-height: 24px;
-    text-align: center;
-  }
-  
-  .calendar-day.is-today .day-number {
-    background: #739AC3;
-    color: #fff !important;
-    border-radius: 50%;
-  }
-
-  /* Week List Styles */
-  .week-list {
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
-    overflow: hidden;
-  }
-
-  .week-row {
-    display: flex;
-    border-bottom: 1px solid #eee;
-    min-height: 80px;
-  }
-
-  .week-row:last-child {
-    border-bottom: none;
-  }
-
-  .week-row.is-today {
-    background: #f0f7ff;
-    border-left: 4px solid #739AC3;
-  }
-
-  .week-date-column {
-    width: 150px;
-    padding: 20px;
-    background: #f9f9f9;
-    border-right: 1px solid #eee;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
-
-  .week-day-name {
-    font-weight: bold;
-    text-transform: uppercase;
-    font-size: 0.75rem;
-    color: #777;
-    margin-bottom: 4px;
-  }
-
-  .week-day-number {
-    font-size: 1.25rem;
-    font-weight: bold;
-  }
-
-  .week-items-column {
-    flex: 1;
-    padding: 15px 20px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
-
-  .week-items-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  /* Shared Item Styles */
-  .day-content {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .calendar-item-wrapper {
-    display: flex;
-    align-items: center;
-    position: relative;
-    width: 100%;
-  }
-
-  /* Only show edit button on hover or for week view */
-  .edit-date-btn {
-    opacity: 0;
-    transition: opacity 0.2s;
-    height: 24px !important;
-    width: 24px !important;
-  }
-
-  .calendar-item-wrapper:hover .edit-date-btn {
-    opacity: 1;
-  }
-
-  .week-items-grid .edit-date-btn {
-    opacity: 0.5;
-  }
-  
-  .calendar-item {
-    font-size: 0.75rem;
-    padding: 3px 6px;
-    border-radius: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: block;
-    border-left: 3px solid transparent;
-    max-width: 100%;
-    transition: transform 0.1s;
-  }
-
-  .calendar-item.is-large {
-    padding: 10px 15px;
-    font-size: 0.9rem;
-    white-space: normal;
-    font-weight: 500;
-  }
-
-  .item-name-full {
-    display: inline-block;
-  }
-  
-  .calendar-item.assignment {
-    background: #eef2ff;
-    color: #4338ca;
-    border-left-color: #6366f1;
-  }
-  
-  .calendar-item.grade {
-    background: #ecfdf5;
-    color: #065f46;
-    border-left-color: #10b981;
-  }
-  
-  .calendar-item.is-completed {
-    text-decoration: line-through;
-    opacity: 0.6;
-    background: #f3f4f6;
-    color: #6b7280;
-    border-left-color: #9ca3af;
-  }
-
-  .calendar-item.is-optional {
-    opacity: 0.7;
-    border-left-style: dashed;
-    filter: grayscale(0.5);
-  }
-  
-  .calendar-item:hover {
-    filter: brightness(0.95);
-    transform: translateX(2px);
-  }
-  
-  .item-time {
-    font-weight: bold;
-    margin-right: 4px;
-    opacity: 0.8;
-  }
-
-  /* Drag and Drop Feedback */
-  .calendar-item-wrapper[draggable="true"] {
-    cursor: grab;
-  }
-
-  .calendar-item-wrapper[draggable="true"]:active {
-    cursor: grabbing;
-  }
-
-  .day-content.drag-over, .week-items-column.drag-over {
-    background-color: rgba(115, 154, 195, 0.1);
-    outline: 2px dashed #739AC3;
-    border-radius: 4px;
-  }
-
-  @media screen and (max-width: 768px) {
-    .calendar-grid {
-      grid-template-columns: repeat(1, 1fr);
-    }
-    .week-row {
-      flex-direction: column;
-    }
-    .week-date-column {
-      width: 100%;
-      text-align: left;
-      padding: 10px 20px;
-      flex-direction: row;
-      gap: 10px;
-      align-items: center;
-    }
-    .week-day-name { margin-bottom: 0; }
-  }
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); border: 1px solid #eee; background: #fff; border-radius: 8px; overflow: hidden; }
+  .day-header { background: #f9f9f9; padding: 10px; text-align: center; font-weight: bold; border-right: 1px solid #eee; border-bottom: 1px solid #eee; font-size: 0.8rem; }
+  .calendar-day { min-height: 120px; padding: 8px; border-right: 1px solid #eee; border-bottom: 1px solid #eee; }
+  .calendar-day.is-today { background: #f0f7ff; }
+  .day-number { font-size: 0.9rem; width: 24px; height: 24px; line-height: 24px; text-align: center; }
+  .calendar-day.is-today .day-number { background: #739AC3; color: #fff; border-radius: 50%; }
+  .week-list { background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); overflow: hidden; }
+  .week-row { display: flex; border-bottom: 1px solid #eee; min-height: 80px; }
+  .week-row.is-today { background: #f0f7ff; border-left: 4px solid #739AC3; }
+  .week-date-column { width: 150px; padding: 20px; background: #f9f9f9; border-right: 1px solid #eee; text-align: center; }
+  .week-items-column { flex: 1; padding: 15px; }
+  .calendar-item-wrapper { display: flex; align-items: center; margin-bottom: 4px; }
+  .calendar-item { font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: #f5f5f5; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 3px solid #ccc; }
+  .calendar-item.assignment { background: #eef2ff; color: #4338ca; border-left-color: #6366f1; }
+  .calendar-item.grade { background: #ecfdf5; color: #065f46; border-left-color: #10b981; }
+  .calendar-item.is-completed { text-decoration: line-through; opacity: 0.5; }
+  .calendar-item.is-large { font-size: 0.9rem; padding: 10px; white-space: normal; }
+  .drag-over { background: rgba(115, 154, 195, 0.1) !important; outline: 2px dashed #739AC3; }
+  .edit-date-btn { opacity: 0; }
+  .calendar-item-wrapper:hover .edit-date-btn { opacity: 1; }
 </style>
-<%= erb :'partials/edit_assignment_modal' %>

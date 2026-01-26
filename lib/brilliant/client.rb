@@ -392,12 +392,7 @@ class BrilliantClient
 
     n.notification_type = data[:type]
     n.title = new_title if new_title.present?
-    
-    if new_body.present? && (new_body.include?('<p>') || new_body.include?('<br'))
-      n.body = html_to_markdown(new_body)
-    else
-      n.body = new_body if new_body.present?
-    end
+    n.body = html_to_markdown(new_body) if new_body.present?
 
     raw_date = data[:date]
     begin
@@ -649,8 +644,8 @@ class BrilliantClient
       modules.each_with_index do |mod, index|
         m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
         m.title = mod['Title']
-        new_desc = mod.dig('Description', 'Html') || mod.dig('Description', 'Text')
-        m.description = new_desc if new_desc && !new_desc.empty?
+        # Extract HTML string from Description object if present, convert to Markdown
+        m.description = html_to_markdown(mod['Description'])
         m.sort_order = index
         m.save!
         
@@ -683,6 +678,8 @@ class BrilliantClient
     modules.each_with_index do |mod, index|
       m = ContentModule.find_or_initialize_by(brightspace_id: mod['ModuleId'].to_s, course_id: course_id.to_s)
       m.title = mod['Title']
+      # Extract HTML string from Description object if present, convert to Markdown
+      m.description = html_to_markdown(mod['Description'])
       m.sort_order = index
       m.parent_id = parent_id
       m.save!
@@ -691,8 +688,18 @@ class BrilliantClient
         t_id = (topic['Identifier'] || topic['TopicId'] || topic['Id']).to_s
         item = ContentItem.find_or_initialize_by(brightspace_id: t_id, module_id: mod['ModuleId'].to_s)
         item.title = topic['Title']
+        item.item_type = (topic['TypeIdentifier'] || topic['Type']).to_s
+        item.url = topic['Url']
+        item.is_hidden = topic['IsHidden'] || false
         item.sort_order = t_index
+        item.attachments = [topic].to_json if topic.any?
         item.save!
+
+        if item.url && (item.url.start_with?('/content/enforced/') || item.url.include?('/viewContent/'))
+          Thread.new(course_id, item.brightspace_id, item.title) do |cid, tid, title|
+            ActiveRecord::Base.connection_pool.with_connection { persist_attachment(cid, "content/topics/#{tid}/file", tid, title) }
+          end
+        end
       end
       sync_sub_modules(course_id, mod['ModuleId'].to_s, mod['Modules']) if mod['Modules']
     end
@@ -828,6 +835,7 @@ class BrilliantClient
     ensure_array(forums).each do |f|
       forum = DiscussionForum.find_or_initialize_by(brightspace_id: f['ForumId'].to_s, course_id: course_id.to_s)
       forum.name = f['Name']
+      forum.description = html_to_markdown(f['Description'])
       forum.save!
       topics = ensure_array(get_discussion_topics(course_id, f['ForumId']))
       sync_discussion_topics(course_id, f['ForumId'], topics)
@@ -839,6 +847,7 @@ class BrilliantClient
       topic = DiscussionTopic.find_or_initialize_by(brightspace_id: t['TopicId'].to_s, forum_id: forum_id.to_s)
       topic.course_id = course_id.to_s
       topic.name = t['Name']
+      topic.description = html_to_markdown(t['Description'])
       topic.sort_order = index
       topic.save!
     end
@@ -1031,7 +1040,7 @@ class BrilliantClient
     
     begin
       response = http.request(request)
-      if response.code == '200'
+      if response.code.start_with?('2')
         @degraded_mode = false
         @auth_notification_sent = false
         data = JSON.parse(response.body)
@@ -1050,13 +1059,8 @@ class BrilliantClient
 
   def handle_auth_failure(code)
     @degraded_mode = true
-    return if @auth_notification_sent
-    create_system_notification({
-      id: "auth_failure_#{Time.now.to_i}",
-      title: "Brightspace Session Expired",
-      body: "Your connection has expired (#{code}). Please refresh your session in Settings.",
-      urgency: 5
-    })
+    # We no longer create a persistent Notification object for auth failure
+    # because the user is notified via the global Flash/Banner in the UI.
     @auth_notification_sent = true
   end
 end

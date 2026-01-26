@@ -30,11 +30,27 @@ Because Brightspace assets (like course banners) often have strict CORS and Refe
 - **Proxy Route**: `/api/proxy/banner` fetches images using the authenticated Ruby session.
 - **Disk Cache**: Images are hashed (SHA1) and stored in `public/banners/` to minimize redundant network requests and allow offline viewing.
 
-### 3.4. Intelligent Content Linkification
+### 3.4. External REST API & Multi-Device Access
+Brilliant provides a robust REST API for external integrations:
+- **JWT Authentication**: All API requests are authenticated via JSON Web Tokens (JWT) signed using a user-configurable `jwt_secret`. Tokens are generated internally and can be used by third-party clients (mobile apps, scripts).
+- **Network Visibility**: The user can toggle between `localhost` (secure solo mode) and `0.0.0.0` (all interfaces) to allow remote access from other devices on the network.
+- **Legacy API Key**: Maintain support for simple header-based authentication (`X-API-Key`) for legacy scripts.
+
+### 3.5. Remote Server Logic
+For users with multiple workstations, Brilliant supports a "Remote Server" mode:
+- **Centralized Database**: When enabled, the application shifts its connection from the local SQLite file to a remote Brilliant instance (over the network).
+- **Environment Targeting**: This is controlled via `remote_server_ip` and `remote_server_port` preferences, allowing a "Master/Member" architecture where one machine acts as the primary data sync node.
+
+### 3.6. Intelligent Content Linkification
 To ensure unified support for clickable resources across synthesized content:
 - **URL Detection**: A robust regex-based helper (`fix_links`) scans course descriptions and task instructions for raw URLs (`https?://`).
 - **Tag Shielding**: The engine uses a multi-pass approach where existing HTML tags are replaced with temporary placeholders before linkification. This prevents the creation of nested `<a>` tags or corruption of existing attributes.
 - **Automatic Wrapping**: Detected URLs are wrapped in standard anchor tags with `target="_blank"`.
+
+### 3.7. Markdown Persistence Strategy
+- **Rich Text Extraction**: The sync engine automatically detects D2L Rich Text objects (JSON containing `Html` strings) and converts them to Markdown for persistent storage.
+- **Background Sync**: Every course view triggers a background thread that fetches the latest LMS content, updates Markdown descriptions, and refreshes the cache without blocking the UI.
+- **HTML-to-Markdown Pipeline**: A refined regex pipeline handles common LMS formatting (bold, links, lists, headers) to ensure consistent rendering across the app.
 
 ## 4. Portability & Distribution
 Brilliant is designed to be "Zero-Dependency" for the end user:

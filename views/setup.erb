@@ -7,14 +7,14 @@
           <p class="subtitle has-text-centered">Connect to your Brightspace instance</p>
           
           <div class="notification is-info is-light">
-            <h4 class="title is-5">Option 1: Magic Login (Recommended)</h4>
+            <h4 class="title is-5">Option 1: Bright Space Login (Recommended)</h4>
             <p>Click the button below to open a login window. Once you sign in and see your Brightspace home page, Brilliant will automatically capture your session.</p>
             
             <input type="hidden" id="login-host-source" value="<%= @host || 'courses.maine.edu' %>">
             <div class="field mt-4">
               <button type="button" onclick="startAppLogin()" class="button is-info is-fullwidth">
                 <span class="icon"><i class="fas fa-magic"></i></span>
-                <span><strong>Launch Magic Login</strong></span>
+                <span><strong>Bright Space Login</strong></span>
               </button>
             </div>
           </div>

@@ -40,6 +40,8 @@ GEM
       logger
       ostruct
     ice_cube (0.17.0)
+    jwt (3.1.2)
+      base64
     kramdown (2.5.2)
       rexml (>= 3.4.4)
     logger (1.7.0)
@@ -49,6 +51,9 @@ GEM
     mutex_m (0.3.0)
     nio4r (2.7.5)
     ostruct (0.6.3)
+    pg (1.6.3-arm64-darwin)
+    pg (1.6.3-x64-mingw-ucrt)
+    pg (1.6.3-x86_64-darwin)
     public_suffix (5.1.1)
     puma (6.6.1)
       nio4r (~> 2.0)
@@ -97,8 +102,10 @@ DEPENDENCIES
   bigdecimal
   ferrum
   icalendar
+  jwt
   kramdown
   mutex_m
+  pg
   puma
   rack-cache (~> 1.17)
   rack-flash3

@@ -1,74 +1,137 @@
-<%= erb :'partials/course_detail_header' %>
-<div class="columns">
-  <div class="column is-3">
-    <%= erb :'partials/sidebar' %>
-  </div>
-  <div class="column is-9">
-    <div class="box">
-      <h4 class="title is-4"><i class="fas fa-bullhorn mr-2"></i> Announcements</h4>
-      <% if @news && !@news.empty? %>
-        <% @news.each do |item| %>
-          <div class="mb-5 pb-2" style="border-bottom: 1px solid #eee;">
-            <details class="announcement-item">
-              <summary class="is-clickable p-2 has-background-light is-radiusless" style="list-style: none; outline: none;">
-                <div class="is-flex is-justify-content-space-between is-align-items-center">
-                  <div>
-                    <h5 class="title is-5 mb-0" style="display: inline;"><%= render_markdown_inline(item['Title']) %></h5>
-                    <span class="is-size-7 has-text-grey ml-3">
-                      <%= format_date(item["StartDate"], "%b %d, %Y") %>
-                    </span>
-                  </div>
-                  <span class="icon is-small has-text-grey">
-                    <i class="fas fa-chevron-down"></i>
-                  </span>
-                </div>
-              </summary>
-              <div class="content p-4 has-background-white">
-                <div class="is-flex is-justify-content-space-between is-align-items-flex-start mb-3">
-                  <p class="is-size-7 has-text-grey mb-0">
-                    Posted: <%= format_date(item["StartDate"]) %>
-                  </p>
-                  <form action="/course/<%= @course_id %>/announcements/<%= item['Id'] %>/create_task" method="POST">
-                    <input type="hidden" name="title" value="<%= item['Title'] %>">
-                    <button type="submit" class="button is-small is-primary is-light" title="Create synthetic task from this announcement">
-                      <span class="icon is-small"><i class="fas fa-plus"></i></span>
-                      <span>Task</span>
-                    </button>
-                  </form>
-                </div>
-                <div class="announcement-body">
-                  <% 
-                     desc = item['Body']
-                     desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : desc.to_s
-                  %>
-                  <%= desc_text %>
-                </div>
+<div id="announcements-root" data-course-id="<%= @course_id %>">
+  <%= erb :'partials/course_detail_header' %>
+  
+  <div class="columns">
+    <div class="column is-3">
+      <%= erb :'partials/sidebar' %>
+    </div>
+    <div class="column is-9">
+      <div class="box">
+        <div class="is-flex is-justify-content-space-between is-align-items-center mb-4">
+          <h4 class="title is-4 mb-0"><i class="fas fa-bullhorn mr-2"></i> Announcements</h4>
+          <button onclick="refreshAnnouncements()" class="button is-small is-light" id="refresh-btn">
+            <span class="icon"><i class="fas fa-sync"></i></span>
+          </button>
+        </div>
 
-                <% if item['Attachments'] && !item['Attachments'].empty? %>
-                  <div class="mt-4 pt-3" style="border-top: 1px dashed #ddd;">
-                    <p class="is-size-7 has-text-weight-bold mb-2">Attachments:</p>
-                    <div class="buttons">
-                      <% item['Attachments'].each do |att| %>
-                        <a href="/course/<%= @course_id %>/download?path=<%= URI.encode_www_form_component("/d2l/api/le/1.40/#{@course_id}/news/#{item['Id']}/attachments/#{att['FileId']}") %>&name=<%= URI.encode_www_form_component(att['FileName']) %>" class="button is-small is-link is-outlined">
-                          <span class="icon is-small"><i class="fas fa-paperclip"></i></span>
-                          <span><%= att['FileName'] %></span>
-                        </a>
-                      <% end %>
-                    </div>
-                  </div>
-                <% end %>
-              </div>
-            </details>
+        <div id="announcements-container">
+          <div class="has-text-centered py-6">
+            <span class="icon is-large has-text-grey-light">
+              <i class="fas fa-spinner fa-pulse fa-2x"></i>
+            </span>
+            <p class="mt-2 has-text-grey">Loading announcements...</p>
           </div>
-        <% end %>
-        <style>
-          .announcement-item summary::-webkit-details-marker { display: none; }
-          .announcement-item[open] summary .fa-chevron-down { transform: rotate(180deg); }
-          .announcement-item summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
-        </style>
-      <% else %>
-        <p class="has-text-grey">No announcements found for this course.</p>
-      <% end %>
+        </div>
+      </div>
     </div>
   </div>
 </div>
+
+<script>
+  const COURSE_ID = '<%= @course_id %>';
+
+  async function refreshAnnouncements() {
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('is-loading');
+    await loadAnnouncements();
+    btn.classList.remove('is-loading');
+  }
+
+  async function loadAnnouncements() {
+    try {
+      const response = await fetch(`/api/v1/courses/${COURSE_ID}/announcements`);
+      const data = await response.json();
+      renderAnnouncements(data.announcements);
+    } catch (err) {
+      console.error("Failed to load announcements:", err);
+      document.getElementById('announcements-container').innerHTML = `
+        <div class="notification is-danger is-light">
+          Failed to load announcements. Please check your connection.
+        </div>
+      `;
+    }
+  }
+
+  function renderAnnouncements(items) {
+    const container = document.getElementById('announcements-container');
+    if (!items || items.length === 0) {
+      container.innerHTML = '<p class="has-text-grey">No announcements found for this course.</p>';
+      return;
+    }
+
+    container.innerHTML = items.map(item => `
+      <div class="mb-5 pb-2" style="border-bottom: 1px solid #eee;">
+        <details class="announcement-item">
+          <summary class="is-clickable p-2 has-background-light is-radiusless" style="list-style: none; outline: none;">
+            <div class="is-flex is-justify-content-space-between is-align-items-center">
+              <div>
+                <h5 class="title is-5 mb-0" style="display: inline;">${item.title}</h5>
+                <span class="is-size-7 has-text-grey ml-3">
+                  ${item.formatted_date}
+                </span>
+              </div>
+              <span class="icon is-small has-text-grey">
+                <i class="fas fa-chevron-down"></i>
+              </span>
+            </div>
+          </summary>
+          <div class="content p-4 has-background-white">
+            <div class="is-flex is-justify-content-space-between is-align-items-flex-start mb-3">
+              <p class="is-size-7 has-text-grey mb-0">
+                Posted: ${item.full_date}
+              </p>
+              <form action="/course/${COURSE_ID}/announcements/${item.external_id}/create_task" method="POST">
+                <input type="hidden" name="title" value="${item.title}">
+                <button type="submit" class="button is-small is-primary is-light" title="Create synthetic task from this announcement">
+                  <span class="icon is-small"><i class="fas fa-plus"></i></span>
+                  <span>Task</span>
+                </button>
+              </form>
+            </div>
+            <div class="announcement-body">
+              ${item.body_html}
+            </div>
+
+            ${renderAttachments(JSON.parse(item.attachments || "[]"), item.external_id)}
+          </div>
+        </details>
+      </div>
+    `).join('');
+  }
+
+  function renderAttachments(attachments, itemId) {
+    if (!attachments || attachments.length === 0) return '';
+    
+    // Extract real Brightspace ID if it has a prefix like news_123_456
+    const brightspaceItemId = itemId.includes('_') ? itemId.split('_').pop() : itemId;
+
+    const btns = attachments.map(att => {
+      const downloadPath = encodeURIComponent(`/d2l/api/le/1.40/${COURSE_ID}/news/${brightspaceItemId}/attachments/${att.FileId}`);
+      const fileName = encodeURIComponent(att.FileName);
+      return `
+        <a href="/course/${COURSE_ID}/download?path=${downloadPath}&name=${fileName}" class="button is-small is-link is-outlined">
+          <span class="icon is-small"><i class="fas fa-paperclip"></i></span>
+          <span>${att.FileName}</span>
+        </a>
+      `;
+    }).join('');
+
+    return `
+      <div class="mt-4 pt-3" style="border-top: 1px dashed #ddd;">
+        <p class="is-size-7 has-text-weight-bold mb-2">Attachments:</p>
+        <div class="buttons">
+          ${btns}
+        </div>
+      </div>
+    `;
+  }
+
+  document.addEventListener('DOMContentLoaded', loadAnnouncements);
+</script>
+
+<style>
+  .announcement-item summary::-webkit-details-marker { display: none; }
+  .announcement-item[open] summary .fa-chevron-down { transform: rotate(180deg); }
+  .announcement-item summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
+  .announcement-body img { max-width: 100%; height: auto; }
+</style>

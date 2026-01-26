@@ -1,0 +1,80 @@
+<div id="course-list-container">
+  <div class="level mb-4">
+    <div class="level-left">
+      <h1 class="title"><i class="fas fa-archive mr-2"></i> <%= locals[:title] || 'Course Archives' %></h1>
+    </div>
+    <div class="level-right">
+      <div class="field has-addons">
+        <p class="control">
+          <span class="button is-static is-small">Semester</span>
+        </p>
+        <div class="control">
+          <div class="select is-small">
+            <select id="semester-filter-select" onchange="runLocalCourseFilter(this.value)">
+              <option value="all">All Semesters</option>
+              <% locals[:semesters].each do |sem| %>
+                <option value="<%= sem %>" <%= 'selected' if locals[:filter] == sem %>><%= sem %></option>
+              <% end %>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="course-grid" class="columns is-multiline">
+    <!-- Rendered via JS for consistency or statically if needed -->
+    <% locals[:courses].each do |c| %>
+      <% info = extract_course_info(c.name) %>
+      <div class="column is-6 course-item-box" data-semester="<%= c.semester %>">
+        <div class="box p-0 course-card-wide is-clickable" 
+             onclick="window.location='/course/<%= c.org_unit_id %>'"
+             style="overflow: hidden; border: 1px solid #eee; transition: all 0.2s; height: 100%;">
+          <div class="is-flex" style="height: 100%;">
+            <div style="width: 120px; min-width: 120px; background-color: #f5f5f5;">
+              <% if c.banner_url %>
+                <div style="height: 100%; width: 100%; background: url('/api/proxy/banner?url=<%= URI.encode_www_form_component(c.banner_url) %>') center center; background-size: cover; box-shadow: inset -5px 0 10px rgba(0,0,0,0.05);"></div>
+              <% else %>
+                <div style="height: 100%; width: 100%; background: linear-gradient(135deg, #739AC3 0%, #3273dc 100%); opacity: 0.1;"></div>
+              <% end %>
+            </div>
+            <div class="p-4" style="flex-grow: 1;">
+              <% if c.is_pinned %>
+                <div class="is-pulled-right"><span class="tag is-warning is-light is-small"><i class="fas fa-thumbtack"></i></span></div>
+              <% end %>
+              
+              <div class="mb-2">
+                <h3 class="title is-6 mb-1" style="line-height: 1.2;"><%= info[:short_name] || c.name %></h3>
+                <% if info[:prefix] %>
+                  <div><span class="px-1" style="border-radius: 3px; font-size: 0.7rem; font-weight: bold; <%= info[:pill_style] %>"><%= info[:prefix] %></span></div>
+                <% end %>
+              </div>
+              <div class="tags mb-1">
+                <% if c.semester %>
+                  <span class="tag is-white is-small has-text-grey" style="font-size: 0.65rem; padding-left: 0;"><%= c.semester %></span>
+                <% end %>
+              </div>
+              <div class="my-3"></div>
+              <div class="has-text-right">
+                <span class="is-size-7 has-text-link">Open <i class="fas fa-chevron-right ml-1"></i></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    <% end %>
+  </div>
+</div>
+
+<script>
+  function runLocalCourseFilter(val) {
+    const items = document.querySelectorAll('.course-item-box');
+    items.forEach(item => {
+      if (val === 'all' || item.getAttribute('data-semester') === val) {
+        item.style.display = 'block';
+      } else {
+        item.style.display = 'none';
+      }
+    });
+  }
+</script>

@@ -3,14 +3,14 @@
     <div class="box">
       <h3 class="title is-5 mb-4"><i class="fas fa-filter mr-2"></i> Filters</h3>
       
-      <form id="filter-form" action="/notifications" method="get">
+      <form id="filter-form">
         <div class="field mb-3">
           <label class="label is-size-7">Sort By</label>
           <div class="control">
             <div class="select is-fullwidth is-small">
-              <select name="sort">
-                <option value="date" <%= 'selected' if params[:sort] == 'date' %>>Newest First</option>
-                <option value="urgency" <%= 'selected' if params[:sort] == 'urgency' %>>Urgency First</option>
+              <select name="sort" onchange="runFilter()">
+                <option value="date">Newest First</option>
+                <option value="urgency">Urgency First</option>
               </select>
             </div>
           </div>
@@ -20,15 +20,13 @@
           <label class="label is-size-7">Semester</label>
           <div class="control">
             <div class="select is-fullwidth is-small">
-              <select name="semester">
+              <select name="semester" onchange="runFilter()">
                 <option value="">All Semesters</option>
                 <% 
                   semesters = Notification.where.not(semester: [nil, ""]).pluck(:semester).uniq.sort
                   semesters.each do |s| 
                 %>
-                  <option value="<%= s %>" <%= 'selected' if params[:semester] == s %>>
-                    <%= s %>
-                  </option>
+                  <option value="<%= s %>"><%= s %></option>
                 <% end %>
               </select>
             </div>
@@ -39,7 +37,7 @@
           <label class="label is-size-7">Course</label>
           <div class="control">
             <div class="select is-fullwidth is-small">
-              <select name="course_id">
+              <select name="course_id" onchange="runFilter()">
                 <option value="">All Courses</option>
                 <% @courses.each do |c| %>
                   <% info = extract_course_info(c['OrgUnit']['Name']) %>
@@ -56,46 +54,29 @@
           <label class="label is-size-7">Type</label>
           <div class="control">
             <div class="select is-fullwidth is-small">
-              <select name="type">
+              <select name="type" onchange="runFilter()">
                 <option value="">All Types</option>
                 <% 
-                  # Common types: Assignment, News, Grade, Content, Discussion, System
                   types = Notification.where.not(notification_type: [nil, ""]).pluck(:notification_type).uniq.sort
                   types.each do |t| 
                 %>
-                  <option value="<%= t %>" <%= 'selected' if params[:type] == t %>>
-                    <%= t %>
-                  </option>
+                  <option value="<%= t %>"><%= t %></option>
                 <% end %>
               </select>
             </div>
           </div>
         </div>
 
-        <div class="field mb-3">
-          <label class="label is-size-7">Urgency</label>
-          <div class="control">
-            <div class="select is-fullwidth is-small">
-              <select name="urgency">
-                <option value="">Any Urgency</option>
-                <option value="3" <%= 'selected' if params[:urgency] == '3' %>>High (Red)</option>
-                <option value="2" <%= 'selected' if params[:urgency] == '2' %>>Medium (Yellow)</option>
-                <option value="1" <%= 'selected' if params[:urgency] == '1' %>>Low (Blue)</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
         <div class="field mb-4">
           <label class="checkbox is-size-7">
-            <input type="checkbox" name="personal_only" value="true" <%= 'checked' if params[:personal_only] == 'true' %>>
+            <input type="checkbox" name="personal_only" value="true" onchange="runFilter()">
             Directly for me only
           </label>
         </div>
 
         <div class="field mb-4">
           <label class="checkbox is-size-7">
-            <input type="checkbox" name="show_read" value="true" <%= 'checked' if params[:show_read] == 'true' %>>
+            <input type="checkbox" name="show_read" value="true" onchange="runFilter()">
             Include already read
           </label>
         </div>
@@ -121,9 +102,6 @@
           </a>
         </li>
         <li><a href="/dashboard">Courses</a></li>
-        <% if @context_course %>
-          <li><a href="/course/<%= @context_course.org_unit_id %>" title="<%= @context_course.name %>"><%= truncate_text(@context_course.name, 40) %></a></li>
-        <% end %>
         <li class="is-active"><a href="#" aria-current="page">Notifications</a></li>
       </ul>
     </nav>
@@ -133,52 +111,186 @@
         <h1 class="title">Notifications</h1>
       </div>
       <div class="level-right">
-        <form action="/notifications/mark_all_read" method="post" class="mr-2">
-          <button type="submit" class="button is-link is-light is-small">
+        <div class="buttons">
+          <button onclick="markAllRead()" class="button is-link is-light is-small">
             <i class="fas fa-check-double mr-2"></i> Mark All Read
           </button>
-        </form>
+          <button onclick="refreshData()" class="button is-small is-light" id="refresh-btn">
+            <i class="fas fa-sync"></i>
+          </button>
+        </div>
       </div>
     </div>
 
     <div id="notifications-container">
-      <%= erb :'partials/notifications_list' %>
+       <div class="has-text-centered py-6">
+         <span class="icon is-large has-text-grey-light">
+           <i class="fas fa-spinner fa-pulse fa-2x"></i>
+         </span>
+       </div>
     </div>
+
+    <div id="pagination-container" class="mt-4"></div>
   </div>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', () => {
-  const filterForm = document.querySelector('form[action="/notifications"]');
-  if (!filterForm) return;
+  let currentPage = 1;
+  const PER_PAGE = 25;
 
-  const container = document.getElementById('notifications-container');
+  // Helper: Course Pill Style
+  function getCoursePillStyle(name) {
+    const hash = name.split('').reduce((acc, char) => char.charCodeAt(0) + ((acc << 5) - acc), 0);
+    const color = `hsl(${Math.abs(hash % 360)}, 60%, 45%)`;
+    return `background-color: ${color}; color: white;`;
+  }
 
-  filterForm.addEventListener('change', (e) => {
-    // Collect form data
-    const formData = new FormData(filterForm);
-    const params = new URLSearchParams(formData);
-    
-    // Update URL without reload
-    const newUrl = `${window.location.pathname}?${params.toString()}`;
-    window.history.pushState({ path: newUrl }, '', newUrl);
+  async function refreshData() {
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('is-loading');
+    await loadNotifications();
+    btn.classList.remove('is-loading');
+  }
 
-    // Fetch updated list via AJAX
-    container.style.opacity = '0.5';
-    fetch(newUrl, {
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest'
+  function runFilter() {
+    currentPage = 1;
+    loadNotifications();
+  }
+
+  async function markAllRead() {
+    if (!confirm("Mark all notifications as read?")) return;
+    try {
+      await fetch('/notifications/mark_all_read', { method: 'POST' });
+      loadNotifications();
+    } catch (err) {
+      console.error("Failed to mark all read", err);
+    }
+  }
+
+  async function toggleRead(id, isRead) {
+    const endpoint = isRead ? `/notifications/${id}/mark_unread` : `/notifications/${id}/mark_read`;
+    try {
+      const resp = await fetch(endpoint, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      const data = await resp.json();
+      if (data.status === 'ok') {
+        const item = document.getElementById(`notif-${id}`);
+        if (item) {
+          if (data.is_read) {
+            item.classList.add('is-read');
+            item.querySelector('.read-toggle-btn').innerHTML = '<i class="far fa-circle"></i>';
+            item.querySelector('.read-toggle-btn').title = "Mark as unread";
+          } else {
+            item.classList.remove('is-read');
+            item.querySelector('.read-toggle-btn').innerHTML = '<i class="fas fa-circle"></i>';
+            item.querySelector('.read-toggle-btn').title = "Mark as read";
+          }
+        }
       }
-    })
-    .then(res => res.text())
-    .then(html => {
-      container.innerHTML = html;
+    } catch (err) {
+      console.error("Toggle read failed", err);
+    }
+  }
+
+  async function loadNotifications() {
+    const form = document.getElementById('filter-form');
+    const formData = new FormData(form);
+    const params = new URLSearchParams(formData);
+    params.set('limit', PER_PAGE);
+    params.set('offset', (currentPage - 1) * PER_PAGE);
+
+    const container = document.getElementById('notifications-container');
+    container.style.opacity = '0.5';
+
+    try {
+      const response = await fetch(`/api/v1/notifications?${params.toString()}`);
+      const data = await response.json();
+      renderNotifications(data.notifications, data.total);
+      renderPagination(data.total);
+    } catch (err) {
+      container.innerHTML = `<div class="notification is-danger">Failed to load notifications.</div>`;
+    } finally {
       container.style.opacity = '1';
-    })
-    .catch(err => {
-      console.error("Filter Error:", err);
-      container.style.opacity = '1';
-    });
-  });
-});
+    }
+  }
+
+  function renderNotifications(items, total) {
+    const container = document.getElementById('notifications-container');
+    if (!items || items.length === 0) {
+      container.innerHTML = '<div class="box has-text-centered py-6 has-text-grey">No notifications found.</div>';
+      return;
+    }
+
+    container.innerHTML = items.map(n => {
+      const urgencyClass = n.urgency === 3 ? 'has-text-danger' : (n.urgency === 2 ? 'has-text-warning' : 'has-text-info');
+      const isReadClass = n.is_read ? 'is-read' : '';
+      const dotIcon = n.is_read ? 'far fa-circle' : 'fas fa-circle';
+
+      return `
+        <div class="box p-3 mb-3 notification-card ${isReadClass}" id="notif-${n.id}">
+          <div class="columns is-mobile is-vcentered">
+            <div class="column is-narrow">
+               <button class="button is-ghost p-0 read-toggle-btn" onclick="toggleRead(${n.id}, ${n.is_read})" title="${n.is_read ? 'Mark as unread' : 'Mark as read'}">
+                 <i class="${dotIcon} ${urgencyClass} is-size-7"></i>
+               </button>
+            </div>
+            <div class="column">
+              <div class="is-flex is-justify-content-space-between">
+                <div class="is-flex is-align-items-center">
+                  ${n.course_prefix ? `<span class="px-1 mr-2" style="border-radius: 3px; font-size: 0.65rem; font-weight: bold; ${n.pill_style || getCoursePillStyle(n.course_name)}">${n.course_prefix}</span>` : ''}
+                  <span class="has-text-weight-bold has-text-dark is-size-6 mr-2">${n.course_short_name || n.course_name || 'General'}</span>
+                  ${n.semester || n.course_semester ? `<span class="tag is-white is-small has-text-grey" style="font-size: 0.65rem;">${n.semester || n.course_semester}</span>` : ''}
+                </div>
+                <span class="is-size-7 has-text-grey">${n.simple_date}</span>
+              </div>
+              <h5 class="title is-6 mb-1">
+                <a href="/notifications/${n.id}/view" class="has-text-dark">${n.display_title}</a>
+              </h5>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderPagination(total) {
+    const totalPages = Math.ceil(total / PER_PAGE);
+    const container = document.getElementById('pagination-container');
+    if (totalPages <= 1) {
+      container.innerHTML = '';
+      return;
+    }
+
+    let html = `<nav class="pagination is-small is-centered" role="navigation" aria-label="pagination">`;
+    html += `<a class="pagination-previous" ${currentPage === 1 ? 'disabled' : `onclick="changePage(${currentPage - 1})"`}>Previous</a>`;
+    html += `<a class="pagination-next" ${currentPage === totalPages ? 'disabled' : `onclick="changePage(${currentPage + 1})"`}>Next page</a>`;
+    html += `<ul class="pagination-list">`;
+    
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+            html += `<li><a class="pagination-link ${i === currentPage ? 'is-current' : ''}" onclick="changePage(${i})">${i}</a></li>`;
+        } else if (i === currentPage - 2 || i === currentPage + 2) {
+            html += `<li><span class="pagination-ellipsis">&hellip;</span></li>`;
+        }
+    }
+    
+    html += `</ul></nav>`;
+    container.innerHTML = html;
+  }
+
+  function changePage(p) {
+    currentPage = p;
+    loadNotifications();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  document.addEventListener('DOMContentLoaded', loadNotifications);
 </script>
+
+<style>
+  .notification-card { border-left: 4px solid transparent; transition: all 0.2s; }
+  .notification-card:hover { transform: translateX(5px); box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+  .notification-card.is-read { opacity: 0.6; filter: grayscale(1); }
+  .notification-card.is-read:hover { opacity: 0.9; }
+  .read-toggle-btn { height: auto; border: none; background: none; cursor: pointer; }
+  .read-toggle-btn:hover { background: none !important; transform: scale(1.2); }
+</style>

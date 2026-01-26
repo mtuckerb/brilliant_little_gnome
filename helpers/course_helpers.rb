@@ -28,8 +28,13 @@ module CourseHelpers
   end
 
   def render_markdown(text)
-    return "" if text.nil? || text.empty?
+    return "" if text.nil? || (text.respond_to?(:empty?) && text.empty?)
     
+    # Handle the D2L Description/RichText object if passed directly
+    if text.is_a?(Hash)
+      text = text['Html'] || text['Text'] || text[:Html] || text[:Text] || ""
+    end
+
     # Process text through Kramdown
     Kramdown::Document.new(text.to_s).to_html
   end
@@ -121,6 +126,40 @@ module CourseHelpers
     text.gsub!("&quot;", "\"")
 
     text.strip
+  end
+
+  def clean_notification_title(title, course_name)
+    return title if title.nil? || course_name.nil?
+    
+    cleaned = title.dup
+    
+    # 1. Remove the full course name if it appears in the title
+    # We escape it because course names can contain parentheses
+    cleaned.gsub!(course_name, '')
+    
+    # 2. If it's still containing redundant parts, try more targeted removal
+    # Remove things like "ABC 123:0001-" or "ABC 123:0001 "
+    section_match = course_name.match(/^(\w{3}\s\d{3}:\d{4})[- ]/i)
+    if section_match
+      cleaned.gsub!(section_match[1], '')
+    end
+
+    # Remove the semester part if it exists
+    info = extract_course_info(course_name)
+    if info[:semester]
+      cleaned.gsub!(/\(#{Regexp.escape(info[:semester])}\)/, '')
+      cleaned.gsub!(info[:semester], '')
+    end
+
+    cleaned.gsub!(/\(Online\)/i, '')
+    
+    # Cleanup extra spaces and colons that might be left over
+    cleaned = cleaned.gsub(/\s+/, ' ').strip
+    
+    # If we removed everything or left only a colon/dash, restore original part but cleaner
+    return title if cleaned.empty? || cleaned == ":" || cleaned == "-"
+    
+    cleaned.gsub(/[:\s-]+$/, '')
   end
 
   def render_content(text)
@@ -345,15 +384,31 @@ module CourseHelpers
   end
 
   def extract_course_info(full_name)
+    return { course_display: "", short_name: "", prefix: "", is_online: false, semester: nil, pill_style: "" } if full_name.to_s.empty?
+
+    # Sanity check: if it's just a number, it's not a full name
+    if full_name.to_s.match?(/^\d+$/)
+      course = Course.find_by(org_unit_id: full_name.to_s)
+      full_name = course.name if course && course.name.present? && !course.name.to_s.match?(/^\d+$/)
+    end
+
     # Pattern: SWO 370:0001-Human Behav (Online) (2026 Spring)
     regex = /^(\w{3}\s\d{3}):\d{4}-(.*?)\s*(\(Online\))?\s*(\(\d{4}\s+(?:Spring|Fall|Summer|Winter)\))$/i
     match = full_name.match(regex)
     
     if match
+      short_name = match[2].strip
+      short_name = match[1] if short_name.empty?
+      prefix = match[1].strip
+      semester = match[4].to_s.gsub(/[()]/, '').strip
+      
       {
         course_display: "#{match[1]} - #{match[2].strip}",
+        short_name: short_name,
+        prefix: prefix,
         is_online: !match[3].to_s.empty?,
-        semester: match[4].to_s.gsub(/[()]/, '').strip
+        semester: semester,
+        pill_style: course_pill_style(full_name, semester)
       }
     else 
       # Fallback logic
@@ -362,15 +417,24 @@ module CourseHelpers
       semester = semester_match ? semester_match[1].gsub(/[()]/, '').strip : nil
       
       course_display = full_name
+      prefix = full_name[0..6].strip
       if semester
         course_display = course_display.gsub(/\(#{Regexp.escape(semester)}\)/, '').gsub(semester, '').strip
       end
       course_display = course_display.gsub('(Online)', '').strip
       
+      # For short_name, try to strip common prefixes like "ABC 123:0001-" or "ABC 123:"
+      short_name = course_display.gsub(/^\w{3}\s\d{3}:\d{4}-/, '').gsub(/^\w{3}\s\d{3}:/, '').strip
+      
+      short_name = course_display if short_name.empty?
+
       {
         course_display: course_display,
+        short_name: short_name,
+        prefix: prefix,
         is_online: is_online,
-        semester: semester
+        semester: semester,
+        pill_style: course_pill_style(full_name, semester)
       }
     end
   end
@@ -676,31 +740,40 @@ module CourseHelpers
     
     tasks.uniq { |t| t[:name] }
   end
-  def course_pill_style(course_name)
+  def course_pill_style(course_name, semester = nil)
     return "" if course_name.nil?
     
-    # Check if we have a custom color saved for this course
+    # 1. Check if we have a custom color saved for this course
     course = Course.find_by(name: course_name)
+    color_val = nil
+
     if course && course.respond_to?(:custom_color) && course.custom_color.present?
-      custom = course.custom_color.to_s
+      color_val = course.custom_color
+    elsif semester.present?
+      prefs = UserPreference.current
+      if prefs.semester_colors && prefs.semester_colors[semester].present?
+        color_val = prefs.semester_colors[semester]
+      end
+    end
+
+    hue = nil
+    if color_val
+      custom = color_val.to_s
       if custom.start_with?('#')
-        # Hex color: Generate pastel variants based on this hex
-        # Extract R, G, B
+        # Hex color: Convert to HSL
         r = custom[1..2].to_i(16)
         g = custom[3..4].to_i(16)
         b = custom[5..6].to_i(16)
         
-        # Convert to HSL for styling
         r_f = r / 255.0
         g_f = g / 255.0
         b_f = b / 255.0
         max = [r_f, g_f, b_f].max
         min = [r_f, g_f, b_f].min
-        h, s, l = 0, 0, (max + min) / 2.0
+        h = (max + min) / 2.0
 
         if max != min
           d = max - min
-          s = l > 0.5 ? d / (2.0 - max - min) : d / (max + min)
           case max
           when r_f then h = (g_f - b_f) / d + (g_f < b_f ? 6 : 0)
           when g_f then h = (b_f - r_f) / d + 2
@@ -712,7 +785,9 @@ module CourseHelpers
       else
         hue = custom.to_i
       end
-    else
+    end
+
+    if hue.nil?
       prefix = course_name[0..6].upcase.strip
       # Stable hash using character values
       hash_val = prefix.chars.map(&:ord).reduce(0, :+)

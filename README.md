@@ -15,6 +15,19 @@ A lightweight, high-performance Brightspace companion that aggregates notificati
   - Real-time GPA calculation (USM-weighted).
   - "Max Potential" cumulative GPA tracking.
   - "Confidence Shields" (metric-driven data reliability scores).
+- **External REST API**:
+  - Full CRUD access to local data via a modern JSON API.
+  - Secure authentication using JWT (JSON Web Tokens) or custom API keys.
+  - Support for multi-interface listening (0.0.0.0) for remote access from mobile apps or other computers.
+- **Remote Server Integration**:
+  - Connect your local Brilliant client to a remote "Brilliant Server" instance.
+  - Seamlessly use a centralized database while maintaining a native local experience.
+- **Security & Privacy**:
+  - Optional Web Access Passcode to gate the application when running in a browser.
+  - All local data stays local; remote connections are secured via JWT.
+- **Customizable Dashboard**:
+  - Toggle visibility of "My Course List", "Upcoming Assignments", and "Recent Updates".
+  - Smart Layouts: Dashboard automatically centers and expands content when the sidebar is disabled.
 - **Intelligent Synchronization**: Protecting historical data (archived courses/grades) even when instructor data on Brightspace thins.
 - **Interactive Course View**: 
   - Collapsible instructions, feedback, and rubrics.

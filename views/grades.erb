@@ -1,147 +1,83 @@
 <%= erb :'partials/course_detail_header' %>
-<!-- Chart.js for Grade Analytics -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <div class="columns">
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
   </div>
-  <div class="column is-9">
-    <div class="box">
-      <div class="level mb-5">
-        <div class="level-left">
-          <div>
-            <h4 class="title is-4 mb-0"><i class="fas fa-poll mr-2"></i> Grades</h4>
-            <p class="is-size-7 has-text-grey">Points-based grading system (weight is proportional to points).</p>
+  <div class="column is-9" id="grades-root">
+    <div class="is-flex is-justify-content-center is-align-items-center" style="min-height: 400px;">
+      <div class="has-text-centered">
+        <span class="icon is-large has-text-primary mb-4">
+          <i class="fas fa-circle-notch fa-spin fa-3x"></i>
+        </span>
+        <p class="is-size-5 has-text-grey">Loading grades and analytics...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const COURSE_ID = "<%= @course_id %>";
+
+  async function loadGrades() {
+    const root = document.getElementById('grades-root');
+    try {
+      const response = await fetch(`/api/v1/courses/${COURSE_ID}/grades/summary`);
+      if (!response.ok) throw new Error("Failed to fetch grades");
+      const data = await response.json();
+      renderGrades(data);
+    } catch (err) {
+      console.error(err);
+      root.innerHTML = `
+        <div class="notification is-danger">
+          <h3 class="title is-5">Error Connection Lost</h3>
+          <p>Failed to load grades. Please ensure the backend is running.</p>
+          <button class="button is-white is-small mt-2" onclick="location.reload()">Retry</button>
+        </div>
+      `;
+    }
+  }
+
+  function renderGrades(data) {
+    const root = document.getElementById('grades-root');
+    const { grades, grade_stats } = data;
+
+    let html = `
+      <div class="box">
+        <div class="level mb-5">
+          <div class="level-left">
+            <div>
+              <h4 class="title is-4 mb-0"><i class="fas fa-poll mr-2"></i> Grades</h4>
+              <p class="is-size-7 has-text-grey">Points-based grading system (weight is proportional to points).</p>
+            </div>
+          </div>
+          <div class="level-right">
+            ${grade_stats.all_possible_points > 0 ? `
+              <div class="level-item has-text-centered px-4">
+                <div>
+                  <p class="heading">Current Grade</p>
+                  <p class="title ${getGradeColor(grade_stats.score)}">${grade_stats.score}%</p>
+                </div>
+              </div>
+              <div class="level-item has-text-centered px-4" style="border-left: 1px solid #eee;">
+                <div>
+                  <p class="heading">Confidence</p>
+                  <p class="title ${getConfidenceColor(grade_stats.confidence)}">${grade_stats.confidence}%</p>
+                </div>
+              </div>
+            ` : ''}
           </div>
         </div>
-        <div class="level-right">
-          <% if @grade_stats && @grade_stats[:all_possible_points] > 0 %>
-            <div class="level-item has-text-centered px-4">
-              <div>
-                <p class="heading">Current Grade</p>
-                <p class="title <%= grade_color(@grade_stats[:score]) %>"><%= @grade_stats[:score] %>%</p>
-              </div>
-            </div>
-            <div class="level-item has-text-centered px-4" style="border-left: 1px solid #eee;">
-              <div>
-                <p class="heading">Confidence</p>
-                <p class="title <%= confidence_color(@grade_stats[:confidence]) %>"><%= @grade_stats[:confidence] %>%</p>
-              </div>
-            </div>
-          <% end %>
-        </div>
-      </div>
 
-      <%# Grade Progress Chart %>
-      <% 
-         # Prepare data for trend chart (Points based)
-         graded_in_order = @grades.is_a?(ActiveRecord::Relation) ? 
-                           @grades.select(&:is_graded?).sort_by { |g| g.last_modified || Time.at(0) } : 
-                           []
-                           
-         if graded_in_order.any?
-           running_earned = 0
-           running_possible = 0
-           chart_data = graded_in_order.map do |g|
-             p_pos = g.denominator || 0
-             if p_pos > 0
-               running_earned += g.numerator || 0
-               running_possible += p_pos
-               {
-                 name: g.name,
-                 date: g.last_modified ? g.last_modified.strftime("%b %d") : "N/A",
-                 score: ((running_earned.to_f / running_possible.to_f) * 100).round(2)
-               }
-             end
-           end.compact
-         end
-      %>
-
-      <% if chart_data && chart_data.size > 1 %>
-        <div class="mb-6 p-4" style="background: #fafafa; border-radius: 8px; border: 1px solid #eee;">
-          <h6 class="title is-6 mb-4"><i class="fas fa-chart-line mr-2"></i> Grade Trend (Cumulative Points Average)</h6>
+        <!-- Grade Chart -->
+        <div id="grade-chart-container" class="mb-6 p-4 is-hidden" style="background: #fafafa; border-radius: 8px; border: 1px solid #eee;">
+          <h6 class="title is-6 mb-4"><i class="fas fa-chart-line mr-2"></i> Grade Trend</h6>
           <canvas id="gradeTrendChart" style="max-height: 300px;"></canvas>
-          <script>
-            document.addEventListener('DOMContentLoaded', function() {
-              const ctx = document.getElementById('gradeTrendChart').getContext('2d');
-              new Chart(ctx, {
-                type: 'line',
-                data: {
-                  labels: <%= chart_data.map { |d| d[:date] }.to_json %>,
-                  datasets: [{
-                    label: 'Running Total (%)',
-                    data: <%= chart_data.map { |d| d[:score] }.to_json %>,
-                    borderColor: '#739AC3',
-                    backgroundColor: 'rgba(115, 154, 195, 0.1)',
-                    borderWidth: 3,
-                    tension: 0.3,
-                    fill: true,
-                    transition: { duration: 0 }
-                  }]
-                },
-                options: {
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  scales: {
-                    y: {
-                      beginAtZero: false,
-                      min: Math.max(0, Math.min(...<%= chart_data.map { |d| d[:score] }.to_json %>) - 5),
-                      max: 100,
-                      ticks: { callback: function(value) { return value + '%'; } }
-                    }
-                  },
-                  plugins: {
-                    tooltip: {
-                      callbacks: {
-                        afterLabel: function(context) {
-                          const names = <%= chart_data.map { |d| d[:name] }.to_json %>;
-                          return 'Assignment: ' + names[context.dataIndex];
-                        }
-                      }
-                    }
-                  }
-                }
-              });
-            });
-          </script>
         </div>
-      <% end %>
 
-      <% if @grade_stats && @grade_stats[:confidence] < 100 %>
-         <div class="notification is-light is-info py-2 px-4 is-size-7 mb-4">
-           <strong>Confidence Note:</strong> Only <%= @grade_stats[:total_points_possible].to_i %> of the <%= @grade_stats[:all_possible_points].to_i %> total points for this course have been graded so far.
-         </div>
+        ${renderAnalytics(grade_stats)}
 
-         <% if @grade_stats[:remaining_points] > 0 %>
-            <div class="box has-background-info-light p-3 mb-4">
-              <div class="columns is-vcentered is-mobile">
-                <div class="column is-narrow">
-                  <div class="icon is-large has-text-info">
-                    <i class="fas fa-bullseye fa-2x"></i>
-                  </div>
-                </div>
-                <div class="column">
-                  <p class="is-size-7 uppercase has-text-weight-bold has-text-info mb-1" style="text-transform: uppercase; letter-spacing: 0.5px;">Goal Projection</p>
-                  <p class="is-size-6">
-                    To reach your <strong><%= @grade_stats[:target_grade] %>%</strong> target, 
-                    <% if @grade_stats[:is_impossible] %>
-                      <span class="has-text-danger">it is unfortunately mathematically impossible (requires >100% average).</span>
-                    <% else %>
-                      you need to average 
-                      <span class="tag is-info is-medium" style="font-weight: bold; margin: 0 5px;">
-                        <%= @grade_stats[:required_avg] %>%
-                      </span> 
-                      on the remaining <%= @grade_stats[:remaining_points].to_i %> points.
-                    <% end %>
-                  </p>
-                </div>
-              </div>
-            </div>
-         <% end %>
-      <% end %>
-
-      <% if @grades && !@grades.empty? %>
         <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
@@ -153,105 +89,144 @@
             </tr>
           </thead>
           <tbody>
-            <% @grades.each do |g| %>
-              <% 
-                name = g.respond_to?(:name) ? g.name : g['GradeObjectName']
-                due_date = g.respond_to?(:due_date) ? g.due_date : nil
-                numerator = g.respond_to?(:numerator) ? g.numerator : g['PointsNumerator']
-                denominator = g.respond_to?(:denominator) ? g.denominator : g['PointsDenominator']
-                is_graded = g.respond_to?(:is_graded?) ? g.is_graded? : (!numerator.nil? && numerator > 0)
-                
-                # Relative weight in a points system is (points / total possible)
-                rel_weight = @grade_stats[:all_possible_points] > 0 ? ((denominator.to_f / @grade_stats[:all_possible_points]) * 100).round(1) : 0
-              %>
-              <tr class="<%= is_graded ? '' : 'has-background-white-ter has-text-grey-light' %>">
-                <td>
-                  <%= render_markdown_inline(name) %>
-                  <% unless is_graded %>
-                    <span class="tag is-small is-light ml-2">Ungraded</span>
-                  <% end %>
-                  <% if g.respond_to?(:is_extra_credit) && g.is_extra_credit %>
-                    <span class="tag is-small is-warning ml-2">Extra Credit</span>
-                  <% end %>
-                  <div class="is-pulled-right">
-                    <button class="button is-ghost is-small p-0 h-auto" onclick="toggleExtraCredit(<%= g.id %>)" title="Toggle Extra Credit">
-                      <i class="fas fa-star <%= g.is_extra_credit ? 'has-text-warning' : 'has-text-grey-lighter' %>"></i>
-                    </button>
-                  </div>
-                </td>
-                <td class="has-text-centered">
-                  <span class="is-size-7">
-                    <%= due_date ? due_date.strftime("%b %d") : '<span class="has-text-grey-lighter">-</span>' %>
-                  </span>
-                </td>
-                <td class="has-text-centered">
-                  <span class="is-size-7"><%= rel_weight %>%</span>
-                </td>
-                <td class="has-text-centered">
-                   <div class="is-size-7" style="font-family: monospace;">
-                     <% if denominator %>
-                        <%= numerator || '-' %> / <%= denominator %>
-                     <% else %>
-                        -
-                     <% end %>
-                   </div>
-                </td>
-                <td class="has-text-right">
-                  <% if is_graded && numerator && denominator && denominator > 0 %>
-                    <% perc = ((numerator.to_f / denominator) * 100).round(1) %>
-                    <span class="tag <%= grade_color(perc) %> is-light" style="font-weight: bold;">
-                      <%= perc %>%
-                    </span>
-                  <% else %>
-                    <span class="has-text-grey-light">-</span>
-                  <% end %>
-                </td>
-              </tr>
-            <% end %>
+            ${grades.map(g => renderGradeRow(g)).join('')}
           </tbody>
-          <% if @grade_stats && @grade_stats[:all_possible_points] > 0 %>
+          ${grade_stats.all_possible_points > 0 ? `
             <tfoot>
               <tr class="has-background-white-bis">
-                <td class="has-text-weight-bold">
-                  Course Total
-                </td>
-                <td class="has-text-centered has-text-weight-bold">
-                  100%
-                </td>
+                <td class="has-text-weight-bold">Course Total</td>
+                <td class="has-text-centered has-text-weight-bold">100%</td>
                 <td class="has-text-centered">
-                  <span class="is-size-7 has-text-weight-bold">
-                    <%= @grade_stats[:total_points_earned].to_i %> / <%= @grade_stats[:total_points_possible].to_i %> pts
-                  </span>
+                  <span class="is-size-7 has-text-weight-bold">${grade_stats.total_points_earned} / ${grade_stats.total_points_possible} pts</span>
                 </td>
                 <td class="has-text-right">
-                  <span class="tag <%= grade_color(@grade_stats[:score]) %> is-medium" style="font-weight: bold;">
-                    <%= @grade_stats[:score] %>%
+                  <span class="tag ${getGradeColor(grade_stats.score)} is-medium" style="font-weight: bold;">
+                    ${grade_stats.score}%
                   </span>
                 </td>
               </tr>
             </tfoot>
-          <% end %>
+          ` : ''}
         </table>
-      <% else %>
-        <p class="has-text-grey">No grade values found yet.</p>
-      <% end %>
-    </div>
-  </div>
-</div>
+      </div>
+    `;
 
-<script>
-function toggleExtraCredit(gradeId) {
-  const courseId = "<%= @course_id %>";
-  fetch(`/course/${courseId}/grades/${gradeId}/toggle_extra_credit`, {
-    method: 'POST',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-  })
-  .then(response => response.json())
-  .then(data => {
-    if (data.status === 'ok') {
-      location.reload(); // Refresh to show updated matching
-    }
-  })
-  .catch(err => console.error("Error toggling extra credit:", err));
-}
+    root.innerHTML = html;
+    initGradesChart(grades);
+  }
+
+  function renderAnalytics(stats) {
+    if (stats.confidence >= 100 || stats.remaining_points <= 0) return '';
+    
+    return `
+      <div class="notification is-light is-info py-2 px-4 is-size-7 mb-4">
+        <strong>Confidence Note:</strong> Only ${stats.total_points_possible} of the ${stats.all_possible_points} total points graded.
+      </div>
+      <div class="box has-background-info-light p-3 mb-4">
+        <div class="columns is-vcentered is-mobile">
+          <div class="column is-narrow"><div class="icon is-large has-text-info"><i class="fas fa-bullseye fa-2x"></i></div></div>
+          <div class="column">
+            <p class="is-size-7 uppercase has-text-weight-bold has-text-info mb-1" style="text-transform: uppercase;">Goal Projection</p>
+            <p class="is-size-6">
+              To reach your <strong>${stats.target_grade}%</strong> target, 
+              ${stats.is_impossible ? '<span class="has-text-danger">it is impossible.</span>' : 
+                `you need to average <span class="tag is-info is-medium" style="font-weight: bold; margin: 0 5px;">${stats.required_avg}%</span> on the remaining ${stats.remaining_points} points.`}
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderGradeRow(g) {
+    const isGraded = g.numerator !== null;
+    return `
+      <tr class="${isGraded ? '' : 'has-background-white-ter has-text-grey-light'}">
+        <td>
+          ${g.name_html}
+          ${!isGraded ? '<span class="tag is-small is-light ml-2">Ungraded</span>' : ''}
+          ${g.is_extra_credit ? '<span class="tag is-small is-warning ml-2">Extra Credit</span>' : ''}
+          <div class="is-pulled-right">
+            <button class="button is-ghost is-small p-0 h-auto" onclick="toggleExtraCredit(${g.id})">
+              <i class="fas fa-star ${g.is_extra_credit ? 'has-text-warning' : 'has-text-grey-lighter'}"></i>
+            </button>
+          </div>
+        </td>
+        <td class="has-text-centered is-size-7">
+          ${g.due_date ? new Date(g.due_date).toLocaleDateString([], {month:'short', day:'numeric'}) : '-'}
+        </td>
+        <td class="has-text-centered is-size-7">${g.rel_weight}%</td>
+        <td class="has-text-centered is-size-7" style="font-family: monospace;">
+          ${g.numerator !== null ? g.numerator : '-'} / ${g.denominator || '-'}
+        </td>
+        <td class="has-text-right">
+          ${g.perc !== null ? `<span class="tag ${getGradeColor(g.perc)} is-light" style="font-weight: bold;">${g.perc}%</span>` : '-'}
+        </td>
+      </tr>
+    `;
+  }
+
+  function initGradesChart(grades) {
+    const graded = grades.filter(g => g.numerator !== null).sort((a,b) => new Date(a.last_modified) - new Date(b.last_modified));
+    if (graded.length < 2) return;
+
+    document.getElementById('grade-chart-container').classList.remove('is-hidden');
+    const labels = [];
+    const dataPoints = [];
+    const names = [];
+    let runningEarned = 0;
+    let runningPossible = 0;
+
+    graded.forEach(g => {
+      if (g.denominator > 0) {
+        runningEarned += g.numerator;
+        runningPossible += g.denominator;
+        labels.push(new Date(g.last_modified).toLocaleDateString([], {month:'short', day:'numeric'}));
+        dataPoints.push(((runningEarned / runningPossible) * 100).toFixed(2));
+        names.push(g.name);
+      }
+    });
+
+    const ctx = document.getElementById('gradeTrendChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Cumulative Total (%)',
+          data: dataPoints,
+          borderColor: '#739AC3',
+          backgroundColor: 'rgba(115, 154, 195, 0.1)',
+          borderWidth: 3,
+          tension: 0.3,
+          fill: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: false, max: 100, ticks: { callback: v => v + '%' } } },
+        plugins: { tooltip: { callbacks: { afterLabel: context => 'Assignment: ' + names[context.dataIndex] } } }
+      }
+    });
+  }
+
+  function toggleExtraCredit(gradeId) {
+    fetch(`/course/${COURSE_ID}/grades/${gradeId}/toggle_extra_credit`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    .then(res => res.json())
+    .then(data => { if (data.status === 'ok') loadGrades(); });
+  }
+
+  function getGradeColor(score) {
+    if (score >= 90) return 'is-primary';
+    if (score >= 80) return 'is-warning';
+    return score < 70 ? 'is-danger' : 'is-warning';
+  }
+
+  function getConfidenceColor(conf) {
+    if (conf >= 70) return 'has-text-primary';
+    return conf < 30 ? 'has-text-danger' : 'has-text-warning-dark';
+  }
+
+  document.addEventListener('DOMContentLoaded', () => loadGrades());
 </script>

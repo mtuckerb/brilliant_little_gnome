@@ -3,59 +3,109 @@
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
   </div>
-  <div class="column is-9">
-    <div class="box">
-      <div class="level">
-        <div class="level-left">
-          <h4 class="title is-4"><i class="fas fa-list mr-2"></i> <%= @forum ? @forum['Name'] : 'Topics' %></h4>
-        </div>
-        <div class="level-right">
-          <a href="<%= $client.portal_url_for(:course_home, {course_id: @course_id}) %>" class="button is-small is-link is-light" target="_blank">
-            <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
-            <span>View Forum in Brightspace</span>
-          </a>
-        </div>
+  <div class="column is-9" id="discussion-topics-root">
+    <div class="is-flex is-justify-content-center is-align-items-center" style="min-height: 400px;">
+      <div class="has-text-centered">
+        <span class="icon is-large has-text-primary mb-4">
+          <i class="fas fa-circle-notch fa-spin fa-3x"></i>
+        </span>
+        <p class="is-size-5 has-text-grey">Loading Topics...</p>
       </div>
-      
-      <% if @topics && !@topics.empty? %>
-        <div class="list is-hoverable">
-          <% 
-             @topics.each do |topic| 
-               is_obj = topic.is_a?(DiscussionTopic)
-               topic_id = is_obj ? topic.brightspace_id : topic['TopicId']
-               name = is_obj ? topic.name : topic['Name']
-               desc = is_obj ? topic.description : topic['Description']
-               desc_text = desc.is_a?(Hash) ? (desc['Html'] || desc['Text'] || "") : (desc || "")
-               thread_count = is_obj ? topic.display_thread_count : (topic['ThreadCount'] || 0)
-               last_post_date = is_obj ? (topic.last_post_date || topic.discussion_posts.maximum(:posted_at)) : (topic['LastPostDate'] ? Time.parse(topic['LastPostDate']) : nil)
-               end_date = is_obj ? nil : topic['EndDate']
-          %>
-            <a href="/course/<%= @course_id %>/discussions/<%= @forum_id %>/topics/<%= topic_id %>" class="list-item py-4">
-              <div class="is-flex is-justify-content-space-between is-align-items-center">
-                <div class="content">
-                  <h5 class="title is-5 mb-1"><%= render_markdown_inline(name) %></h5>
-                  <div class="is-size-6 has-text-grey">
-                    <%= desc_text.gsub(/<[^>]+>/, '').strip.slice(0..150) %><%= "..." if desc_text.length > 150 %>
-                  </div>
-                </div>
-                <div class="has-text-right">
-                  <% if end_date %>
-                    <div class="is-size-7 has-text-danger mb-1">
-                      <i class="fas fa-calendar-times mr-1"></i> Due: <%= format_date(end_date, "%b %d") %>
-                    </div>
-                  <% elsif last_post_date %>
-                     <div class="is-size-7 has-text-grey mb-1">Activity: <%= format_date(last_post_date, "%b %d") %></div>
-                  <% end %>
-                  <span class="tag is-light"><%= thread_count || 0 %> Threads</span>
-                  <span class="icon has-text-grey-light ml-4"><i class="fas fa-chevron-right"></i></span>
-                </div>
-              </div>
-            </a>
-          <% end %>
-        </div>
-      <% else %>
-        <p class="has-text-grey">No topics found for this forum.</p>
-      <% end %>
     </div>
   </div>
 </div>
+
+<script>
+  const COURSE_ID = "<%= @course_id %>";
+  const FORUM_ID = "<%= @forum_id %>";
+
+  async function loadDiscussionTopics(forceRefresh = false) {
+    const root = document.getElementById('discussion-topics-root');
+    try {
+      let url = `/api/v1/courses/${COURSE_ID}/discussions/${FORUM_ID}/topics`;
+      if (forceRefresh) url += '?force_refresh=true';
+      
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Failed to fetch topics");
+      const data = await response.json();
+      renderDiscussionTopics(data);
+    } catch (err) {
+      console.error(err);
+      root.innerHTML = `
+        <div class="notification is-danger">
+          <h3 class="title is-5">Error Connection Lost</h3>
+          <p>Failed to load discussion topics. Please ensure the backend is running.</p>
+          <button class="button is-white is-small mt-2" onclick="location.reload()">Retry</button>
+        </div>
+      `;
+    }
+  }
+
+  function renderDiscussionTopics(data) {
+    const root = document.getElementById('discussion-topics-root');
+    const { forum, topics } = data;
+
+    if (!topics || topics.length === 0) {
+      root.innerHTML = `
+        <div class="box">
+          <h4 class="title is-4"><i class="fas fa-list mr-2"></i> ${forum ? forum.name : 'Topics'}</h4>
+          <p class="has-text-grey">No topics found for this forum.</p>
+        </div>
+      `;
+      return;
+    }
+
+    let html = `
+      <div class="box">
+        <div class="level">
+          <div class="level-left">
+            <h4 class="title is-4"><i class="fas fa-list mr-2"></i> ${forum ? forum.name : 'Topics'}</h4>
+          </div>
+          <div class="level-right">
+            <button class="button is-small is-white has-text-grey mr-2" onclick="loadDiscussionTopics(true)">
+              <i class="fas fa-sync mr-1"></i> Refresh
+            </button>
+            <a href="https://${window.location.host}/d2l/le/1.40/${COURSE_ID}/discussions/forums/${FORUM_ID}/View" class="button is-small is-link is-light" target="_blank">
+              <span class="icon is-small"><i class="fas fa-external-link-alt"></i></span>
+              <span>View Forum in Brightspace</span>
+            </a>
+          </div>
+        </div>
+        
+        <div class="list is-hoverable">
+          ${topics.map(topic => {
+            const topicId = topic.brightspace_id;
+            const name = topic.name;
+            const descText = topic.description || "";
+            const threadCount = topic.display_thread_count || 0;
+            const lastPostDate = topic.last_post_date;
+            
+            return `
+              <a href="/course/${COURSE_ID}/discussions/${FORUM_ID}/topics/${topicId}" class="list-item py-4">
+                <div class="is-flex is-justify-content-space-between is-align-items-center">
+                  <div class="content">
+                    <h5 class="title is-5 mb-1">${name}</h5>
+                    <div class="is-size-6 has-text-grey">
+                      ${descText.replace(/<[^>]+>/g, '').trim().slice(0, 150)}${descText.length > 150 ? '...' : ''}
+                    </div>
+                  </div>
+                  <div class="has-text-right">
+                    ${lastPostDate ? `
+                       <div class="is-size-7 has-text-grey mb-1">Activity: ${new Date(lastPostDate).toLocaleDateString()}</div>
+                    ` : ''}
+                    <span class="tag is-light">${threadCount} Threads</span>
+                    <span class="icon has-text-grey-light ml-4"><i class="fas fa-chevron-right"></i></span>
+                  </div>
+                </div>
+              </a>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+
+    root.innerHTML = html;
+  }
+
+  document.addEventListener('DOMContentLoaded', () => loadDiscussionTopics());
+</script>

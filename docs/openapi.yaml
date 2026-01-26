@@ -1,11 +1,14 @@
 openapi: 3.0.0
 info:
   title: Brilliant Sidecar API
-  version: 1.3.0
+  version: 1.4.0
   description: |
     REST API for interacting with cached LMS data and Model Context Protocol (MCP) server integration.
     
-    All `/api/v1/*` endpoints require an `X-API-KEY` header unless otherwise specified.
+    All `/api/v1/*` endpoints require authentication via:
+    1. `X-API-KEY` header
+    2. Bearer JWT Token in `Authorization` header
+    3. Active internal session (for browser-based SPA)
 
 servers:
   - url: /api/v1
@@ -17,6 +20,10 @@ components:
       type: apiKey
       in: header
       name: X-API-KEY
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
 
   schemas:
     Course:
@@ -71,6 +78,7 @@ components:
 
 security:
   - ApiKeyAuth: []
+  - BearerAuth: []
 
 paths:
   /status:
@@ -102,6 +110,90 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Course'
+
+  /dashboard/summary:
+    get:
+      summary: Get consolidated data for the landing dashboard
+      responses:
+        '200':
+          description: Summary of overall GPA, upcoming tasks, and recent activity
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /courses/{id}/summary:
+    get:
+      summary: Get course overview and upcoming items
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Consolidated course data including syllabus and grades
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /courses/{id}/announcements:
+    get:
+      summary: Get course announcements
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: List of announcements with rendered bodies
+          content:
+            application/json:
+              schema:
+                type: array
+
+  /courses/{id}/search:
+    get:
+      summary: Search course content (modules and topics)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Search results grouped by type
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /calendar:
+    get:
+      summary: Get items for calendar visualization
+      parameters:
+        - name: view
+          in: query
+          schema: { type: string, enum: [month, week] }
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+        - name: show_completed
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Grouped items with visualization metadata
+          content:
+            application/json:
+              schema:
+                type: object
 
   /courses/{id}/grades:
     get:
@@ -181,6 +273,19 @@ paths:
                 $ref: '#/components/schemas/Preferences'
         '422':
           description: Validation error
+
+  /token:
+    get:
+      summary: Generate a short-lived JWT token for external API access
+      responses:
+        '200':
+          description: A JWT Bearer token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
 
   /mcp/sse:
     get:

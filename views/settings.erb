@@ -13,6 +13,9 @@
           <% end %>
 
           <form action="/settings" method="POST">
+            <input type="hidden" name="host" value="<%= @host %>">
+            <input type="hidden" name="cookies" value="">
+
             <h3 class="title is-4">Profile</h3>
             <div class="field">
               <label class="label">Display Name</label>
@@ -40,112 +43,229 @@
             </div>
 
             <hr>
-            <h3 class="title is-4">External REST API</h3>
-            <div class="field">
-              <label class="checkbox">
-                <input type="checkbox" name="api_enabled" value="true" <%= 'checked' if @user_prefs.api_enabled %>>
-                Enable REST API
-              </label>
-            </div>
-
-            <div class="field">
-              <label class="checkbox">
-                <input type="checkbox" name="api_listen_all" value="true" <%= 'checked' if @user_prefs.api_listen_all %>>
-                Listen on all interfaces (0.0.0.0) - <i>Required for external access</i>
-              </label>
-            </div>
-
-            <div class="field">
-              <label class="label">API Key (Optional Authentication)</label>
-              <div class="control has-icons-left">
-                <input class="input" type="text" name="api_key" value="<%= @user_prefs.api_key %>" placeholder="Enter a secure key or leave blank">
-                <span class="icon is-small is-left">
-                  <i class="fas fa-key"></i>
-                </span>
-              </div>
-              <p class="help">If set, clients must provide this in the 'X-API-Key' or 'Authorization' header.</p>
-            </div>
-
-            <hr>
-            <h3 class="title is-4">GPA Calculation (USM Scale)</h3>
+            <h3 class="title is-4">Dashboard Visibility</h3>
             <div class="columns">
               <div class="column">
                 <div class="field">
-                  <label class="label">Historic GPA (Transfer/Previous)</label>
-                  <div class="control has-icons-left">
-                    <input class="input" type="number" step="0.001" name="historic_gpa" value="<%= @user_prefs.historic_gpa %>">
-                    <span class="icon is-small is-left"><i class="fas fa-graduation-cap"></i></span>
-                  </div>
+                  <label class="checkbox">
+                    <input type="checkbox" name="show_course_list" value="true" <%= 'checked' if @user_prefs.show_course_list %>>
+                    Show "My Course List"
+                  </label>
                 </div>
               </div>
               <div class="column">
                 <div class="field">
-                  <label class="label">Historic Units (Credits)</label>
-                  <div class="control has-icons-left">
-                    <input class="input" type="number" name="historic_units" value="<%= @user_prefs.historic_units %>">
-                    <span class="icon is-small is-left"><i class="fas fa-calculator"></i></span>
-                  </div>
+                  <label class="checkbox">
+                    <input type="checkbox" name="show_upcoming_assignments" value="true" <%= 'checked' if @user_prefs.show_upcoming_assignments %>>
+                    Show "Upcoming Assignments"
+                  </label>
                 </div>
               </div>
-            </div>
-
-            <hr>
-            <h3 class="title is-4">Brightspace Connection</h3>
-            <div class="field">
-              <label class="label">Brightspace Host</label>
-              <div class="control has-icons-left">
-                <input class="input" type="text" name="host" value="<%= @host %>">
-                <span class="icon is-small is-left">
-                  <i class="fas fa-globe"></i>
-                </span>
-              </div>
-            </div>
-
-            <div class="field">
-              <label class="label">Update Cookies (Leave blank to keep current)</label>
-              <div class="control">
-                <textarea class="textarea" name="cookies" placeholder="Paste new cookie string here..." rows="3"></textarea>
-              </div>
-            </div>
-
-            <div class="notification is-info is-light mt-4">
-              <div class="level">
-                <div class="level-left">
-                  <div>
-                    <p><strong>Magic Re-authentication</strong></p>
-                    <p class="is-size-7">Launch a browser window to automatically refresh your session.</p>
-                  </div>
-                </div>
-                <div class="level-right">
-                  <button type="button" onclick="startAppLogin()" class="button is-info">
-                    <span class="icon"><i class="fas fa-magic"></i></span>
-                    <span><strong>Launch</strong></span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="message is-info is-light">
-              <div class="message-body is-size-7">
-                <div class="columns is-vcentered">
-                  <div class="column is-narrow">
-                    <span class="icon is-large has-text-info"><i class="fas fa-info-circle fa-2x"></i></span>
-                  </div>
-                  <div class="column">
-                    <strong>Intelligent Syncing enabled:</strong> Course metadata updates will prioritize existing robust data. Historical data (like archived content or grades) is protected even if omitted from current Brightspace responses.
-                  </div>
+              <div class="column">
+                <div class="field">
+                  <label class="checkbox">
+                    <input type="checkbox" name="show_recent_updates" value="true" <%= 'checked' if @user_prefs.show_recent_updates %>>
+                    Show "Recent Updates"
+                  </label>
                 </div>
               </div>
             </div>
 
             <div class="field mt-5">
-              <div class="control">
-                <button type="submit" class="button is-primary">
-                  <strong>Save Changes</strong>
-                </button>
+              <div class="level">
+                <div class="level-left">
+                  <div class="control">
+                    <button type="submit" class="button is-primary">
+                      <strong>Save Changes</strong>
+                    </button>
+                  </div>
+                </div>
+                <div class="level-right">
+                  <div class="buttons">
+                    <button type="button" class="button is-info is-light" onclick="toggleSemesterModal(true)">
+                      <span class="icon"><i class="fas fa-calendar-alt"></i></span>
+                      <span>Semester Colors</span>
+                    </button>
+                    <button type="button" class="button is-light" onclick="toggleAdvancedModal(true)">
+                      <span class="icon"><i class="fas fa-sliders-h"></i></span>
+                      <span>Advanced Settings</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Semester Colors Modal -->
+            <div id="semester-modal" class="modal">
+              <div class="modal-background" onclick="toggleSemesterModal(false)"></div>
+              <div class="modal-card">
+                <header class="modal-card-head">
+                  <p class="modal-card-title">Semester Colors</p>
+                  <button type="button" class="delete" aria-label="close" onclick="toggleSemesterModal(false)"></button>
+                </header>
+                <section class="modal-card-body">
+                  <p class="is-size-7 has-text-grey mb-4">Set custom colors for specific semesters. This will apply to all courses in that semester unless they have an individual color set.</p>
+                  
+                  <% 
+                    all_semesters = Course.where.not(semester: [nil, ""]).pluck(:semester).uniq.sort
+                    semester_colors = @user_prefs.semester_colors || {}
+                  %>
+                  
+                  <% if all_semesters.empty? %>
+                    <div class="notification is-light has-text-centered">
+                      No semesters found in your course list yet.
+                    </div>
+                  <% else %>
+                    <% all_semesters.each do |sem| %>
+                      <div class="field is-horizontal">
+                        <div class="field-label is-normal">
+                          <label class="label is-size-7"><%= sem %></label>
+                        </div>
+                        <div class="field-body">
+                          <div class="field">
+                            <div class="control">
+                              <input class="input is-small" type="color" name="semester_colors[<%= sem %>]" value="<%= semester_colors[sem] || "#739AC3" %>" style="max-width: 100px; padding: 2px;">
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    <% end %>
+                  <% end %>
+                </section>
+                <footer class="modal-card-head" style="justify-content: flex-end; border-top: 1px solid #dbdbdb; border-bottom: 0;">
+                  <button type="button" class="button is-primary" onclick="saveSemesterColors()">Save Semester Colors</button>
+                  <button type="button" class="button" onclick="toggleSemesterModal(false)">Cancel</button>
+                </footer>
+              </div>
+            </div>
+
+            <!-- Advanced Settings Modal -->
+            <div id="advanced-modal" class="modal">
+              <div class="modal-background" onclick="toggleAdvancedModal(false)"></div>
+              <div class="modal-card">
+                <header class="modal-card-head">
+                  <p class="modal-card-title">Advanced Settings</p>
+                  <button type="button" class="delete" aria-label="close" onclick="toggleAdvancedModal(false)"></button>
+                </header>
+                <section class="modal-card-body">
+                  <h3 class="title is-4">External REST API</h3>
+                  <div class="field">
+                    <label class="checkbox">
+                      <input type="checkbox" name="api_enabled" value="true" <%= 'checked' if @user_prefs.api_enabled %>>
+                      Enable REST API
+                    </label>
+                  </div>
+
+                  <div class="field">
+                    <label class="checkbox">
+                      <input type="checkbox" name="api_listen_all" value="true" <%= 'checked' if @user_prefs.api_listen_all %>>
+                      Listen on all interfaces (0.0.0.0) - <i>Required for external access</i>
+                    </label>
+                  </div>
+
+                  <div class="field">
+                    <label class="label">API Key (Optional Authentication)</label>
+                    <div class="control has-icons-left">
+                      <input class="input" type="password" name="api_key" value="<%= @user_prefs.api_key %>" placeholder="Enter a secure key or leave blank">
+                      <span class="icon is-small is-left">
+                        <i class="fas fa-key"></i>
+                      </span>
+                    </div>
+                    <p class="help">If set, clients must provide this in the 'X-API-Key' or 'Authorization' header. (Legacy)</p>
+                  </div>
+
+                  <div class="field">
+                    <label class="label">JWT Secret</label>
+                    <div class="control has-icons-left">
+                      <input class="input" type="password" name="jwt_secret" value="<%= @user_prefs.jwt_secret %>">
+                      <span class="icon is-small is-left">
+                        <i class="fas fa-lock"></i>
+                      </span>
+                    </div>
+                    <p class="help">Secret key used for signing JWT tokens. Keep this secure!</p>
+                  </div>
+
+                  <div class="field">
+                    <div class="control">
+                      <button type="button" class="button is-small is-link is-light" onclick="fetchApiToken()">
+                        <span class="icon"><i class="fas fa-id-badge"></i></span>
+                        <span>Get Current API Token</span>
+                      </button>
+                    </div>
+                    <div id="token-display" class="mt-2" style="display: none;">
+                      <div class="field has-addons">
+                        <div class="control is-expanded">
+                          <input id="token-input" class="input is-small" type="text" readonly>
+                        </div>
+                        <div class="control">
+                          <button type="button" class="button is-small is-info" onclick="copyToken()">
+                            Copy
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <hr>
+                  <h3 class="title is-4">Security</h3>
+                  <div class="field">
+                    <label class="label">Web Access Passcode</label>
+                    <div class="control has-icons-left">
+                      <input class="input" type="password" name="web_access_passcode" value="<%= @user_prefs.web_access_passcode %>" placeholder="Enter a passcode to gate web access">
+                      <span class="icon is-small is-left"><i class="fas fa-shield-alt"></i></span>
+                    </div>
+                    <p class="help">If set, users will be prompted for this passcode when accessing the application from a new browser or after logging out. Leave blank to disable.</p>
+                  </div>
+
+                  <hr>
+                  <h3 class="title is-4">Remote Brilliant Server</h3>
+                  <div class="field">
+                    <label class="checkbox">
+                      <input type="checkbox" name="remote_server_enabled" value="true" <%= 'checked' if @user_prefs.remote_server_enabled %>>
+                      Connect to Remote Brilliant Server
+                    </label>
+                    <p class="help">When enabled, the application will use the remote server's database instead of the local one.</p>
+                  </div>
+
+                  <div class="columns">
+                    <div class="column">
+                      <div class="field">
+                        <label class="label">Remote Server IP / Hostname</label>
+                        <div class="control has-icons-left">
+                          <input class="input" type="text" name="remote_server_ip" value="<%= @user_prefs.remote_server_ip %>" placeholder="e.g., 192.168.1.50">
+                          <span class="icon is-small is-left"><i class="fas fa-network-wired"></i></span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="column">
+                      <div class="field">
+                        <label class="label">Remote Server Port</label>
+                        <div class="control has-icons-left">
+                          <input class="input" type="number" name="remote_server_port" value="<%= @user_prefs.remote_server_port %>">
+                          <span class="icon is-small is-left"><i class="fas fa-door-open"></i></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+                <footer class="modal-card-foot">
+                  <button type="button" class="button is-primary" onclick="toggleAdvancedModal(false)">Done</button>
+                </footer>
               </div>
             </div>
           </form>
+
+          <hr>
+          <h3 class="title is-4">Brightspace Connection</h3>
+          <div class="field">
+            <div class="control">
+              <button type="button" class="button is-link" onclick="startAppLogin()">
+                <span class="icon"><i class="fas fa-magic"></i></span>
+                <span>Bright Space Login (Re-authenticate)</span>
+              </button>
+            </div>
+            <p class="help">If data is not syncing or your session has expired, use this button to re-authenticate with Brightspace via a secure popup window.</p>
+          </div>
 
           <hr>
           <h3 class="title is-4">Maintenance Tasks</h3>
@@ -187,6 +307,55 @@
 </section>
 
 <script>
+  function toggleAdvancedModal(show) {
+    const modal = document.getElementById('advanced-modal');
+    if (show) {
+      modal.classList.add('is-active');
+    } else {
+      modal.classList.remove('is-active');
+    }
+  }
+
+  function toggleSemesterModal(show) {
+    const modal = document.getElementById('semester-modal');
+    if (show) {
+      modal.classList.add('is-active');
+    } else {
+      modal.classList.remove('is-active');
+    }
+  }
+
+  async function saveSemesterColors() {
+    const modal = document.getElementById('semester-modal');
+    const inputs = modal.querySelectorAll('input[type="color"]');
+    const colors = {};
+    
+    inputs.forEach(input => {
+      // name is "semester_colors[Semester Name]"
+      const name = input.name.match(/\[(.*?)\]/)[1];
+      colors[name] = input.value;
+    });
+
+    try {
+      const resp = await fetch('/settings/semester_colors', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-Requested-With': 'XMLHttpRequest' 
+        },
+        body: new URLSearchParams({ colors: JSON.stringify(colors) })
+      });
+      
+      if (resp.ok) {
+        toggleSemesterModal(false);
+        // Optional: show a small toast or notification
+      }
+    } catch (err) {
+      console.error("Failed to save semester colors", err);
+      alert("Failed to save colors.");
+    }
+  }
+
   function startAppLogin() {
     const hostInput = document.querySelector('input[name="host"]');
     const host = (hostInput && hostInput.value) ? hostInput.value : "<%= @host %>";
@@ -195,7 +364,7 @@
       window.electron.startLogin(host);
     } else {
       // Fallback for non-electron debug
-      window.location.href = `/auth/login?host=${host}`;
+      window.location.href = `/login?host=${host}`;
     }
   }
 
@@ -203,7 +372,7 @@
     window.electron.onLoginComplete((data) => {
       // Fill the manual form and submit it automatically
       const hostInput = document.querySelector('input[name="host"]');
-      const cookieInput = document.querySelector('textarea[name="cookies"]');
+      const cookieInput = document.querySelector('input[name="cookies"]');
       
       if (hostInput && cookieInput) {
         hostInput.value = data.host;
@@ -212,5 +381,41 @@
         document.querySelector('form[action="/settings"]').submit();
       }
     });
+  }
+
+  function fetchApiToken() {
+    // We can't rely on being able to hit the API without the key here,
+    // and we don't store it in a cookie. We'll trigger a fetch using
+    // a special internal request that the server will allow because it's same-origin.
+    fetch('/api/v1/token', {
+      headers: {
+        'HTTP_X_API_KEY': '<%= @user_prefs.api_key %>' // This will fall back to existing session handling if possible
+      }
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.token) {
+        document.getElementById('token-input').value = data.token;
+        document.getElementById('token-display').style.display = 'block';
+      } else {
+        alert("Failed to fetch token. Ensure REST API is enabled and saved.");
+      }
+    });
+  }
+
+  function copyToken() {
+    const input = document.getElementById('token-input');
+    input.select();
+    input.setSelectionRange(0, 99999);
+    navigator.clipboard.writeText(input.value);
+    
+    const btn = event.target;
+    const originalText = btn.innerText;
+    btn.innerText = 'Copied!';
+    btn.classList.replace('is-info', 'is-success');
+    setTimeout(() => {
+      btn.innerText = originalText;
+      btn.classList.replace('is-success', 'is-info');
+    }, 2000);
   }
 </script>

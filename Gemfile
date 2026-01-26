@@ -14,5 +14,7 @@ gem 'base64'
 gem 'bigdecimal'
 gem 'rack-flash3'
 gem 'kramdown'
+gem 'jwt'
+gem 'pg'
 
 gem "rack-cache", "~> 1.17"

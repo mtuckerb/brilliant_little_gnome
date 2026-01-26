@@ -3,23 +3,69 @@
   <div class="column is-3">
     <%= erb :'partials/sidebar' %>
   </div>
-  <div class="column is-9">
-    <div class="box">
-      <div class="level">
-        <div class="level-left">
-          <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> Discussion Topics</h4>
-        </div>
-        <div class="level-right">
-           <div id="sync-indicator" class="is-hidden">
-             <span class="tag is-info is-light">
-               <span class="icon is-small mr-1"><i class="fas fa-sync fa-spin"></i></span>
-               <span id="sync-text">Syncing...</span>
-             </span>
-           </div>
-        </div>
+  <div class="column is-9" id="discussions-root">
+    <div class="is-flex is-justify-content-center is-align-items-center" style="min-height: 400px;">
+      <div class="has-text-centered">
+        <span class="icon is-large has-text-primary mb-4">
+          <i class="fas fa-circle-notch fa-spin fa-3x"></i>
+        </span>
+        <p class="is-size-5 has-text-grey">Loading Discussions...</p>
       </div>
-      
-      <% if @topics && @topics.any? %>
+    </div>
+  </div>
+</div>
+
+<script>
+  const COURSE_ID = "<%= @course_id %>";
+
+  async function loadDiscussions() {
+    const root = document.getElementById('discussions-root');
+    try {
+      const response = await fetch(`/api/v1/courses/${COURSE_ID}/discussions`);
+      if (!response.ok) throw new Error("Failed to fetch discussions");
+      const data = await response.json();
+      renderDiscussions(data);
+    } catch (err) {
+      console.error(err);
+      root.innerHTML = `
+        <div class="notification is-danger">
+          <h3 class="title is-5">Error Connection Lost</h3>
+          <p>Failed to load discussions. Please ensure the backend is running.</p>
+          <button class="button is-white is-small mt-2" onclick="location.reload()">Retry</button>
+        </div>
+      `;
+    }
+  }
+
+  function renderDiscussions(data) {
+    const root = document.getElementById('discussions-root');
+    const { topics } = data;
+
+    if (!topics || topics.length === 0) {
+      root.innerHTML = `
+        <div class="box">
+          <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> Discussions</h4>
+          <p class="has-text-grey">No discussion topics found for this course.</p>
+        </div>
+      `;
+      return;
+    }
+
+    // Sort by last post date
+    const sortedTopics = [...topics].sort((a, b) => {
+      const dateA = a.last_post_date ? new Date(a.last_post_date) : new Date(0);
+      const dateB = b.last_post_date ? new Date(b.last_post_date) : new Date(0);
+      return dateB - dateA;
+    });
+
+    let html = `
+      <div class="box">
+        <div class="level">
+          <div class="level-left">
+            <h4 class="title is-4"><i class="fas fa-comments mr-2"></i> Discussion Topics</h4>
+          </div>
+        </div>
+        
         <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
@@ -30,59 +76,37 @@
             </tr>
           </thead>
           <tbody>
-            <% 
-               # Normalize and sort by last post date
-               sorted_topics = @topics.sort_by do |t| 
-                 date = if t.is_a?(DiscussionTopic)
-                   t.last_post_date
-                 else
-                   t['LastPostDate'] ? Time.parse(t['LastPostDate']) : nil
-                 end
-                 date || Time.at(0)
-               end.reverse
-               
-               sorted_topics.each do |topic| 
-                  is_obj = topic.is_a?(DiscussionTopic)
-                 topic_id = is_obj ? topic.brightspace_id : topic['TopicId']
-                 forum_id = is_obj ? topic.forum_id : topic['ForumId']
-                 name = is_obj ? topic.name : topic['Name']
-                 thread_count = is_obj ? topic.display_thread_count : (topic['ThreadCount'] || 0)
-                 post_count = is_obj ? topic.display_post_count : (topic['PostCount'] || 0)
-                 last_post_date = is_obj ? (topic.last_post_date || topic.discussion_posts.maximum(:posted_at)) : (topic['LastPostDate'] ? Time.parse(topic['LastPostDate']) : nil)
-                 created_date = is_obj ? topic.created_at : topic['StartDate']
-            %>
+            ${sortedTopics.map(topic => `
               <tr>
                 <td>
-                  <a href="/course/<%= @course_id %>/discussions/<%= forum_id %>/topics/<%= topic_id %>" class="has-text-weight-bold">
-                    <%= render_markdown_inline(name) %>
+                  <a href="/course/${COURSE_ID}/discussions/${topic.forum_id}/topics/${topic.brightspace_id}" class="has-text-weight-bold">
+                    ${topic.name}
                   </a>
                   <div class="is-size-7 has-text-grey">
-                    <% if created_date %>
-                        Created: <%= format_date(created_date, "%b %d, %Y") %>
-                    <% end %>
+                    ${topic.created_at ? 'Created: ' + new Date(topic.created_at).toLocaleDateString() : ''}
                   </div>
                 </td>
                 <td class="has-text-centered">
-                    <%= thread_count || 0 %>
+                    ${topic.display_thread_count || 0}
                 </td>
                 <td class="has-text-centered">
-                    <%= post_count || 0 %>
+                    ${topic.display_post_count || 0}
                 </td>
                 <td class="is-size-7">
-                  <% if last_post_date %>
-                    <%= format_date(last_post_date, "%b %d, %Y") %><br>
-                    <span class="has-text-grey"><%= format_date(last_post_date, "%I:%M %p") %></span>
-                  <% else %>
-                    <span class="has-text-grey-light">Never</span>
-                  <% end %>
+                  ${topic.last_post_date ? `
+                    ${new Date(topic.last_post_date).toLocaleDateString()}<br>
+                    <span class="has-text-grey">${new Date(topic.last_post_date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                  ` : '<span class="has-text-grey-light">Never</span>'}
                 </td>
               </tr>
-            <% end %>
+            `).join('')}
           </tbody>
         </table>
-      <% else %>
-        <p class="has-text-grey">No discussion topics found for this course.</p>
-      <% end %>
-    </div>
-  </div>
-</div>
+      </div>
+    `;
+
+    root.innerHTML = html;
+  }
+
+  document.addEventListener('DOMContentLoaded', () => loadDiscussions());
+</script>

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_01_23_012738) do
+ActiveRecord::Schema[7.2].define(version: 2026_01_26_130000) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
@@ -35,7 +35,10 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_23_012738) do
     t.datetime "completed_at"
     t.string "external_url"
     t.boolean "synthetic", default: false
+    t.boolean "optional", default: false
     t.text "attachments"
+    t.boolean "manually_edited", default: false
+    t.datetime "manually_edited_at"
     t.index ["brightspace_id"], name: "index_assignments_on_brightspace_id"
     t.index ["course_id"], name: "index_assignments_on_course_id"
     t.index ["grade_item_id"], name: "index_assignments_on_grade_item_id"
@@ -82,6 +85,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_23_012738) do
     t.integer "units", default: 3
     t.float "target_grade", default: 93.0
     t.string "banner_url"
+    t.string "custom_color"
+    t.integer "end_of_week_day", default: 0
     t.index ["org_unit_id"], name: "index_courses_on_org_unit_id"
   end
 
@@ -163,6 +168,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_23_012738) do
     t.datetime "updated_at", precision: nil, null: false
     t.float "weight"
     t.datetime "due_date", precision: nil
+    t.boolean "is_extra_credit", default: false
     t.index ["brightspace_id"], name: "index_grades_on_brightspace_id"
     t.index ["course_id", "brightspace_id"], name: "index_grades_on_course_id_and_brightspace_id", unique: true
     t.index ["course_id"], name: "index_grades_on_course_id"
@@ -206,5 +212,10 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_23_012738) do
     t.boolean "api_enabled", default: false
     t.boolean "api_listen_all", default: false
     t.boolean "hide_completed_assignments", default: true
+    t.boolean "remote_server_enabled", default: false
+    t.string "remote_server_ip"
+    t.integer "remote_server_port", default: 4567
+    t.string "jwt_secret"
+    t.string "web_access_passcode"
   end
 end

@@ -1,60 +1,110 @@
-<%= erb :'partials/course_detail_header' %>
-<div class="columns">
-  <div class="column is-3">
-    <%= erb :'partials/sidebar' %>
-  </div>
-  <div class="column is-9">
-    <div class="box">
-      <h4 class="title is-4"><i class="fas fa-search mr-2"></i> Search Results for "<%= @query %>"</h4>
-      
-      <% if @results && (@results[:modules].any? || @results[:topics].any?) %>
+<div id="search-root" data-course-id="<%= @course_id %>" data-query="<%= @query %>">
+  <%= erb :'partials/course_detail_header' %>
+  
+  <div class="columns">
+    <div class="column is-3">
+      <%= erb :'partials/sidebar' %>
+    </div>
+    <div class="column is-9">
+      <div class="box">
+        <h4 class="title is-4"><i class="fas fa-search mr-2"></i> Search Results for "<%= @query %>"</h4>
         
-        <% if @results[:modules].any? %>
-          <h5 class="subtitle is-5 mt-5">Modules</h5>
-          <div class="list is-hoverable">
-            <% @results[:modules].each do |m| %>
-              <a href="/course/<%= @course_id %>/module/<%= m[:id] %>" class="list-item">
-                <span class="icon is-small has-text-primary mr-2"><i class="fas fa-folder"></i></span>
-                <%= m[:title] %>
-              </a>
-            <% end %>
+        <div id="search-container">
+          <div class="has-text-centered py-6">
+            <span class="icon is-large has-text-grey-light">
+              <i class="fas fa-spinner fa-pulse fa-2x"></i>
+            </span>
+            <p class="mt-2 has-text-grey">Searching course content...</p>
           </div>
-        <% end %>
-
-        <% if @results[:topics].any? %>
-          <h5 class="subtitle is-5 mt-5">Topics / Files</h5>
-          <div class="list is-hoverable">
-            <% @results[:topics].each do |t| %>
-              <div class="list-item">
-                <div class="is-flex is-justify-content-space-between is-align-items-center">
-                  <div>
-                    <span class="topic-icon mr-2">
-                      <% if t[:type] == 1 %>
-                        <i class="fas fa-file"></i>
-                      <% elsif t[:type] == 3 %>
-                        <i class="fas fa-link"></i>
-                      <% else %>
-                        <i class="fas fa-info-circle"></i>
-                      <% end %>
-                    </span>
-                    <a href="/course/<%= @course_id %>/module/<%= t[:module_id] %>" class="has-text-weight-medium"><%= t[:title] %></a>
-                  </div>
-                  <% if t[:is_downloadable] %>
-                    <a href="/course/<%= @course_id %>/topic/<%= t[:id] %>/download" class="button is-small is-link is-outlined" target="_blank">
-                      <i class="fas fa-download mr-1"></i> Download
-                    </a>
-                  <% end %>
-                </div>
-              </div>
-            <% end %>
-          </div>
-        <% end %>
-
-      <% else %>
-        <div class="notification is-light">
-          No results found matching your query.
         </div>
-      <% end %>
+      </div>
     </div>
   </div>
 </div>
+
+<script>
+  const COURSE_ID = '<%= @course_id %>';
+  const QUERY = '<%= @query %>';
+
+  async function loadSearchResults() {
+    if (!QUERY) {
+      document.getElementById('search-container').innerHTML = `
+        <div class="notification is-warning is-light">Please enter a search query in the sidebar.</div>
+      `;
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/v1/courses/${COURSE_ID}/search?q=${encodeURIComponent(QUERY)}`);
+      const data = await response.json();
+      renderSearchResults(data.results);
+    } catch (err) {
+      console.error("Search failed:", err);
+      document.getElementById('search-container').innerHTML = `
+        <div class="notification is-danger is-light">Failed to perform search.</div>
+      `;
+    }
+  }
+
+  function renderSearchResults(results) {
+    const container = document.getElementById('search-container');
+    
+    if (!results || (!results.modules.length && !results.topics.length)) {
+      container.innerHTML = `
+        <div class="notification is-light">
+          No results found matching your query.
+        </div>
+      `;
+      return;
+    }
+
+    let html = '';
+
+    if (results.modules.length > 0) {
+      html += `
+        <h5 class="subtitle is-5 mt-5">Modules</h5>
+        <div class="list is-hoverable">
+          ${results.modules.map(m => `
+            <a href="/course/${COURSE_ID}/module/${m.id}" class="list-item">
+              <span class="icon is-small has-text-primary mr-2"><i class="fas fa-folder"></i></span>
+              ${m.title}
+            </a>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    if (results.topics.length > 0) {
+      html += `
+        <h5 class="subtitle is-5 mt-5">Topics / Files</h5>
+        <div class="list is-hoverable">
+          ${results.topics.map(t => {
+            let icon = '<i class="fas fa-info-circle"></i>';
+            if (t.type === 1) icon = '<i class="fas fa-file"></i>';
+            else if (t.type === 3) icon = '<i class="fas fa-link"></i>';
+
+            return `
+              <div class="list-item">
+                <div class="is-flex is-justify-content-space-between is-align-items-center">
+                  <div>
+                    <span class="topic-icon mr-2 has-text-grey">${icon}</span>
+                    <a href="/course/${COURSE_ID}/module/${t.module_id}" class="has-text-weight-medium">${t.title}</a>
+                  </div>
+                  ${t.is_downloadable ? `
+                    <a href="/course/${COURSE_ID}/topic/${t.id}/download" class="button is-small is-link is-outlined" target="_blank">
+                      <i class="fas fa-download mr-1"></i> Download
+                    </a>
+                  ` : ''}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    container.innerHTML = html;
+  }
+
+  document.addEventListener('DOMContentLoaded', loadSearchResults);
+</script>
