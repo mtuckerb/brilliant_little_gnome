@@ -23,10 +23,17 @@ class BrilliantClient
     @degraded_mode = false
     @last_auth_error = nil
     @auth_notification_sent = false
-    @in_flight_requests = {} # Track active GET requests: { path => Mutex }
-    @pending_tasks = {}      # Track paths in @task_queue to avoid duplicates
+    @in_flight_requests = {}
+    @pending_tasks = {}
 
-    # Background Worker for low-priority tasks (attachments, etc.)
+    # Initialize Services
+    @notification_service = Brilliant::Sync::NotificationService.new(self)
+    @content_service = Brilliant::Sync::ContentService.new(self)
+    @assignment_service = Brilliant::Sync::AssignmentService.new(self)
+    @discussion_service = Brilliant::Sync::DiscussionService.new(self)
+    @grade_service = Brilliant::Sync::GradeService.new(self)
+
+    # Background Worker
     @task_queue = Queue.new
     @worker_thread = Thread.new do
       loop do
@@ -198,209 +205,69 @@ class BrilliantClient
   end
 
   def sync_notifications(courses, user, full_sync: false, limit: nil)
-    if !full_sync && @last_notif_sync && Time.current - @last_notif_sync < 60
-      puts "[Brilliant API] Skipping notification sync (run within last 60s)"
-      return
-    end
-
-    @last_notif_sync = Time.current
-    puts "[Brilliant API] Syncing notifications to DB..."
-    
-    last_sync_key = "last_notification_sync_at"
-    last_sync_time = full_sync ? nil : UserPreference.get(last_sync_key)
-    
-    # Sync courses to normalized table
-    ActiveRecord::Base.transaction do
-      @course_model_cache = {}
-      courses.each do |c|
-        next if c.nil? || c['OrgUnit'].nil?
-
-        new_name = c['OrgUnit']['Name']
-        next if new_name.nil? || new_name.empty?
-
-        course = Course.find_or_initialize_by(org_unit_id: c['OrgUnit']['Id'].to_s)
-        course.name = new_name if new_name.present? && !new_name.match?(/^\d+$/)
-        course.code = c['OrgUnit']['Code']
-        course.is_pinned = !c['PinDate'].nil?
-        course.last_accessed_at = (Time.zone.parse(c.dig('Access', 'LastAccessed')) rescue nil)
-        course.semester = extract_semester_from_name(course.name)
-        
-        img_url = c.dig('OrgUnit', 'ImageUrl') || c.dig('OrgUnit', 'Image', 'ViewUrl') || c.dig('OrgUnit', 'Image', 'DisplayUrl')
-        if img_url && !img_url.empty?
-          img_url = "https://#{@host}#{img_url}" if img_url.start_with?("/")
-          course.banner_url = img_url
-        end
-        
-        course.save!
-        @course_model_cache[course.org_unit_id] = course
-      end
-    end
-    archive_cache("/d2l/api/lp/#{@api_version}/enrollments/myenrollments/")
-
-    # Pre-warm course cache for further lookups if needed
-    @course_model_cache ||= Course.all.index_by(&:org_unit_id)
-
-    feed_items = get_unified_feed(courses, since: last_sync_time)
-    upsert_notification_batch(feed_items)
-
-    courses_to_sync = limit ? courses.take(limit) : (full_sync ? courses : courses.take(15))
-    
-    courses_to_sync.each do |c|
-      next if c.nil? || c['OrgUnit'].nil?
-      course_id = c['OrgUnit']['Id']
-      next if course_id.nil?
-      
-      # Check if we've refreshed news recently (within 5 minutes)
-      news_path = "/d2l/api/le/#{@api_version}/#{course_id}/news/"
-      cache_rec = ApiCache.active.find_by(path: news_path)
-      needs_fresh = !cache_rec || (Time.current - cache_rec.updated_at > 300)
-      
-      news_data = do_get(news_path, force_refresh: (full_sync || needs_fresh))
-      items = ensure_array(news_data)
-      
-      news_notifications = items.map do |item|
-        new_body = item.dig('Summary', 'Text') || item.dig('Body', 'Text')
-        next if new_body.to_s.empty?
-
-        {
-          id: "news_#{course_id}_#{item['Id']}",
-          type: 'News',
-          title: item['Title'],
-          body: new_body,
-          date: item['StartDate'] || item['LastModifiedDate'] || item['CreatedDate'],
-          course_id: course_id,
-          course_name: c['OrgUnit']['Name'],
-          urgency: 1,
-          attachments: item['Attachments']&.to_json,
-          is_personal: false,
-          url: "/course/#{course_id}/announcements"
-        }
-      end.compact
-      
-      upsert_notification_batch(news_notifications)
-
-      items.take(3).each do |item| # Limit attachment processing in main sync
-        if item['Attachments'] && !item['Attachments'].empty?
-          item['Attachments'].each do |att|
-            @task_queue << proc { persist_attachment(course_id, "news/#{item['Id']}/attachments/#{att['FileId']}", att['FileId'], att['FileName']) }
-          end
-        end
-      end
-
-      overview = get_overview(course_id)
-      if overview
-        c_record = @course_model_cache[course_id.to_s]
-        c_record.update_columns(overview_raw: overview.to_json) if c_record
-      end
-
-      if overview && (overview['Description']&.fetch('Text', nil) || overview['Title'])
-        upsert_notification_batch([{
-          id: "overview_#{course_id}",
-          type: 'Content',
-          title: "Course Overview: #{overview['Title'] || 'Updated'}",
-          body: overview.dig('Description', 'Text') || "The course overview has been updated.",
-          date: overview['LastModifiedDate'],
-          course_id: course_id,
-          course_name: c['OrgUnit']['Name'],
-          urgency: 1,
-          is_personal: false,
-          url: "/course/#{course_id}"
-        }])
-      end
-    end
-
-    # Content notifications and other global syncs
-    upsert_notification_batch(get_content_notifications(courses_to_sync, since: last_sync_time))
-    
-    # Global Delta Sync (Alerts) - Replaces the heavy course-by-course scan
-    if (global_alerts = get_global_alerts(since: last_sync_time)).any?
-      upsert_notification_batch(map_alerts_to_notifications(global_alerts, courses))
-    end
-    
-    upsert_notification_batch(get_discussion_notifications(courses_to_sync, user['Identifier'])) if user && user['Identifier']
-
-    sync_upcoming_assignment_notifications(courses)
-    
-    if !@degraded_mode
-      UserPreference.set(last_sync_key, Time.current.utc.iso8601)
-    end
-
-    # Final single event to refresh UI
-    Brilliant::EventBus.publish(:notifications_synced, { count: Notification.count })
-    puts "[Brilliant API] Notification sync complete."
+    @notification_service.sync(courses, user, full_sync: full_sync, limit: limit)
   end
 
-  def upsert_notification(data)
-    upsert_notification_batch([data], publish_event: true)
+  def sync_course_content(course_id, toc)
+    @content_service.sync(course_id, toc)
   end
 
-  def upsert_notification_batch(items, publish_event: false)
-    items = items.compact
-    return if items.empty?
-    
-    # Pre-fetch course display names to avoid repeated lookups
-    course_ids = items.map { |i| i[:course_id].to_s }.uniq
-    course_names = @course_model_cache ? @course_model_cache.slice(*course_ids).transform_values(&:name) : Course.where(org_unit_id: course_ids).pluck(:org_unit_id, :name).to_h
+  def sync_assignments(course_id, assignments)
+    @assignment_service.sync_dropbox(course_id, assignments)
+  end
 
-    notifications_to_upsert = items.map do |data|
-      # Sanitize/format fields for DB
+  def sync_quizzes(course_id, quizzes)
+    @assignment_service.sync_quizzes(course_id, quizzes)
+  end
+
+  def sync_discussions(course_id, forums)
+    @discussion_service.sync(course_id, forums)
+  end
+
+  def sync_grades(course_id, grades_raw)
+    @grade_service.sync(course_id, grades_raw)
+  end
+
+  def get_global_alerts(since: nil)
+    path = "/d2l/api/lp/#{@api_version}/alerts/"
+    path += "?since=#{URI.encode_www_form_component(since)}" if since
+    data = do_get(path, force_refresh: true)
+    ensure_array(data)
+  end
+
+  def map_alerts_to_notifications(alerts, courses)
+    course_map = courses.each_with_object({}) { |c, h| h[c['OrgUnit']['Id'].to_s] = c['OrgUnit']['Name'] }
+    alerts.map do |alert|
+      course_id = alert['OrgUnitId'].to_s
+      type = alert['Type']
       {
-        external_id: data[:id].to_s,
-        course_id: data[:course_id].to_s,
-        notification_type: data[:type],
-        title: data[:title].to_s,
-        body: html_to_markdown(data[:body]),
-        date: (Time.zone.parse(data[:date].to_s) rescue Time.current),
-        course_name: data[:course_name] || course_names[data[:course_id].to_s],
-        semester: (data[:semester] || extract_semester_from_name(data[:course_name])),
-        attachments: data[:attachments],
-        urgency: data[:urgency] || 1,
-        is_personal: data[:is_personal] || false,
-        url: data[:url],
-        updated_at: Time.current,
-        created_at: Time.current
+        id: "alert_#{course_id}_#{alert['Id']}",
+        type: type,
+        title: alert['Title'] || "#{type} Update",
+        body: alert['Text'] || "You have a new #{type.downcase} update in #{course_map[course_id]}.",
+        date: alert['Date'] || Time.current.iso8601,
+        course_id: course_id,
+        course_name: course_map[course_id] || "Course #{course_id}",
+        urgency: (type == 'Grade' ? 3 : 1),
+        is_personal: (type == 'Grade'),
+        url: "/course/#{course_id}" + (type == 'Grade' ? "/grades" : "")
       }
-    end
-
-    begin
-      Notification.upsert_all(notifications_to_upsert, unique_by: [:course_id, :external_id])
-      
-      if publish_event && items.size == 1
-        n_data = items.first
-        Brilliant::EventBus.publish(:notification_received, {
-          id: n_data[:id],
-          title: n_data[:title],
-          body: n_data[:body],
-          course: n_data[:course_name] || course_names[n_data[:course_id].to_s]
-        })
-      end
-    rescue => e
-      puts "[Sync] Notification batch upsert failed: #{e.message}"
     end
   end
 
   def sync_upcoming_assignment_notifications(courses)
     upcoming_limit = Time.current + 7.days
-    
     ActiveRecord::Base.connection_pool.with_connection do
       Assignment.where("due_date > ? AND due_date <= ?", Time.current, upcoming_limit).each do |a|
         next if a.nil?
         begin
-          course_obj = @course_model_cache ? @course_model_cache[a.course_id.to_s] : Course.find_by(org_unit_id: a.course_id.to_s)
+          course_obj = Course.find_by(org_unit_id: a.course_id.to_s)
           course_name = course_obj&.name || "Unknown Course"
-
           type_label = a.assignment_type == 'quiz' ? 'Quiz' : 'Assignment'
-          url = a.assignment_type == 'quiz' ? 
-                "/course/#{a.course_id}/quizzes/#{a.brightspace_id.sub('quiz_', '')}" : 
-                "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
+          url = a.assignment_type == 'quiz' ? "/course/#{a.course_id}/quizzes/#{a.brightspace_id.sub('quiz_', '')}" : "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
           url += '?edit=true' if a.synthetic
-          
           body_text = "This #{type_label.downcase} is due on #{a.due_date.strftime('%A, %b %d at %I:%M %p')}."
-          
-          if a.synthetic && a.external_url.present?
-            body_text += " [Open Link](#{a.external_url})"
-          end
-          
+          body_text += " [Open Link](#{a.external_url})" if a.synthetic && a.external_url.present?
           upsert_notification({
             id: "upcoming_assignment_#{a.brightspace_id}",
             type: 'Assignment',
@@ -425,13 +292,10 @@ class BrilliantClient
     courses.take(20).each do |c|
       next if c.nil? || c['OrgUnit'].nil?
       course_id = c['OrgUnit']['Id']
-      
       path = "/d2l/api/le/#{@api_version}/#{course_id}/content/updates"
       path += "?since=#{URI.encode_www_form_component(since)}" if since
-      
       data = do_get(path)
       next unless data
-
       items = ensure_array(data)
       items.each do |item|
         all_updates << {
@@ -452,51 +316,6 @@ class BrilliantClient
     all_updates
   end
 
-  def get_global_alerts(since: nil)
-    path = "/d2l/api/lp/#{@api_version}/alerts/"
-    path += "?since=#{URI.encode_www_form_component(since)}" if since
-    
-    # Use force_refresh: true to ensure we always try to get the very latest alerts
-    # during the notification sync.
-    data = do_get(path, force_refresh: true)
-    ensure_array(data)
-  end
-
-  def map_alerts_to_notifications(alerts, courses)
-    course_map = courses.each_with_object({}) { |c, h| h[c['OrgUnit']['Id'].to_s] = c['OrgUnit']['Name'] }
-    
-    alerts.map do |alert|
-      course_id = alert['OrgUnitId'].to_s
-      type = alert['Type']
-      
-      # Brightspace Alerts types: Grade, News, Content, etc.
-      {
-        id: "alert_#{course_id}_#{alert['Id']}",
-        type: type,
-        title: alert['Title'] || "#{type} Update",
-        body: alert['Text'] || "You have a new #{type.downcase} update in #{course_map[course_id]}.",
-        date: alert['Date'] || Time.current.iso8601,
-        course_id: course_id,
-        course_name: course_map[course_id] || "Course #{course_id}",
-        urgency: (type == 'Grade' ? 3 : 1),
-        is_personal: (type == 'Grade'),
-        url: "/course/#{course_id}" + (type == 'Grade' ? "/grades" : "")
-      }
-    end
-  end
-
-  def get_recent_grades_notifications(courses)
-    # This is now a legacy/fallback method, as global alerts handle this 
-    # in a much more efficient way. Returning empty to avoid duplication.
-    []
-  end
-
-  def get_discussion_notifications(courses, user_id)
-    # Implement discussion evaluation/reply checks here in the future
-    # For now, return empty to avoid the crash encountered earlier
-    []
-  end
-
   def extract_semester_from_name(full_name)
     return nil unless full_name
     patterns = [
@@ -515,12 +334,15 @@ class BrilliantClient
     return unless File.exist?(path)
     content = File.read(path).strip
     return if content.empty?
-
     if content.start_with?('ey')
       @token = content
     else
       @cookie_string = content.sub(/^Cookie:\s*/i, '')
     end
+  end
+
+  def authenticated?
+    !@token.nil? || !@cookie_string.nil?
   end
 
   def auth_url
@@ -536,20 +358,16 @@ class BrilliantClient
     uri = URI("https://#{@host}/core/connect/token")
     request = Net::HTTP::Post.new(uri)
     request.content_type = 'application/x-www-form-urlencoded'
-    
     auth_str = Base64.strict_encode64("#{@client_id}:#{@client_secret}")
     request['Authorization'] = "Basic #{auth_str}"
-    
     request.set_form_data({
       'grant_type' => 'authorization_code',
       'redirect_uri' => @redirect_uri,
       'code' => code
     })
-
     response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) do |http|
       http.request(request)
     end
-
     if response.code == '200'
       data = JSON.parse(response.body)
       @token = data['access_token']
@@ -558,30 +376,20 @@ class BrilliantClient
     false
   end
 
-  def authenticated?
-    !@token.nil? || !@cookie_string.nil?
-  end
-
   def get_org_unit(org_unit_id)
     do_get("/d2l/api/lp/#{@api_version}/orgstructure/#{org_unit_id}")
   end
 
   def get_who_am_i
     return @cached_who_am_i if @cached_who_am_i && @last_who_am_i_at && @last_who_am_i_at > Time.now - 300
-    
     data = fetch_and_cache("/d2l/api/lp/#{@api_version}/users/whoami")
     if data && data['Identifier']
       @cached_who_am_i = data
       @last_who_am_i_at = Time.now
       @user_display_name = data['DisplayName']
-      # Store identity in UserPreference
       ActiveRecord::Base.connection_pool.with_connection do
         pref = UserPreference.current
-        pref.update(
-          brightspace_uid: data['UniqueIdentifier'], 
-          brightspace_user_id: data['Identifier'], 
-          last_login_at: Time.current
-        )
+        pref.update(brightspace_uid: data['UniqueIdentifier'], brightspace_user_id: data['Identifier'], last_login_at: Time.current)
       end
     end
     data
@@ -590,11 +398,9 @@ class BrilliantClient
   def get_enrollments(force_refresh: false)
     response = do_get("/d2l/api/lp/#{@api_version}/enrollments/myenrollments/", force_refresh: force_refresh)
     return [] unless response
-    
     items = ensure_array(response)
     items.select do |i| 
-      (i.dig('OrgUnit', 'Type', 'Code') == 'Course Offering' || 
-       i.dig('OrgUnit', 'Type', 'Name') == 'Course Offering')
+      (i.dig('OrgUnit', 'Type', 'Code') == 'Course Offering' || i.dig('OrgUnit', 'Type', 'Name') == 'Course Offering')
     end.sort_by do |i|
       pin_score = i['PinDate'] ? 0 : 1
       raw_access = i.dig('Access', 'LastAccessed')
@@ -705,10 +511,8 @@ class BrilliantClient
     course_map = courses.each_with_object({}) { |c, h| h[c['OrgUnit']['Id'].to_s] = c['OrgUnit']['Name'] }
     path = "/d2l/api/lp/#{@api_version}/feed/"
     path += "?since=#{URI.encode_www_form_component(since)}" if since
-    
     feed_data = do_get(path)
     feed = ensure_array(feed_data)
-    
     feed.map do |item|
       cid = item.dig('Metadata', 'ApiViewUrl')&.match(/\/(\d+)\/news/)&.to_a&.at(1)
       {
@@ -726,300 +530,29 @@ class BrilliantClient
     end
   end
 
-  def sync_course_content(course_id, toc)
-    modules_data = toc.is_a?(Hash) ? (toc['Modules'] || []) : toc
-    return unless modules_data.is_a?(Array)
-    
-    # Collect all modules and items into flat lists for batch upsert
-    @all_modules_to_upsert = []
-    @all_items_to_upsert = []
-    
-    process_module_tree(course_id, nil, modules_data)
-    
-    ActiveRecord::Base.transaction do
-      begin
-        ContentModule.upsert_all(@all_modules_to_upsert, unique_by: :index_content_modules_on_course_and_bs_id) if @all_modules_to_upsert.any?
-        ContentItem.upsert_all(@all_items_to_upsert, unique_by: :index_content_items_on_module_and_bs_id) if @all_items_to_upsert.any?
-      rescue => e
-        puts "[Sync] Course content batch upsert failed: #{e.message}"
-      end
-    end
-  end
-
-  def process_module_tree(course_id, parent_id, modules_data)
-    modules_data.each_with_index do |mod, index|
-      m_id = mod['ModuleId'].to_s
-      @all_modules_to_upsert << {
-        course_id: course_id.to_s,
-        brightspace_id: m_id,
-        title: mod['Title'],
-        description: html_to_markdown(mod['Description']),
-        sort_order: index,
-        parent_id: parent_id,
-        updated_at: Time.current,
-        created_at: Time.current
-      }
-      
-      (mod['Topics'] || []).each_with_index do |topic, t_index|
-        t_id = (topic['Identifier'] || topic['TopicId'] || topic['Id']).to_s
-        @all_items_to_upsert << {
-          module_id: m_id,
-          brightspace_id: t_id,
-          title: topic['Title'],
-          item_type: (topic['TypeIdentifier'] || topic['Type']).to_s,
-          url: topic['Url'],
-          is_hidden: topic['IsHidden'] || false,
-          sort_order: t_index,
-          attachments: [topic].to_json,
-          updated_at: Time.current,
-          created_at: Time.current
-        }
-
-        if topic['Url'] && (topic['Url'].start_with?('/content/enforced/') || topic['Url'].include?('/viewContent/'))
-          @task_queue << proc { persist_attachment(course_id, "content/topics/#{t_id}/file", t_id, topic['Title']) }
-        end
-      end
-      
-      process_module_tree(course_id, m_id, mod['Modules']) if mod['Modules']
-    end
-  end
-
-  def sync_assignments(course_id, assignments)
-    items = ensure_array(assignments)
-    skipped = []
-    
-    # 1. Fetch detailed information for all assignments in parallel/batches if possible
-    # but for now, we'll just process the summaries we have and enrich them
-    # Note: the summary often lacks the full description, but for performance,
-    # we'll sync what we have and only fetch details on-demand or in background.
-    
-    assignments_to_upsert = items.map do |a_summary|
-      next if a_summary.nil?
-      t_id = (a_summary['Id'] || a_summary['Identifier'] || a_summary['TopicId']).to_s
-      
-      # For now, we use the summary data. Detailed enrichment could be backgrounded.
-      # If we already have the record and it's manually edited, skip it.
-      existing = Assignment.find_by(brightspace_id: t_id, course_id: course_id.to_s)
-      if existing&.manually_edited?
-        skipped << existing
-        next
-      end
-
-      # Handle instruction/description objects which often contain HTML
-      desc_obj = a_summary['CustomInstructions'] || a_summary['Description']
-      desc_text = html_to_markdown(desc_obj)
-
-      atts = (a_summary['Attachments'] || []) + (a_summary['LinkAttachments'] || [])
-      
-      {
-        course_id: course_id.to_s,
-        brightspace_id: t_id,
-        name: a_summary['Name'],
-        due_date: (Time.zone.parse(a_summary['DueDate']) rescue nil),
-        description: desc_text,
-        attachments: atts.any? ? atts.to_json : nil,
-        is_graded: a_summary['IsGraded'] || false,
-        grade_item_id: a_summary['GradeItemId'].to_s,
-        assignment_type: 'dropbox',
-        updated_at: Time.current,
-        created_at: existing&.created_at || Time.current
-      }
-    end.compact
-
-    begin
-      Assignment.upsert_all(assignments_to_upsert, unique_by: :index_assignments_on_course_and_bs_id) if assignments_to_upsert.any?
-    rescue => e
-      puts "[Sync] Assignment batch upsert failed: #{e.message}"
-      # Fallback to individual saves if necessary
-    end
-
-    skipped
-  end
-
-  def sync_quizzes(course_id, quizzes)
-    items = ensure_array(quizzes)
-    skipped = []
-    
-    quizzes_to_upsert = items.map do |q|
-      next if q.nil?
-      q_id = (q['QuizId'] || q['Id'] || q['Identifier']).to_s
-      
-      existing = Assignment.find_by(brightspace_id: "quiz_#{q_id}", course_id: course_id.to_s)
-      if existing&.manually_edited?
-        skipped << existing
-        next
-      end
-
-      desc_obj = q['Description'] || q['Header']
-      desc_text = html_to_markdown(desc_obj)
-
-      # Add instructions if present
-      inst_content = html_to_markdown(q['Instructions'])
-      desc_text += "\n\n### Instructions\n#{inst_content}" if inst_content.present?
-      
-      {
-        course_id: course_id.to_s,
-        brightspace_id: "quiz_#{q_id}",
-        name: q['Name'],
-        assignment_type: 'quiz',
-        due_date: (Time.zone.parse(q['DueDate']) rescue nil),
-        description: desc_text,
-        updated_at: Time.current,
-        created_at: existing&.created_at || Time.current
-      }
-    end.compact
-
-    begin
-      Assignment.upsert_all(quizzes_to_upsert, unique_by: :index_assignments_on_course_and_bs_id) if quizzes_to_upsert.any?
-    rescue => e
-      puts "[Sync] Quiz batch upsert failed: #{e.message}"
-    end
-
-    skipped
+  def enqueue_attachment_task(course_id, api_path, file_id, file_name)
+    @task_queue << proc { persist_attachment(course_id, api_path, file_id, file_name) }
   end
 
   def html_to_markdown(html)
-    return "" if html.nil?
-    
-    # Handle D2L Rich Text Hash objects
-    if html.is_a?(Hash)
-      html = html["Html"] || html["Text"] || html[:Html] || html[:Text] || ""
-    end
-    
-    # Handle stringified Ruby hashes (recovery from sync bugs)
-    if html.is_a?(String) && html.start_with?("{") && html.include?("=>")
-      if html =~ /"(?:Html|Text)"\s*=>\s*"(.*?)"/m
-        html = $1
-      elsif html =~ /:(?:Html|Text)\s*=>\s*"(.*?)"/m
-        html = $1
-      end
-    end
-
-    return "" if html.to_s.empty?
-    
-    # Very basic HTML to Markdown conversion
-    text = html.to_s.dup
-    text.gsub!(/<br\s*\/?>/i, "\n")
-    text.gsub!(/<\/p>/i, "\n\n")
-    text.gsub!(/<p[^>]*>/i, "")
-    text.gsub!(/<strong>(.*?)<\/strong>/i, '**\1**')
-    text.gsub!(/<b>(.*?)<\/b>/i, '**\1**')
-    text.gsub!(/<em>(.*?)<\/em>/i, '_\1_')
-    text.gsub!(/<i>(.*?)<\/i>/i, '_\1_')
-    text.gsub!(/<a\s+[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/i, '[\2](\1)')
-    text.gsub!(/<ul[^>]*>/i, "\n")
-    text.gsub!(/<\/ul>/i, "\n")
-    text.gsub!(/<li[^>]*>/i, "\n* ")
-    text.gsub!(/<\/li>/i, "")
-    
-    # Strip remaining tags
-    text.gsub!(/<[^>]+>/, '')
-    
-    # Decode common entities
-    text.gsub!("&nbsp;", " ")
-    text.gsub!("&amp;", "&")
-    text.gsub!("&lt;", "<")
-    text.gsub!("&gt;", ">")
-    text.gsub!("&quot;", "\"")
-
-    text.strip
+    Brilliant::TextProcessor.html_to_markdown(html)
   end
 
-  def sync_discussions(course_id, forums)
-    # 1. Sync Forums
-    ActiveRecord::Base.transaction do
-      ensure_array(forums).each do |f|
-        forum = DiscussionForum.find_or_initialize_by(brightspace_id: f['ForumId'].to_s, course_id: course_id.to_s)
-        forum.name = f['Name']
-        forum.description = html_to_markdown(f['Description'])
-        forum.save!
-      end
-    end
-
-    # 2. Sync Topics for the whole course at once (much faster than per-forum)
-    # Brightspace API usually supports /d2l/api/le/(version)/(orgUnitId)/discussions/topics/
-    all_topics_path = "/d2l/api/le/#{@api_version}/#{course_id}/discussions/topics/"
-    topics_raw = do_get(all_topics_path)
-    if topics_raw
-      topics = ensure_array(topics_raw)
-      sync_discussion_topics(course_id, nil, topics)
-    else
-      # Fallback to per-forum if course-level list fails
-      ensure_array(forums).each do |f|
-        topics = ensure_array(get_discussion_topics(course_id, f['ForumId']))
-        sync_discussion_topics(course_id, f['ForumId'], topics)
-      end
-    end
+  def upsert_notification(data)
+    @notification_service.upsert_notification_batch([data], publish_event_flag: true)
   end
 
-  def sync_discussion_topics(course_id, forum_id, topics)
-    ActiveRecord::Base.transaction do
-      topics.each_with_index do |t, index|
-        # Use provided forum_id OR extract from topic data if course-level sync
-        fid = forum_id || t['ForumId']
-        next unless fid
-
-        topic = DiscussionTopic.find_or_initialize_by(brightspace_id: t['TopicId'].to_s, forum_id: fid.to_s)
-        topic.course_id = course_id.to_s
-        topic.name = t['Name']
-        topic.description = html_to_markdown(t['Description'])
-        topic.sort_order = index
-        # We can also capture counts if they are in the metadata
-        topic.thread_count = t['ThreadCount'] if t['ThreadCount']
-        topic.post_count = t['PostCount'] if t['PostCount']
-        topic.last_post_date = Time.zone.parse(t['LastPostDate']) rescue nil if t['LastPostDate']
-        
-        topic.save!
-      end
-    end
+  def create_system_notification(data)
+    # Ensure system notifications have required fields for the schema
+    data[:course_id] ||= "system"
+    data[:course_name] ||= "System"
+    data[:type] ||= "System"
+    data[:date] ||= Time.current.iso8601
+    upsert_notification(data)
   end
 
-  def sync_grades(course_id, grade_values)
-    items = ensure_array(grade_values)
-    return if items.empty?
-
-    grades_to_upsert = items.map do |g|
-      obj_id = (g['GradeObjectIdentifier'] || g['Identifier']).to_s
-      {
-        course_id: course_id.to_s,
-        brightspace_id: obj_id,
-        name: g['GradeObjectName'] || "Grade Item #{obj_id}",
-        displayed_grade: g['DisplayedGrade'],
-        numerator: (g.dig('GradeValue', 'Numerator') || g['Numerator']), # Capture numeric values if present
-        denominator: (g.dig('GradeValue', 'Denominator') || g['Denominator']),
-        updated_at: Time.current,
-        created_at: Time.current
-      }
-    end
-
-    begin
-      # Use course_id and brightspace_id as unique key (indexed earlier)
-      Grade.upsert_all(grades_to_upsert, unique_by: [:course_id, :brightspace_id])
-    rescue => e
-      puts "[Sync] Grade batch upsert failed: #{e.message}"
-    end
-  end
-
-  def get_recent_grades_notifications(courses)
-    alerts = []
-    courses.each do |c|
-      course_id = c['OrgUnit']['Id']
-      ensure_array(get_grades(course_id)).each do |g|
-        next unless g['DisplayedGrade']
-        alerts << {
-          id: "grade_#{course_id}_#{g['GradeObjectIdentifier']}",
-          type: 'Grade',
-          title: "Grade Updated: #{g['GradeObjectName']}",
-          body: "Your grade for #{g['GradeObjectName']} is now #{g['DisplayedGrade']}.",
-          course_id: course_id,
-          course_name: c['OrgUnit']['Name'],
-          urgency: 3,
-          is_personal: true,
-          url: "/course/#{course_id}/grades"
-        }
-      end
-    end
-    alerts
+  def upsert_notification_batch(items, publish_event: false)
+    @notification_service.upsert_notification_batch(items, publish_event_flag: publish_event)
   end
 
   def get_discussion_notifications(courses, user_id)
@@ -1158,8 +691,6 @@ class BrilliantClient
     do_post("/d2l/api/lp/#{@api_version}/notifications/#{notification_id}/read", {})
   end
 
-  private
-
   def read_cache(path)
     @cache_memory ||= {}
     return @cache_memory[path] if @cache_memory.key?(path)
@@ -1186,6 +717,8 @@ class BrilliantClient
     @cache_memory.delete(path)
     ApiCache.where(path: path).update_all(is_archived: true, updated_at: Time.current)
   end
+
+  private
 
   def fetch_and_cache(path)
     return nil unless authenticated?

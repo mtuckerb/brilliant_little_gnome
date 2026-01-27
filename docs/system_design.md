@@ -74,6 +74,7 @@ To eliminate disruptive page reloads while maintaining a real-time feel, Brillia
 - **Thin JSON Payloads**: API endpoints are optimized to serve only the data required for the current view, utilizing JSON serialization with `except` and `merge` to append calculated metadata.
 - **Request Coalescing**: Implements per-path locking for in-flight API requests to prevent redundant simultaneous network calls for the same resource.
 - **N+1 Prevention**: The notification sync loop leverages an in-memory `@course_model_cache` to avoid repeated database lookups for course metadata during batch processing of LMS alerts.
+- **Database Indexing**: Critical tables (Notifications) are indexed on high-frequency query columns like `date`, `urgency`, and `is_read` to ensure sub-millisecond sorting and filtering.
 
 ## 4. Portability & Distribution
 Brilliant is designed to be "Zero-Dependency" for the end user:

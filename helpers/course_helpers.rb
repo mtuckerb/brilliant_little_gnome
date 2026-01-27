@@ -28,15 +28,7 @@ module CourseHelpers
   end
 
   def render_markdown(text)
-    return "" if text.nil? || (text.respond_to?(:empty?) && text.empty?)
-    
-    # Handle the D2L Description/RichText object if passed directly
-    if text.is_a?(Hash)
-      text = text['Html'] || text['Text'] || text[:Html] || text[:Text] || ""
-    end
-
-    # Process text through Kramdown
-    Kramdown::Document.new(text.to_s).to_html
+    Brilliant::TextProcessor.render_markdown(text)
   end
 
   def render_markdown_inline(text)
@@ -51,82 +43,11 @@ module CourseHelpers
   end
 
   def fix_links(html)
-    return html if html.nil? || html.empty?
-    
-    # Prepend host to relative links starting with /
-    host = $client.host
-    html = html.gsub(/href="(\/[^"]*)"/i, "href=\"https://#{host}\\1\"")
-
-    # If the string is very large, skip expensive auto-linking to prevent hangs
-    return html if html.length > 20000
-
-    # Auto-link plain text URLs while avoiding existing HTML tags
-    tags = []
-    # Identify all HTML tags and existing <a> blocks to preserve them
-    temp_html = html.gsub(/<a\b[^>]*>.*?<\/a>|<[^>]+>/mi) do |match|
-      tags << match
-      "__T#{tags.size - 1}__"
-    end
-
-    # Linkify URLs in the remaining text
-    url_regex = %r{https?://[^\s<"']+[^\s<"'. ,?!:)]}i
-    temp_html.gsub!(url_regex) do |url|
-      "<a href=\"#{url}\" target=\"_blank\">#{url}</a>"
-    end
-
-    # Restore the original tags
-    tags.each_with_index do |tag, i|
-      temp_html.sub!("__T#{i}__", tag)
-    end
-
-    temp_html
+    Brilliant::TextProcessor.fix_links(html, $client&.host)
   end
 
   def html_to_markdown(html)
-    return "" if html.nil?
-    
-    # Handle D2L Rich Text Hash objects
-    if html.is_a?(Hash)
-      html = html["Html"] || html["Text"] || html[:Html] || html[:Text] || ""
-    end
-    
-    # Handle stringified Ruby hashes (recovery from sync bugs)
-    if html.is_a?(String) && html.start_with?("{") && html.include?("=>")
-      if html =~ /"(?:Html|Text)"\s*=>\s*"(.*?)"/m
-        html = $1
-      elsif html =~ /:(?:Html|Text)\s*=>\s*"(.*?)"/m
-        html = $1
-      end
-    end
-
-    return "" if html.to_s.empty?
-    
-    # Very basic HTML to Markdown conversion
-    text = html.to_s.dup
-    text.gsub!(/<br\s*\/?>/i, "\n")
-    text.gsub!(/<\/p>/i, "\n\n")
-    text.gsub!(/<p[^>]*>/i, "")
-    text.gsub!(/<strong>(.*?)<\/strong>/i, '**\1**')
-    text.gsub!(/<b>(.*?)<\/b>/i, '**\1**')
-    text.gsub!(/<em>(.*?)<\/em>/i, '_\1_')
-    text.gsub!(/<i>(.*?)<\/i>/i, '_\1_')
-    text.gsub!(/<a\s+[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/i, '[\2](\1)')
-    text.gsub!(/<ul[^>]*>/i, "\n")
-    text.gsub!(/<\/ul>/i, "\n")
-    text.gsub!(/<li[^>]*>/i, "\n* ")
-    text.gsub!(/<\/li>/i, "")
-    
-    # Strip remaining tags
-    text.gsub!(/<[^>]+>/, '')
-    
-    # Decode common entities
-    text.gsub!("&nbsp;", " ")
-    text.gsub!("&amp;", "&")
-    text.gsub!("&lt;", "<")
-    text.gsub!("&gt;", ">")
-    text.gsub!("&quot;", "\"")
-
-    text.strip
+    Brilliant::TextProcessor.html_to_markdown(html)
   end
 
   def clean_notification_title(title, course_name)

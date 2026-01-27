@@ -3,6 +3,9 @@ class Course < ActiveRecord::Base
   validates :org_unit_id, presence: true, uniqueness: true
   has_many :content_modules, foreign_key: :course_id, primary_key: :org_unit_id
   has_many :assignments, foreign_key: :course_id, primary_key: :org_unit_id
+  has_many :grades, foreign_key: :course_id, primary_key: :org_unit_id
+  has_many :discussion_forums, foreign_key: :course_id, primary_key: :org_unit_id
+  has_many :notifications, foreign_key: :course_id, primary_key: :org_unit_id
 
   def end_of_week_date(reference_date = Time.current)
     # end_of_week_day is 0 for Sunday, 1 for Monday, etc.

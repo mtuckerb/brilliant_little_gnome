@@ -27,6 +27,7 @@ A lightweight, high-performance Brightspace companion that aggregates notificati
   - **Delta-First Sync**: Periodically fetches only new notifications using Global Alerts/Feed APIs.
   - **N+1 Optimization**: In-memory model caching ensures thousands of items can be processed in seconds.
   - **Smooth UI**: SSE event batching and frontend debouncing eliminate flicker during live updates.
+  - **Scalable Notifications**: Intelligent pagination and database indexing allow the app to handle thousands of alerts without slow-down.
 - **Security & Privacy**:
   - Optional Web Access Passcode to gate the application when running in a browser.
   - All local data stays local; remote connections are secured via JWT.
