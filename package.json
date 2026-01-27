@@ -10,11 +10,10 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "build": {
+    "appId": "com.brilliant.app",
     "directories": {
       "output": "dist",
       "buildResources": "build"
-    },
-    "appId": "com.brilliant.app",
     "productName": "Brilliant",
     "afterSign": "scripts/notarize.js",
     "mac": {
@@ -22,8 +21,9 @@
       "gatekeeperAssess": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": false,
-      "icon": "build/icon.png",
+      "category": "public.app-category.education",
+      "target": [
+        {
       "category": "public.app-category.education",
       "target": [
         {

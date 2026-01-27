@@ -223,7 +223,20 @@ function startRubyApp() {
 
   const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', rubyVersionDir);
   const internalGems = path.join(portableRubyBase, 'lib', 'ruby', 'gems', rubyVersionDir);
-  
+
+  // Find Bundler path
+  let bundlerPath = "";
+  if (usePortable) {
+    const internalGemsGems = path.join(internalGems, 'gems');
+    if (fs.existsSync(internalGemsGems)) {
+      const dirs = fs.readdirSync(internalGemsGems);
+      const bundlerDir = dirs.find(d => d.startsWith('bundler-'));
+      if (bundlerDir) {
+        bundlerPath = path.join(internalGemsGems, bundlerDir, 'lib');
+      }
+    }
+  }
+
   const cacheDir = path.join(userDataPath, 'bootsnap');
   const dbDir = path.join(userDataPath, 'db');
   const logFile = path.join(userDataPath, 'ruby_sidecar.log');
@@ -245,7 +258,7 @@ function startRubyApp() {
   } catch(e) {}
   const pathSeparator = process.platform === 'win32' ? ';' : ':';
 
-  const env = { 
+  const env = {
     ...process.env, 
     PORT: '4567', 
     BUNDLE_GEMFILE: path.join(baseDir, 'Gemfile'),
@@ -253,8 +266,7 @@ function startRubyApp() {
     BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
     GEM_PATH: usePortable ? `${vendorGems}${pathSeparator}${internalGems}` : vendorGems,
     GEM_HOME: vendorGems,
-    RUBY_PLATFORM_DIR: platformDir,
-    RUBYLIB: "",
+    RUBYLIB: bundlerPath,
     BRILLIANT_DATA_DIR: userDataPath,
     BRILLIANT_ENV: 'electron',
     BOOTSNAP_CACHE_DIR: cacheDir,

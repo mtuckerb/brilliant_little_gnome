@@ -83,11 +83,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # For electron-builder built-in signing if needed
-          # CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          # CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
-          # We are using the imported keychain for shell signing in setup-macos.sh
-          # but electron-builder also needs these for the app bundle itself.
+          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
