@@ -67,6 +67,7 @@ require_relative 'controllers/assignment_controller'
 require_relative 'controllers/discussion_controller'
 require_relative 'controllers/proxy_controller'
 require_relative 'controllers/sync_controller'
+require_relative 'controllers/mcp/mcp_controller'
 require_relative 'controllers/api/v1/api_controller'
 
 class BrilliantApp < Sinatra::Base
@@ -84,6 +85,7 @@ class BrilliantApp < Sinatra::Base
   use DiscussionController
   use ProxyController
   use SyncController
+  use McpController
   use Api::V1::ApiController
 
   # PID Management
