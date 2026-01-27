@@ -416,8 +416,11 @@ module Api
         limit = (params[:limit] || 25).to_i
         offset = (params[:offset] || 0).to_i
 
+        # Pre-cache course models to avoid N+1 in the loop below
+        course_map = Course.where(org_unit_id: query.limit(limit).offset(offset).pluck(:course_id).uniq).index_by(&:org_unit_id)
+
         notifications = query.limit(limit).offset(offset).map do |n|
-          course = Course.find_by(org_unit_id: n.course_id.to_s)
+          course = course_map[n.course_id.to_s]
           course_name_to_use = n.course_name
           if (course_name_to_use.nil? || course_name_to_use.match?(/^\d+$/)) && course
             course_name_to_use = course.name
@@ -428,7 +431,7 @@ module Api
           # Force the pill_style to use the custom_color from the actual course handle if available
           pill_style = info[:pill_style]
           if course && course.custom_color.present?
-            pill_style = course_pill_style(course.name, info[:semester], course&.org_unit_id)
+            pill_style = course_pill_style(course.name, info[:semester], course.org_unit_id)
           end
 
           n.as_json.merge({

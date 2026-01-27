@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_02_12_000000) do
+ActiveRecord::Schema[7.2].define(version: 2026_02_13_000000) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
@@ -220,8 +220,11 @@ ActiveRecord::Schema[7.2].define(version: 2026_02_12_000000) do
     t.string "user_id"
     t.index ["course_id", "external_id"], name: "index_notifications_on_course_and_external_id", unique: true
     t.index ["course_id"], name: "index_notifications_on_course_id"
+    t.index ["date"], name: "index_notifications_on_date"
     t.index ["external_id", "course_id"], name: "index_notifications_on_external_id_and_course_id", unique: true
     t.index ["external_id"], name: "index_notifications_on_external_id"
+    t.index ["is_read"], name: "index_notifications_on_is_read"
+    t.index ["urgency"], name: "index_notifications_on_urgency"
     t.index ["user_id"], name: "index_notifications_on_user_id"
   end
 
