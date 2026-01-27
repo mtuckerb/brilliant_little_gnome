@@ -23,12 +23,6 @@
       "gatekeeperAssess": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "binaries": [
-        "Contents/Resources/bin/ruby_dist/macos-arm64/bin/ruby",
-        "Contents/Resources/bin/ruby_dist/macos-arm64/**/*.bundle",
-        "Contents/Resources/vendor/bundle/**/*.bundle",
-        "Contents/Resources/vendor/bundle/**/*.dylib"
-      ],
       "icon": "build/icon.png",
       "category": "public.app-category.education",
       "target": [
