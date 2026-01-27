@@ -131,9 +131,9 @@
           <div class="content box is-light is-size-6 py-4 px-5 pos-relative">
              <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
                <p class="has-text-weight-bold mb-0">Instructions / Description:</p>
-               <button class="button is-small is-ghost" onclick="toggleSection('instructions')">
+               <button class="button is-small is-ghost collapsible-trigger ${instructions_collapsed ? '' : 'is-active'}" onclick="toggleSection('instructions')">
                  <span class="icon is-small">
-                   <i id="instructions-chevron" class="fas fa-chevron-${instructions_collapsed ? 'right' : 'down'}"></i>
+                   <i id="instructions-chevron" class="fas fa-chevron-right"></i>
                  </span>
                </button>
              </div>
@@ -188,14 +188,13 @@
     return `
       <div class="notification is-success is-light">
         <div class="is-flex is-justify-content-space-between is-align-items-center mb-2">
-          <p class="has-text-weight-bold mb-0"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback:</p>
-          <button class="button is-small is-ghost has-text-success" onclick="toggleSection('feedback')">
+          <p class="has-text-weight-bold mb-0"><i class="fas fa-comment-dots mr-2"></i> Instructor Feedback</p>
+          <button class="button is-small is-ghost has-text-success collapsible-trigger ${feedback_collapsed ? '' : 'is-active'}" onclick="toggleSection('feedback')">
              <span class="icon is-small">
-               <i id="feedback-chevron" class="fas fa-chevron-${feedback_collapsed ? 'right' : 'down'}"></i>
+               <i id="feedback-chevron" class="fas fa-chevron-right"></i>
              </span>
           </button>
         </div>
-        
         <div id="feedback-content" class="${feedback_collapsed ? 'is-hidden' : ''}">
           <div class="content mt-2">
             ${evaluation.Feedback ? (evaluation.Feedback.Html || evaluation.Feedback.Text) : ''}
@@ -217,11 +216,13 @@
 
     return threads.map(item => {
       const thread = item.thread;
+      const isParticipated = thread.UserParticipated;
+
       return `
-        <div class="thread-container" id="thread-${thread.ThreadId}">
-          <div class="is-clickable py-3" onclick="toggleThread('${thread.ThreadId}')" style="cursor: pointer; border-bottom: 1px solid #f5f5f5;">
+        <div class="thread-container announcement-item" id="thread-${thread.ThreadId}">
+          <div class="is-clickable py-3 collapsible-trigger" onclick="toggleThread('${thread.ThreadId}', this)" style="cursor: pointer; border-bottom: 1px solid #f5f5f5;">
             <div class="is-flex is-align-items-start">
-              <span id="icon-${thread.ThreadId}" class="mt-1"><i class="fas fa-chevron-right ml-4 mr-3 has-text-grey-light"></i></span>
+              <span class="icon is-small mt-1 ml-4 mr-2 has-text-grey-light"><i class="fas fa-chevron-right"></i></span>
               <div style="flex: 1;">
                 <h5 class="title is-5 mb-1">
                   ${thread.IsPinned ? '<i class="fas fa-thumbtack mr-2 has-text-primary"></i>' : ''}
@@ -241,7 +242,7 @@
                     <span class="mx-2">&bull;</span>
                     <span class="tag is-white py-0 px-0"><i class="fas fa-comments mr-1"></i> ${thread.ReplyCount} replies</span>
                   ` : ''}
-                  ${thread.UserParticipated ? `
+                  ${isParticipated ? `
                     <span class="mx-2">&bull;</span>
                     <span class="tag is-success is-light is-small"><i class="fas fa-user-check mr-1"></i> Participated</span>
                   ` : ''}
@@ -250,7 +251,7 @@
             </div>
           </div>
           
-          <div id="content-${thread.ThreadId}" class="discussion-timeline is-hidden ml-5 mt-4">
+          <div id="content-${thread.ThreadId}" class="discussion-timeline is-hidden ml-5 mt-2 pb-4">
             ${item.post_tree.map(post => renderPost(post, 1)).join('')}
           </div>
         </div>
@@ -283,12 +284,13 @@
         </div>
         ${post.Replies && post.Replies.length > 0 ? `
           <div class="ml-4 mb-2">
-            <a class="is-size-7 has-text-link" onclick="toggleReplies('${post.PostId}')" id="toggle-link-${post.PostId}" style="cursor: pointer;">
-              <i class="fas fa-reply fa-flip-horizontal mr-1"></i> Show ${post.Replies.length} replies
+            <a class="is-size-7 has-text-link is-flex is-align-items-center collapsible-trigger" onclick="toggleReplies('${post.PostId}', this)" data-count="${post.Replies.length}" style="cursor: pointer;">
+              <span class="icon is-small mr-1"><i class="fas fa-chevron-right"></i></span>
+              <span>Show ${post.Replies.length} replies</span>
             </a>
-          </div>
-          <div id="replies-${post.PostId}" class="is-hidden">
-            ${post.Replies.map(reply => renderPost(reply, depth + 1)).join('')}
+            <div id="replies-${post.PostId}" class="is-hidden mt-2">
+              ${post.Replies.map(reply => renderPost(reply, depth + 1)).join('')}
+            </div>
           </div>
         ` : ''}
       </div>
@@ -296,17 +298,12 @@
   }
 
   function toggleSection(section) {
+    const btn = event.currentTarget;
     const content = document.getElementById(section + '-content');
-    const chevron = document.getElementById(section + '-chevron');
-    const isHidden = content.classList.contains('is-hidden');
+    const isActive = btn.classList.toggle('is-active');
     
-    if (isHidden) {
-      content.classList.remove('is-hidden');
-      chevron.classList.replace('fa-chevron-right', 'fa-chevron-down');
-    } else {
-      content.classList.add('is-hidden');
-      chevron.classList.replace('fa-chevron-down', 'fa-chevron-right');
-    }
+    if (isActive) content.classList.remove('is-hidden');
+    else content.classList.add('is-hidden');
 
     fetch(`/course/${COURSE_ID}/discussions/toggle_collapse`, {
       method: 'POST',
@@ -315,27 +312,26 @@
     });
   }
 
-  function toggleThread(id) {
+  function toggleThread(id, el) {
     const content = document.getElementById('content-' + id);
-    const icon = document.getElementById('icon-' + id);
-    if (content.classList.contains('is-hidden')) {
-      content.classList.remove('is-hidden');
-      icon.innerHTML = '<i class="fas fa-chevron-down ml-4 mr-2 has-text-grey"></i>';
-    } else {
-      content.classList.add('is-hidden');
-      icon.innerHTML = '<i class="fas fa-chevron-right ml-4 mr-2 has-text-grey-light"></i>';
-    }
+    const isActive = el.classList.toggle('is-active');
+    
+    if (isActive) content.classList.remove('is-hidden');
+    else content.classList.add('is-hidden');
   }
 
-  window.toggleReplies = function(id) {
-    const el = document.getElementById('replies-' + id);
-    const link = document.getElementById('toggle-link-' + id);
-    if (el.classList.contains('is-hidden')) {
-      el.classList.remove('is-hidden');
-      link.innerHTML = '<i class="fas fa-chevron-up mr-1"></i> Hide replies';
+  window.toggleReplies = function(id, el) {
+    const list = document.getElementById('replies-' + id);
+    const isActive = el.classList.toggle('is-active');
+    const span = el.querySelector('span:last-child');
+    const count = el.dataset.count;
+    
+    if (isActive) {
+      list.classList.remove('is-hidden');
+      span.innerText = 'Hide replies';
     } else {
-      el.classList.add('is-hidden');
-      link.innerHTML = '<i class="fas fa-reply fa-flip-horizontal mr-1"></i> Show replies';
+      list.classList.add('is-hidden');
+      span.innerText = `Show ${count} replies`;
     }
   };
 
@@ -343,18 +339,17 @@
 
   window.addEventListener('brilliant:discussion_updated', (e) => {
     const { course_id, forum_id, topic_id, post_count } = e.detail;
-    if (course_id == COURSE_ID && forum_id == FORUM_ID && topic_id == TOPIC_ID) {
+    const root = document.getElementById('topic-root');
+    
+    if (course_id == COURSE_ID && forum_id == FORUM_ID && topic_id == TOPIC_ID && root && root.querySelector('.fa-circle-notch')) {
       console.log("[SSE] Discussion updated, refreshing content...");
-      if (typeof showToast === 'function') {
-        showToast(`<strong>Updates Found</strong><br/>Refreshing discussion...`, 'is-success', 3000);
-      }
       loadTopic();
     }
   });
 </script>
 
 <style>
-  .thread-container { border-top: 1px solid #f5f5f5; padding-top: 1rem; margin-top: 1rem; }
+  .thread-container { border-top: 1px solid #f5f5f5; margin-top: 0.5rem; }
   .post-replies { margin-left: 1.5rem; border-left: 2px solid #f0f4f8; padding-left: 1rem; position: relative; }
   .post-card { border: 1px solid #eee; border-radius: 6px; margin-bottom: 1rem; transition: all 0.2s; background: white; }
   .post-card:hover { border-color: #739AC3; }
@@ -363,4 +358,20 @@
   .is-instructor { border-left: 4px solid #739AC3 !important; background: #f9fbfd; }
   .instructor-tag { background: #739AC3; color: white; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
   .post-date { color: #888; font-size: 0.75rem; }
+
+  .collapsible-trigger .fa-chevron-right {
+    transition: transform 0.2s ease;
+  }
+
+  .collapsible-trigger.is-active .fa-chevron-right {
+    transform: rotate(90deg);
+  }
+
+  .announcement-item .collapsible-trigger .fa-chevron-right {
+    transition: transform 0.2s ease;
+  }
+
+  .announcement-item .collapsible-trigger.is-active .fa-chevron-right {
+    transform: rotate(90deg);
+  }
 </style>
