@@ -80,18 +80,18 @@
         <table class="table is-fullwidth is-hoverable">
           <thead>
             <tr>
-              <th width="80">
-                <div class="is-flex is-align-items-center">
-                  <input type="checkbox" id="select-all" class="mr-2" onchange="toggleSelectAll(this)">
-                  <span class="is-size-7 has-text-grey-light has-text-weight-normal">Select</span>
-                </div>
+              <th width="40" class="has-text-centered">
+                <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)">
+              </th>
+              <th width="40" class="has-text-centered">
+                <span class="icon is-small has-text-grey-light" title="Status"><i class="fas fa-check"></i></span>
               </th>
               <th>Assignment</th>
               <th class="has-text-right">Action</th>
             </tr>
           </thead>
           <tbody>
-            ${assignments.length === 0 ? '<tr><td colspan="3" class="has-text-grey has-text-centered p-5">No assignments found.</td></tr>' : 
+            ${assignments.length === 0 ? '<tr><td colspan="4" class="has-text-grey has-text-centered p-5">No assignments found.</td></tr>' : 
               assignments.map(a => renderAssignmentRow(a)).join('')}
           </tbody>
         </table>
@@ -111,29 +111,26 @@
 
     return `
       <tr class="assignment-row ${isCompleted ? 'is-completed' : ''} ${isOptional ? 'is-optional' : ''}" data-id="${db_id}" data-type="assignment" data-brightspace-id="${id}">
-        <td class="is-vcentered">
-          <div class="is-flex is-align-items-center" style="gap: 12px;">
-            <input type="checkbox" class="assignment-bulk-checkbox" data-id="${db_id}" onchange="updateBulkSelection()">
-            <div class="completion-toggle-container">
-              <input type="checkbox" id="complete-${db_id}" class="assignment-checkbox is-hidden" data-id="${db_id}" ${isCompleted ? 'checked' : ''} onchange="toggleAssignmentInline(this)">
-              <label for="complete-${db_id}" class="completion-toggle-label is-clickable">
-                <span class="icon is-medium has-text-success status-icon-completed ${!isCompleted ? 'is-hidden' : ''}">
-                  <i class="fas fa-check-circle fa-lg"></i>
-                </span>
-                <span class="icon is-medium has-text-grey-lighter status-icon-incomplete ${isCompleted ? 'is-hidden' : ''}">
-                  <i class="far fa-circle fa-lg"></i>
-                </span>
-              </label>
-            </div>
+        <td class="has-text-centered is-vcentered">
+          <input type="checkbox" class="assignment-bulk-checkbox" data-id="${db_id}" onchange="updateBulkSelection()">
+        </td>
+        <td class="has-text-centered is-vcentered">
+          <div class="completion-toggle-container">
+            <input type="checkbox" id="complete-${db_id}" class="assignment-checkbox is-hidden" data-id="${db_id}" ${isCompleted ? 'checked' : ''} onchange="toggleAssignmentInline(this)">
+            <label for="complete-${db_id}" class="completion-toggle-label is-clickable" style="display: inline-block; vertical-align: middle;">
+              <span class="icon is-medium has-text-success status-icon-completed ${!isCompleted ? 'is-hidden' : ''}">
+                <i class="fas fa-check-circle fa-lg"></i>
+              </span>
+              <span class="icon is-medium has-text-grey-lighter status-icon-incomplete ${isCompleted ? 'is-hidden' : ''}">
+                <i class="far fa-circle fa-lg"></i>
+              </span>
+            </label>
           </div>
         </td>
         <td class="assignment-info">
           <div class="is-flex is-align-items-start">
-            <button class="button is-ghost is-small p-0 ml-4 mt-1" onclick="expandAssignmentRow('${db_id}', event)">
-              <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
-            </button>
             <div style="flex: 1;">
-              <div class="mb-1">
+              <div class="mb-1 is-flex is-align-items-center">
                 <strong>
                   <a href="${viewUrl}" class="assignment-link has-text-dark">${a.name_html}</a>
                 </strong>
@@ -141,6 +138,9 @@
                 <span class="tag is-light is-small ml-2 optional-tag ${!isOptional ? 'is-hidden' : ''}">
                   <i class="fas fa-hand-paper mr-1"></i> Optional
                 </span>
+                <button class="button is-ghost is-small p-0 ml-3" onclick="expandAssignmentRow('${db_id}', event)" style="height: auto;">
+                  <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
+                </button>
               </div>
               <div class="is-size-7 has-text-grey">
                 <i class="fas fa-calendar-alt mr-1"></i> Due: 
