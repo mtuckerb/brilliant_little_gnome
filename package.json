@@ -11,19 +11,18 @@
   },
   "build": {
     "appId": "com.brilliant.app",
+    "productName": "Brilliant",
     "directories": {
       "output": "dist",
       "buildResources": "build"
-    "productName": "Brilliant",
+    },
     "afterSign": "scripts/notarize.js",
     "mac": {
       "hardenedRuntime": true,
       "gatekeeperAssess": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "category": "public.app-category.education",
-      "target": [
-        {
+      "icon": "build/icon.png",
       "category": "public.app-category.education",
       "target": [
         {
