@@ -189,6 +189,7 @@ class DashboardController < BaseController
   post '/settings' do
     if params[:host].present? && params[:cookies].present?
       $client.save_connection_config(params[:host].strip, params[:cookies].strip)
+      return { status: 'ok' }.to_json if request.xhr?
     end
 
     updates = {

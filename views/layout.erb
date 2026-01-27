@@ -227,7 +227,7 @@
             }
           })
           .catch(() => {
-            window.location.href = '/login';
+            window.location.href = '/setup';
           });
       }
     }
@@ -296,6 +296,30 @@
       }
 
       setupSSE();
+
+      // Electron Re-authentication Support
+      if (window.electron && window.electron.onLoginComplete) {
+        window.electron.onLoginComplete(async (data) => {
+          showToast("Updating Brightspace session...", 'is-info');
+          try {
+            const resp = await fetch('/api/v1/auth/cookies', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data)
+            });
+            const result = await resp.json();
+            if (result.status === 'ok') {
+              showToast("<strong>Authenticated Successfully</strong><br/>Refreshing session...", 'is-success');
+              setTimeout(() => location.reload(), 1500);
+            } else {
+              showToast("<strong>Authentication Update Failed</strong><br/>" + (result.error || "Unknown error"), 'is-danger');
+            }
+          } catch (err) {
+            console.error("Auth update error:", err);
+            showToast("Connection error during re-authentication.", 'is-danger');
+          }
+        });
+      }
     });
   </script>
 </body>

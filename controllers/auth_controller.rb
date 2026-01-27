@@ -20,7 +20,11 @@ class AuthController < BaseController
   end
 
   get '/login' do
-    redirect $client.auth_url
+    if ENV['BS_CLIENT_ID'] && ENV['BS_CLIENT_SECRET']
+      redirect $client.auth_url
+    else
+      redirect '/setup'
+    end
   end
 
   get '/callback' do

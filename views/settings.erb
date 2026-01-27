@@ -366,8 +366,24 @@
       if (hostInput && cookieInput) {
         hostInput.value = data.host;
         cookieInput.value = data.cookies;
-        // Auto submit the form
-        document.querySelector('form[action="/settings"]').submit();
+        
+        // Use fetch for a smoother experience if possible
+        fetch('/settings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: new URLSearchParams({
+            host: data.host,
+            cookies: data.cookies
+          })
+        }).then(() => {
+          location.reload();
+        }).catch(() => {
+          const form = document.querySelector('form[action="/settings"]');
+          if (form) form.submit();
+        });
       }
     });
   }

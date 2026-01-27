@@ -4,9 +4,31 @@ module Api
   module V1
     class ApiController < BaseController
       before '/api/v1/*' do
-        content_type :json
         @user_prefs = UserPreference.current
+        # Skip validation for the re-auth cookie endpoint
+        next if request.path_info == '/api/v1/auth/cookies'
+        
         validate_api_access!
+        content_type :json unless request.path_info == '/api/v1/events'
+      end
+
+      # Re-authentication from Electron
+      post '/api/v1/auth/cookies' do
+        content_type :json
+        begin
+          data = JSON.parse(request.body.read)
+          host = data['host']
+          cookies = data['cookies']
+          
+          if host.present? && cookies.present?
+            $client.save_connection_config(host.strip, cookies.strip)
+            { status: 'ok' }.to_json
+          else
+            halt 400, { error: "Missing parameters" }.to_json
+          end
+        rescue => e
+          halt 400, { error: "Invalid JSON: #{e.message}" }.to_json
+        end
       end
 
       # Course Discovery
@@ -413,7 +435,7 @@ module Api
       end
 
       # Live updates via Server-Sent Events
-      get '/api/v1/events', provides: 'text/event-stream' do
+      get '/api/v1/events' do
         content_type 'text/event-stream'
         headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive', 'X-Accel-Buffering' => 'no'
         
@@ -421,25 +443,33 @@ module Api
         Brilliant::EventBus.subscribe(queue)
         
         stream(:keep_open) do |out|
-          begin
-            # Keep-alive heartbeats
-            heartbeat_thread = Thread.new do
+          heartbeat_thread = Thread.new do
+            begin
               loop do
                 sleep 20
+                break if out.closed?
                 out << ": heartbeat\n\n"
               end
+            rescue => e
+              # Expected when client disconnects
+              puts "[SSE Heartbeat] Stream clean-up: #{e.message}"
             end
+          end
 
+          begin
             loop do
+              break if out.closed?
               event_data = queue.pop
+              
               out << "event: #{event_data[:event]}\n"
               out << "data: #{event_data[:data].to_json}\n\n"
             end
           rescue => e
-            puts "[SSE] Stream closed: #{e.message}"
+            puts "[SSE] Main stream loop closed: #{e.message}"
           ensure
             heartbeat_thread.kill if heartbeat_thread
             Brilliant::EventBus.unsubscribe(queue)
+            out.close unless out.closed?
           end
         end
       end
