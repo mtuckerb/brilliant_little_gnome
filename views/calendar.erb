@@ -69,32 +69,34 @@
   </div>
 </div>
 
-<!-- DATE PICKER MODAL -->
-<div class="modal" id="date-modal">
-  <div class="modal-background" onclick="closeDateModal()"></div>
+<%= erb :'partials/edit_assignment_modal' %>
+
+<!-- Fallback simple date modal for Non-assignment items (Grades etc) if needed -->
+<div class="modal" id="simple-date-modal">
+  <div class="modal-background" onclick="closeSimpleDateModal()"></div>
   <div class="modal-card">
     <header class="modal-card-head">
-      <p class="modal-card-title">Change Due Date</p>
-      <button class="delete" aria-label="close" onclick="closeDateModal()"></button>
+      <p class="modal-card-title">Change Date</p>
+      <button class="delete" aria-label="close" onclick="closeSimpleDateModal()"></button>
     </header>
     <section class="modal-card-body">
       <div class="field">
-        <label class="label" id="modal-item-name"></label>
+        <label class="label" id="simple-modal-item-name"></label>
         <div class="is-flex" style="gap: 10px;">
           <div class="control" style="flex: 2;">
-            <input class="input" type="date" id="modal-due-date">
+            <input class="input" type="date" id="simple-modal-due-date">
           </div>
           <div class="control" style="flex: 1;">
-            <input class="input" type="time" id="modal-due-time">
+            <input class="input" type="time" id="simple-modal-due-time">
           </div>
         </div>
       </div>
-      <input type="hidden" id="modal-item-type">
-      <input type="hidden" id="modal-item-id">
+      <input type="hidden" id="simple-modal-item-type">
+      <input type="hidden" id="simple-modal-item-id">
     </section>
     <footer class="modal-card-foot">
-      <button class="button is-primary" onclick="saveDate()">Save Changes</button>
-      <button class="button" onclick="closeDateModal()">Cancel</button>
+      <button class="button is-primary" onclick="saveSimpleDate()">Save Changes</button>
+      <button class="button" onclick="closeSimpleDateModal()">Cancel</button>
     </footer>
   </div>
 </div>
@@ -172,7 +174,7 @@
       const isToday = dateStr === state.data.today;
 
       html += `
-        <div class="calendar-day ${isToday ? 'is-today' : ''}">
+        <div class="calendar-day ${isToday ? 'is-today' : ''} drop-zone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="${dateStr}">
           <div class="level is-mobile mb-1">
             <div class="level-left">
               <span class="is-size-7 has-text-grey-light font-weight-bold mr-1">${dayObj.toLocaleDateString(undefined, {weekday: 'short'})}</span>
@@ -180,7 +182,7 @@
             </div>
             ${dayObj.getDate() === 1 ? `<div class="level-right"><span class="tag is-light is-size-7">${dayObj.toLocaleDateString(undefined, {month: 'short'})}</span></div>` : ''}
           </div>
-          <div class="day-content" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="${dateStr}">
+          <div class="day-content">
             ${items.map(item => renderCalendarItem(item, 'tiny')).join('')}
           </div>
         </div>
@@ -213,7 +215,7 @@
             <div class="week-day-name">${dayObj.toLocaleDateString(undefined, {weekday: 'long'})}</div>
             <div class="week-day-number ${isToday ? 'has-text-primary' : ''}">${dayObj.toLocaleDateString(undefined, {month: 'short', day: '2-digit'})}</div>
           </div>
-          <div class="week-items-column" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="${dateStr}">
+          <div class="week-items-column drop-zone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="${dateStr}">
             ${items.length === 0 ? `<div class="has-text-grey-light is-size-7 mt-2 no-items-msg">No items due.</div>` : ''}
             <div class="week-items-grid">
                ${items.map(item => renderCalendarItem(item, 'large')).join('')}
@@ -241,11 +243,11 @@
     const compClass = isCompleted ? 'is-completed' : '';
     const optClass = isOptional ? 'is-optional' : '';
     
+    const dragAttrs = `draggable="true" ondragstart="handleDragStart(event)" data-type="${item.type}" data-item-id="${item.id}" data-db-id="${item.db_id}" data-name="${item.name}" data-date="${item.date}" data-full-date="${item.time}" data-course-id="${item.course_id}"`;
+
     if (size === 'tiny') {
         return `
-          <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" 
-               data-type="${item.type}" data-id="${item.id}" data-db-id="${item.db_id}" data-name="${item.name}" 
-               data-date="${item.date}" data-full-date="${item.time}">
+          <div class="calendar-item-wrapper" ${dragAttrs}>
             ${item.type === 'assignment' ? `
               <button class="button is-ghost is-small toggle-complete-btn p-0 mr-1" onclick="toggleComplete('${item.db_id}', event)">
                 <span class="icon is-small">
@@ -256,7 +258,7 @@
                  data-db-id="${item.db_id}" data-type="${item.type}" data-item-id="${item.id}" data-course-id="${item.course_id}">
               <a href="${item.url}" class="item-name has-text-dark" style="text-decoration: none;">${item.name_html}</a>
             </div>
-            <button class="button is-ghost is-small edit-date-btn p-1" onclick="openDateModalSPA(this, event)">
+            <button class="button is-ghost is-small edit-item-btn p-1" onclick="handleEditClick(this, event)">
               <span class="icon is-small"><i class="fas fa-edit"></i></span>
             </button>
           </div>
@@ -264,9 +266,7 @@
     }
 
     return `
-      <div class="calendar-item-wrapper" draggable="true" ondragstart="handleDragStart(event)" 
-           data-type="${item.type}" data-id="${item.id}" data-db-id="${item.db_id}" data-name="${item.name}" 
-           data-date="${item.date}" data-full-date="${item.time}">
+      <div class="calendar-item-wrapper" ${dragAttrs}>
         ${item.type === 'assignment' ? `
           <button class="button is-ghost is-small toggle-complete-btn p-0 mr-2" onclick="toggleComplete('${item.db_id}', event)">
             <span class="icon">
@@ -292,7 +292,7 @@
             </div>
           </div>
         </div>
-        <button class="button is-ghost is-small edit-date-btn p-1 ml-2" onclick="openDateModalSPA(this, event)">
+        <button class="button is-ghost is-small edit-item-btn p-1 ml-2" onclick="handleEditClick(this, event)">
           <span class="icon is-small"><i class="fas fa-edit"></i></span>
         </button>
       </div>
@@ -347,10 +347,11 @@
     
     if (detailsDiv.dataset.loaded !== 'true') {
       const wrapper = detailsDiv.closest('.calendar-item-wrapper');
-      const { type, id } = wrapper.dataset;
+      const { type } = wrapper.dataset;
+      const itemId = wrapper.dataset.itemId;
       const course_id = wrapper.dataset.courseId;
       
-      fetch(`/api/v1/item_details?type=${type}&id=${id}&course_id=${course_id}`)
+      fetch(`/api/v1/item_details?type=${type}&id=${itemId}&course_id=${course_id}`)
         .then(r => r.json())
         .then(data => {
             detailsDiv.querySelector('.content').innerHTML = data.html || '<p class="has-text-grey">No description.</p>';
@@ -359,26 +360,47 @@
     }
   }
 
-  function openDateModalSPA(btn, event) {
+  function handleEditClick(btn, event) {
     event.stopPropagation();
     const wrapper = btn.closest('.calendar-item-wrapper');
-    const { type, id, name, date, fullDate } = wrapper.dataset;
+    const { type, name, date, fullDate } = wrapper.dataset;
+    const itemId = wrapper.dataset.itemId;
+    const courseId = wrapper.dataset.courseId;
     
-    document.getElementById('modal-item-name').innerText = name;
-    document.getElementById('modal-due-date').value = date;
-    document.getElementById('modal-due-time').value = fullDate.includes('T') ? fullDate.split('T')[1].substring(0,5) : '23:59';
-    document.getElementById('modal-item-type').value = type;
-    document.getElementById('modal-item-id').value = id;
-    document.getElementById('date-modal').classList.add('is-active');
+    if (type === 'assignment') {
+      // Use the robust assignment edit modal
+      fetch(`/course/${courseId}/assignments/${itemId}`, { headers: {'Accept': 'application/json'}})
+        .then(r => r.json())
+        .then(assignment => {
+           const dt = assignment.DueDate ? new Date(assignment.DueDate) : null;
+           openEditAssignmentModal({
+             courseId: courseId,
+             brightspaceId: itemId,
+             name: assignment.Name || name,
+             dueDate: dt ? dt.toISOString().split('T')[0] : (date || ''),
+             dueTime: dt ? dt.toTimeString().split(' ')[0].substring(0, 5) : (fullDate.includes('T') ? fullDate.split('T')[1].substring(0,5) : '23:59'),
+             externalUrl: assignment.ExternalUrl || '',
+             description: assignment.Instructions?.Text || assignment.Description || ''
+           });
+        });
+    } else {
+      // Fallback for non-assignments (like Grades)
+      document.getElementById('simple-modal-item-name').innerText = name;
+      document.getElementById('simple-modal-due-date').value = date;
+      document.getElementById('simple-modal-due-time').value = fullDate.includes('T') ? fullDate.split('T')[1].substring(0,5) : '23:59';
+      document.getElementById('simple-modal-item-type').value = type;
+      document.getElementById('simple-modal-item-id').value = itemId;
+      document.getElementById('simple-date-modal').classList.add('is-active');
+    }
   }
 
-  function closeDateModal() { document.getElementById('date-modal').classList.remove('is-active'); }
+  function closeSimpleDateModal() { document.getElementById('simple-date-modal').classList.remove('is-active'); }
 
-  async function saveDate() {
-    const type = document.getElementById('modal-item-type').value;
-    const id = document.getElementById('modal-item-id').value;
-    const date = document.getElementById('modal-due-date').value;
-    const time = document.getElementById('modal-due-time').value;
+  async function saveSimpleDate() {
+    const type = document.getElementById('simple-modal-item-type').value;
+    const id = document.getElementById('simple-modal-item-id').value;
+    const date = document.getElementById('simple-modal-due-date').value;
+    const time = document.getElementById('simple-modal-due-time').value;
     
     try {
       const resp = await fetch('/calendar/update_due_date', {
@@ -387,35 +409,105 @@
         body: `type=${type}&id=${id}&due_date=${date}T${time}`
       });
       const data = await resp.json();
-      if (data.status === 'ok') { closeDateModal(); loadCalendar(); }
+      if (data.status === 'ok') { closeSimpleDateModal(); loadCalendar(); }
     } catch (err) { console.error(err); }
   }
+
+  // Override the saveAssignmentEdits from the partial to ensure we refresh our calendar
+  // instead of assuming a location.reload() or doing nothing.
+  const originalSaveAssignmentEdits = window.saveAssignmentEdits;
+  window.saveAssignmentEdits = async function() {
+    const form = document.getElementById('editAssignmentForm');
+    const btn = document.getElementById('save-assignment-btn');
+    const formData = new FormData(form);
+    btn.classList.add('is-loading');
+    try {
+      const response = await fetch(form.action, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: new URLSearchParams(formData)
+      });
+      const data = await response.json();
+      if (data.status === 'ok') {
+        closeEditAssignmentModal();
+        loadCalendar(); // Refresh just the calendar data
+      }
+    } catch (err) { console.error(err); } finally { btn.classList.remove('is-loading'); }
+  };
 
   // Drag & Drop
   function handleDragStart(event) {
     const wrapper = event.target.closest('.calendar-item-wrapper');
-    const data = { type: wrapper.dataset.type, id: wrapper.dataset.id, originalDate: wrapper.dataset.date };
+    if (!wrapper) return;
+    
+    // Set visual state
+    wrapper.classList.add('is-dragging');
+    
+    const data = { 
+      type: wrapper.dataset.type, 
+      id: wrapper.dataset.itemId, 
+      db_id: wrapper.dataset.dbId,
+      originalDate: wrapper.dataset.date 
+    };
+    
+    event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('application/json', JSON.stringify(data));
+    
+    // Required for some browsers
     setTimeout(() => wrapper.style.opacity = '0.4', 0);
   }
-  document.addEventListener('dragend', e => { e.target.closest('.calendar-item-wrapper').style.opacity = '1'; });
-  function handleDragOver(e) { e.preventDefault(); e.target.closest('[data-date]').classList.add('drag-over'); }
-  function handleDragLeave(e) { e.target.closest('[data-date]').classList.remove('drag-over'); }
+
+  document.addEventListener('dragend', e => { 
+    const wrapper = e.target.closest('.calendar-item-wrapper');
+    if (wrapper) {
+      wrapper.style.opacity = '1';
+      wrapper.classList.remove('is-dragging');
+    }
+    // Cleanup any lingering drop zones
+    document.querySelectorAll('.drop-zone').forEach(dz => dz.classList.remove('drag-over'));
+  });
+
+  function handleDragOver(e) { 
+    e.preventDefault(); 
+    e.dataTransfer.dropEffect = 'move';
+    const zone = e.target.closest('.drop-zone');
+    if (zone) zone.classList.add('drag-over'); 
+  }
+
+  function handleDragLeave(e) { 
+    const zone = e.target.closest('.drop-zone');
+    if (zone) zone.classList.remove('drag-over'); 
+  }
+
   async function handleDrop(e) {
     e.preventDefault();
-    const container = e.target.closest('[data-date]');
-    container.classList.remove('drag-over');
-    const newDate = container.dataset.date;
-    const data = JSON.parse(e.dataTransfer.getData('application/json'));
-    if (data.originalDate !== newDate) {
-        try {
-          await fetch('/calendar/update_due_date', {
+    const zone = e.target.closest('.drop-zone');
+    if (!zone) return;
+    
+    zone.classList.remove('drag-over');
+    const newDate = zone.dataset.date;
+    
+    try {
+      const rawData = e.dataTransfer.getData('application/json');
+      if (!rawData) return;
+      
+      const data = JSON.parse(rawData);
+      if (data.originalDate !== newDate) {
+          // Use the more granular update Endpoint
+          const resp = await fetch('/calendar/update_due_date', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
             body: `type=${data.type}&id=${data.id}&due_date=${newDate}`
           });
-          loadCalendar();
-        } catch(err) {}
+          const result = await resp.json();
+          if (result.status === 'ok') {
+            loadCalendar();
+          } else {
+            console.error("Drop save failed:", result);
+          }
+      }
+    } catch(err) {
+      console.error("Drop error:", err);
     }
   }
 
@@ -434,13 +526,14 @@
   .week-row.is-today { background: #f0f7ff; border-left: 4px solid #739AC3; }
   .week-date-column { width: 150px; padding: 20px; background: #f9f9f9; border-right: 1px solid #eee; text-align: center; }
   .week-items-column { flex: 1; padding: 15px; }
-  .calendar-item-wrapper { display: flex; align-items: center; margin-bottom: 4px; }
+  .calendar-item-wrapper { display: flex; align-items: center; margin-bottom: 4px; border-radius: 4px; }
+  .calendar-item-wrapper.is-dragging { pointer-events: none; }
   .calendar-item { font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: #f5f5f5; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 3px solid #ccc; }
   .calendar-item.assignment { background: #eef2ff; color: #4338ca; border-left-color: #6366f1; }
   .calendar-item.grade { background: #ecfdf5; color: #065f46; border-left-color: #10b981; }
   .calendar-item.is-completed { text-decoration: line-through; opacity: 0.5; }
   .calendar-item.is-large { font-size: 0.9rem; padding: 10px; white-space: normal; }
   .drag-over { background: rgba(115, 154, 195, 0.1) !important; outline: 2px dashed #739AC3; }
-  .edit-date-btn { opacity: 0; }
-  .calendar-item-wrapper:hover .edit-date-btn { opacity: 1; }
+  .edit-item-btn { opacity: 0; transition: opacity 0.2s; }
+  .calendar-item-wrapper:hover .edit-item-btn { opacity: 1; }
 </style>
