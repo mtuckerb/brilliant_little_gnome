@@ -8,10 +8,11 @@ function getAllFiles(dirPath, arrayOfFiles) {
   arrayOfFiles = arrayOfFiles || [];
 
   files.forEach(function(file) {
-    if (fs.statSync(dirPath + "/" + file).isDirectory()) {
-      arrayOfFiles = getAllFiles(dirPath + "/" + file, arrayOfFiles);
+    const fullPath = path.join(dirPath, file);
+    if (fs.statSync(fullPath).isDirectory()) {
+      arrayOfFiles = getAllFiles(fullPath, arrayOfFiles);
     } else {
-      arrayOfFiles.push(path.join(dirPath, "/", file));
+      arrayOfFiles.push(fullPath);
     }
   });
 
@@ -30,15 +31,21 @@ exports.default = async function(context) {
   const resourcesPath = path.join(appPath, 'Contents', 'Resources');
   const entitlementsPath = path.join(context.packager.info.projectDir, 'build', 'entitlements.mac.plist');
 
-  // get identity from context if possible
-  let identity = '-'; // default to ad-hoc
+  // get identity from context or environment
+  let identity = '-'; 
   try {
      const signingInfo = await packager.codeSigningInfo.value;
      if (signingInfo && signingInfo.name) {
        identity = signingInfo.name;
+       console.log(`  • afterPack       found identity from signingInfo: "${identity}"`);
      }
   } catch (e) {
-     identity = process.env.CSC_NAME || '-';
+     identity = process.env.CSC_NAME || process.env.APPLE_DEVELOPER_IDENTITY || '-';
+     console.log(`  • afterPack       using identity from environment: "${identity}"`);
+  }
+
+  if (identity === '-') {
+    identity = process.env.APPLE_DEVELOPER_IDENTITY || '-';
   }
 
   console.log(`  • afterPack       signing ruby distribution and gems in ${appPath} with identity "${identity}"`);
@@ -53,31 +60,39 @@ exports.default = async function(context) {
 
   for (const file of allFiles) {
     try {
+      // Use 'file' to check if it's a Mach-O binary (executable, dylib, or bundle)
       const fileInfo = execSync(`file "${file}"`).toString();
       if (fileInfo.includes('Mach-O')) {
         binaries.push(file);
       }
     } catch (e) {
-      // skip errors on file command
+      // skip errors
     }
   }
     
   console.log(`  • afterPack       found ${binaries.length} Mach-O binaries in Resources to sign`);
 
   for (const binary of binaries) {
-    console.log(`  • afterPack       signing ${path.relative(resourcesPath, binary)}`);
+    const relPath = path.relative(resourcesPath, binary);
     
     try {
+      // We use --force to overwrite any existing signature
+      // We use --options runtime for Hardened Runtime
+      // We use --timestamp for notarization requirement
+      // We apply entitlements to everything in the sidecar to be safe, 
+      // though typically only the main executable strictly needs them.
+      // But for nested ruby with native extensions, this is often the most reliable way.
       execSync(`codesign --force --options runtime --timestamp --entitlements "${entitlementsPath}" -s "${identity}" "${binary}"`);
+      // console.log(`  • afterPack       signed ${relPath}`);
     } catch (err) {
-      console.warn(`  • afterPack       warning: failed to sign ${binary}: ${err.message}`);
+      console.warn(`  • afterPack       warning: failed to sign ${relPath}: ${err.message}`);
     }
   }
 
-  // Also specifically ensure the ruby binary has the correct entitlements if it's outside resources or missed
+  // Double check the ruby binary specifically
   const rubyPath = path.join(resourcesPath, 'bin', 'ruby_dist', 'macos-arm64', 'bin', 'ruby');
-  if (fs.existsSync(rubyPath) && !binaries.includes(rubyPath)) {
-    console.log(`  • afterPack       ensuring ruby entitlements for ${rubyPath}`);
+  if (fs.existsSync(rubyPath)) {
+    console.log(`  • afterPack       ensuring ruby entitlements for ${path.relative(resourcesPath, rubyPath)}`);
     try {
       execSync(`codesign --force --options runtime --timestamp --entitlements "${entitlementsPath}" -s "${identity}" "${rubyPath}"`);
     } catch (err) {
