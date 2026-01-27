@@ -130,7 +130,8 @@
        </div>
     </div>
 
-    <div id="pagination-container" class="mt-4"></div>
+    <!-- Pagination Container -->
+    <div id="pagination-container" class="mt-5 pb-6"></div>
   </div>
 </div>
 
@@ -142,6 +143,7 @@
 
   // Helper: Course Pill Style
   function getCoursePillStyle(name) {
+    if (!name) return "";
     const hash = name.split('').reduce((acc, char) => char.charCodeAt(0) + ((acc << 5) - acc), 0);
     const color = `hsl(${Math.abs(hash % 360)}, 60%, 45%)`;
     return `background-color: ${color}; color: white;`;
@@ -157,6 +159,13 @@
   function runFilter() {
     currentPage = 1;
     loadNotifications();
+  }
+
+  function changePage(p) {
+    if (p === currentPage) return;
+    currentPage = p;
+    loadNotifications();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async function markAllRead() {
@@ -219,7 +228,7 @@
     try {
       const response = await fetch(`/api/v1/notifications?${params.toString()}`);
       const data = await response.json();
-      renderNotifications(data.notifications, data.total);
+      renderNotifications(data.notifications);
       renderPagination(data.total);
       window.hasInitiallyLoaded = true;
     } catch (err) {
@@ -229,7 +238,7 @@
     }
   }
 
-  function renderNotifications(items, total) {
+  function renderNotifications(items) {
     const container = document.getElementById('notifications-container');
     if (!container) return;
 
@@ -262,7 +271,7 @@
                 <span class="is-size-7 has-text-grey">${n.simple_date}</span>
               </div>
               <h5 class="title is-6 mb-1">
-                <a href="/notifications/${n.id}/view" class="has-text-dark">${n.display_title}</a>
+                <a href="/notifications/${n.id}/view" class="has-text-dark">${n.display_title || n.title}</a>
               </h5>
             </div>
           </div>
@@ -272,36 +281,55 @@
   }
 
   function renderPagination(total) {
-    const totalPages = Math.ceil(total / PER_PAGE);
     const container = document.getElementById('pagination-container');
     if (!container) return;
 
-    if (totalPages <= 1) {
+    const totalPages = Math.ceil(total / PER_PAGE);
+    console.log("Rendering pagination:", { total, PER_PAGE, totalPages, currentPage });
+
+    if (total === 0) {
       container.innerHTML = '';
       return;
     }
 
-    let html = `<nav class="pagination is-small is-centered" role="navigation" aria-label="pagination">`;
-    html += `<a class="pagination-previous" ${currentPage === 1 ? 'disabled' : 'onclick="changePage(' + (currentPage - 1) + ')"'}>Previous</a>`;
-    html += `<a class="pagination-next" ${currentPage === totalPages ? 'disabled' : 'onclick="changePage(' + (currentPage + 1) + ')"'}>Next page</a>`;
+    let html = `<div class="level is-mobile mb-2">
+      <div class="level-left">
+        <div class="level-item">
+          <span class="is-size-7 has-text-grey">Total: <strong>${total}</strong> notifications (Page ${currentPage} of ${totalPages || 1})</span>
+        </div>
+      </div>
+    </div>`;
+
+    if (totalPages <= 1) {
+      container.innerHTML = html;
+      return;
+    }
+
+    html += `<nav class="pagination is-small is-centered" role="navigation" aria-label="pagination">`;
+    
+    // Previous Button
+    const prevDisabled = currentPage === 1 ? 'disabled' : '';
+    const prevOnclick = currentPage === 1 ? '' : `onclick="changePage(${currentPage - 1})"`;
+    html += `<a class="pagination-previous" ${prevDisabled} ${prevOnclick}>Previous</a>`;
+    
+    // Next Button
+    const nextDisabled = currentPage === totalPages ? 'disabled' : '';
+    const nextOnclick = currentPage === totalPages ? '' : `onclick="changePage(${currentPage + 1})"`;
+    html += `<a class="pagination-next" ${nextDisabled} ${nextOnclick}>Next page</a>`;
+    
     html += `<ul class="pagination-list">`;
     
     for (let i = 1; i <= totalPages; i++) {
-        if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
-            html += `<li><a class="pagination-link ${i === currentPage ? 'is-current' : ''}" onclick="changePage(${i})">${i}</a></li>`;
-        } else if (i === currentPage - 2 || i === currentPage + 2) {
+        if (i === 1 || i === totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) {
+            const isCurrent = i === currentPage ? 'is-current' : '';
+            html += `<li><a class="pagination-link ${isCurrent}" onclick="changePage(${i})">${i}</a></li>`;
+        } else if (i === currentPage - 3 || i === currentPage + 3) {
             html += `<li><span class="pagination-ellipsis">&hellip;</span></li>`;
         }
     }
     
     html += `</ul></nav>`;
     container.innerHTML = html;
-  }
-
-  function changePage(p) {
-    currentPage = p;
-    loadNotifications();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   document.addEventListener('DOMContentLoaded', loadNotifications);
@@ -330,4 +358,9 @@
   .notification-card.is-read:hover { opacity: 0.9; }
   .read-toggle-btn { height: auto; border: none; background: none; cursor: pointer; }
   .read-toggle-btn:hover { background: none !important; transform: scale(1.2); }
+  
+  .pagination-previous[disabled], .pagination-next[disabled] {
+    pointer-events: none;
+    opacity: 0.5;
+  }
 </style>
