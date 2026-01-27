@@ -16,12 +16,18 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "afterPack": "scripts/afterPack.js",
     "afterSign": "scripts/notarize.js",
     "mac": {
       "hardenedRuntime": true,
       "gatekeeperAssess": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "binaries": [
+        "Contents/Resources/bin/ruby_dist/macos-arm64/bin/ruby",
+        "Contents/Resources/bin/ruby_dist/macos-arm64/lib/**/*.dylib",
+        "Contents/Resources/vendor/bundle/**/*.bundle"
+      ],
       "icon": "build/icon.png",
       "category": "public.app-category.education",
       "target": [
