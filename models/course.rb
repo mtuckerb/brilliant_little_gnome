@@ -4,7 +4,7 @@ class Course < ActiveRecord::Base
   has_many :content_modules, foreign_key: :course_id, primary_key: :org_unit_id
   has_many :assignments, foreign_key: :course_id, primary_key: :org_unit_id
 
-  def end_of_week_date(reference_date = Time.now)
+  def end_of_week_date(reference_date = Time.current)
     # end_of_week_day is 0 for Sunday, 1 for Monday, etc.
     # ActiveSupport's end_of_week defaults to Sunday (0)
     # But it doesn't allow passing a custom day easily in older versions

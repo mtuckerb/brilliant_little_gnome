@@ -27,7 +27,7 @@ class BaseController < Sinatra::Base
 
     def format_date(date, format = "%b %d, %Y %I:%M %p")
       return "Recently" if date.nil?
-      d = date.is_a?(String) ? (Time.parse(date) rescue nil) : date
+      d = date.is_a?(String) ? (Time.zone.parse(date) rescue nil) : date
       return date.to_s if d.nil?
       
       tz_name = @user_prefs&.time_zone || "UTC"
@@ -68,13 +68,16 @@ class BaseController < Sinatra::Base
     end
 
     def validate_api_access!
-      # 1. Check for API Key in Header (X-API-Key) or Param
+      # 1. Internal Session Fallback (e.g. from web frontend)
+      return true if configured?
+
+      # 2. Check for API Key in Header (X-API-Key) or Param
       api_key = request.env['HTTP_X_API_KEY'] || params[:api_key]
       if api_key.present? && @user_prefs.api_key.present? && api_key == @user_prefs.api_key
         return true
       end
 
-      # 2. Check for JWT Token in Authorization Header or Param
+      # 3. Check for JWT Token in Authorization Header or Param
       token = nil
       auth_header = request.env['HTTP_AUTHORIZATION']
       if auth_header && auth_header.start_with?('Bearer ')
@@ -91,11 +94,6 @@ class BaseController < Sinatra::Base
         rescue => e
           # decode_jwt_token handles its own halts
         end
-      end
-
-      # 3. Internal Session Fallback
-      if configured?
-        return true
       end
 
       halt 401, { error: "Unauthorized: API access required" }.to_json
@@ -171,6 +169,7 @@ class BaseController < Sinatra::Base
   before do
     @user_prefs ||= UserPreference.current
     Time.zone = @user_prefs.time_zone || "UTC"
+    @iana_timezone = Time.zone.tzinfo.name
 
     # Config Check
     return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/login', '/docs', '/sync/status'].include?(request.path_info) || 

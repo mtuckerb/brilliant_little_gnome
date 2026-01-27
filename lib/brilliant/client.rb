@@ -57,6 +57,9 @@ class BrilliantClient
     
     Thread.new do
       ActiveRecord::Base.connection_pool.with_connection do
+        # Ensure timezone is set for the background thread
+        Time.zone = UserPreference.current&.time_zone || "UTC"
+        
         @sync_lock.synchronize { @syncing = true }
         @sync_status = { status: "syncing", progress: 0, current_task: "Starting proactive sync..." }
         
@@ -142,7 +145,7 @@ class BrilliantClient
           # Notify user about skipped items (manual overrides protected)
           if skipped_items.any?
             create_system_notification({
-              id: "sync_protection_#{Time.now.to_i}",
+              id: "sync_protection_#{Time.current.to_i}",
               title: "Sync Protection: Manual Edits Preserved",
               body: "#{skipped_items.size} assignment(s) were not updated because they contain your manual edits: #{skipped_items.take(3).map{|i| i.name}.join(', ')}#{'...' if skipped_items.size > 3}",
               urgency: 2
@@ -182,7 +185,7 @@ class BrilliantClient
         course.name = new_name if new_name.present? && !new_name.match?(/^\d+$/)
         course.code = c['OrgUnit']['Code']
         course.is_pinned = !c['PinDate'].nil?
-        course.last_accessed_at = (Time.parse(c.dig('Access', 'LastAccessed')) rescue nil)
+        course.last_accessed_at = (Time.zone.parse(c.dig('Access', 'LastAccessed')) rescue nil)
         course.semester = extract_semester_from_name(course.name)
         
         img_url = c.dig('OrgUnit', 'ImageUrl') || c.dig('OrgUnit', 'Image', 'ViewUrl') || c.dig('OrgUnit', 'Image', 'DisplayUrl')
@@ -291,17 +294,17 @@ class BrilliantClient
     
     # IMPORTANT: Prevent advancing sync timestamp if authentication failed during this run
     if !@degraded_mode
-      UserPreference.set(last_sync_key, Time.now.utc.iso8601)
+      UserPreference.set(last_sync_key, Time.current.utc.iso8601)
     end
 
     puts "[Brilliant API] Notification sync complete."
   end
 
   def sync_upcoming_assignment_notifications(courses)
-    upcoming_limit = Time.now + 7.days
+    upcoming_limit = Time.current + 7.days
     
     ActiveRecord::Base.connection_pool.with_connection do
-      Assignment.where("due_date > ? AND due_date <= ?", Time.now, upcoming_limit).each do |a|
+      Assignment.where("due_date > ? AND due_date <= ?", Time.current, upcoming_limit).each do |a|
         next if a.nil?
         course = courses.find { |c| c['OrgUnit']['Id'].to_s == a.course_id.to_s }
         course_name = course ? course['OrgUnit']['Name'] : (Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course")
@@ -352,7 +355,7 @@ class BrilliantClient
           type: 'Content',
           title: "Content Updated: #{item['Title']}",
           body: "New or updated content in #{c['OrgUnit']['Name']}: #{item['Title']}",
-          date: item['CreatedDate'] || item['LastModifiedDate'] || Time.now.iso8601,
+          date: item['CreatedDate'] || item['LastModifiedDate'] || Time.current.iso8601,
           course_id: course_id,
           course_name: c['OrgUnit']['Name'],
           urgency: 1,
@@ -372,7 +375,7 @@ class BrilliantClient
         type: 'System',
         title: data[:title],
         body: data[:body],
-        date: Time.now.iso8601,
+        date: Time.current.iso8601,
         course_id: 'SYSTEM',
         course_name: 'Brilliant System',
         urgency: data[:urgency] || 2,
@@ -398,15 +401,15 @@ class BrilliantClient
     raw_date = data[:date]
     begin
       if raw_date
-        parsed_date = raw_date.is_a?(Time) ? raw_date : Time.parse(raw_date.to_s)
+        parsed_date = raw_date.is_a?(Time) ? raw_date : Time.zone.parse(raw_date.to_s)
         if n.new_record? || !n.date || (parsed_date - n.date).abs > 60
           n.date = parsed_date
         end
       else
-        n.date ||= Time.now
+        n.date ||= Time.current
       end
     rescue => e
-      n.date ||= Time.now
+      n.date ||= Time.current
     end
     
     n.course_name = data[:course_name]
@@ -511,7 +514,7 @@ class BrilliantClient
         pref.update(
           brightspace_uid: data['UniqueIdentifier'], 
           brightspace_user_id: data['Identifier'], 
-          last_login_at: Time.now
+          last_login_at: Time.current
         )
       end
     end
@@ -530,7 +533,7 @@ class BrilliantClient
       pin_score = i['PinDate'] ? 0 : 1
       raw_access = i.dig('Access', 'LastAccessed')
       begin
-        access_time = raw_access ? Time.parse(raw_access) : Time.at(0)
+        access_time = raw_access ? Time.zone.parse(raw_access) : Time.at(0)
       rescue
         access_time = Time.at(0)
       end
@@ -743,7 +746,7 @@ class BrilliantClient
       end
 
       assignment.name = a['Name'] if a['Name'].present? && !a['Name'].match?(/^\d+$/)
-      assignment.due_date = (Time.parse(a['DueDate']) rescue nil) if a['DueDate']
+      assignment.due_date = (Time.zone.parse(a['DueDate']) rescue nil) if a['DueDate']
       
       # Handle instruction/description objects which often contain HTML
       desc_obj = a['CustomInstructions'] || a['Description']
@@ -781,7 +784,7 @@ class BrilliantClient
 
       assignment.name = q['Name']
       assignment.assignment_type = 'quiz'
-      assignment.due_date = (Time.parse(q['DueDate']) rescue nil) if q['DueDate']
+      assignment.due_date = (Time.zone.parse(q['DueDate']) rescue nil) if q['DueDate']
       
       desc_obj = q['Description'] || q['Header']
       desc_text = ""
@@ -979,7 +982,7 @@ class BrilliantClient
     cache_record = ApiCache.active.find_by(path: path) || ApiCache.find_by(path: path)
     cached_data = JSON.parse(cache_record.data) rescue nil
     
-    is_fresh = cache_record && !cache_record.is_archived && (Time.now - cache_record.updated_at < 600)
+    is_fresh = cache_record && !cache_record.is_archived && (Time.current - cache_record.updated_at < 600)
 
     return cached_data if !force_refresh && cached_data && (is_fresh || !authenticated?)
 
@@ -1039,7 +1042,7 @@ class BrilliantClient
   end
 
   def archive_cache(path)
-    ApiCache.where(path: path).update_all(is_archived: true, updated_at: Time.now)
+    ApiCache.where(path: path).update_all(is_archived: true, updated_at: Time.current)
   end
 
   def fetch_and_cache(path)

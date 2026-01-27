@@ -85,6 +85,9 @@
     Brightspace session expired. <a href="javascript:void(0)" onclick="startAppLogin()">Click here to re-authenticate</a> to keep your data in sync.
   </div>
   <nav class="navbar is-white">
+    <script>
+      window.BRILLIANT_TIMEZONE = "<%= @iana_timezone || 'UTC' %>";
+    </script>
     <div class="navbar-brand">
        <a class="navbar-item is-size-4 has-text-weight-bold has-text-primary" href="/dashboard">
          <img src="/logo.png" alt="Brilliant Logo" style="max-height: 50px;" class="mr-2"> Brilliant

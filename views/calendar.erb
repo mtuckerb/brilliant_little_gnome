@@ -137,10 +137,11 @@
   }
 
   function updateHeader() {
-    const startObj = new Date(state.data.start_date);
-    const endObj = new Date(state.data.end_date);
+    const startObj = new Date(state.data.start_date + "T12:00:00");
+    const endObj = new Date(state.data.end_date + "T12:00:00");
     
-    const rangeStr = `${startObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${endObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    const options = { timeZone: window.BRILLIANT_TIMEZONE };
+    const rangeStr = `${startObj.toLocaleDateString(undefined, { ...options, month: 'short', day: 'numeric' })} - ${endObj.toLocaleDateString(undefined, { ...options, month: 'short', day: 'numeric', year: 'numeric' })}`;
     document.getElementById('date-range-display').innerText = rangeStr;
     document.getElementById('view-title').innerText = state.view === 'month' ? "Month Grid" : "Multi-Week List";
 
@@ -167,6 +168,7 @@
       html += `<div class="day-header">${d}</div>`;
     });
 
+    const options = { timeZone: window.BRILLIANT_TIMEZONE };
     const sortedDates = Object.keys(state.data.items_by_date).sort();
     sortedDates.forEach(dateStr => {
       const items = state.data.items_by_date[dateStr];
@@ -178,10 +180,10 @@
         <div class="calendar-day ${isToday ? 'is-today' : ''} drop-zone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="${dateStr}">
           <div class="level is-mobile mb-1">
             <div class="level-left">
-              <span class="is-size-7 has-text-grey-light font-weight-bold mr-1">${dayObj.toLocaleDateString(undefined, {weekday: 'short'})}</span>
+              <span class="is-size-7 has-text-grey-light font-weight-bold mr-1">${dayObj.toLocaleDateString(undefined, { ...options, weekday: 'short'})}</span>
               <div class="day-number ${isToday ? 'has-text-primary has-text-weight-bold' : ''}">${dayObj.getDate()}</div>
             </div>
-            ${dayObj.getDate() === 1 ? `<div class="level-right"><span class="tag is-light is-size-7">${dayObj.toLocaleDateString(undefined, {month: 'short'})}</span></div>` : ''}
+            ${dayObj.getDate() === 1 ? `<div class="level-right"><span class="tag is-light is-size-7">${dayObj.toLocaleDateString(undefined, { ...options, month: 'short'})}</span></div>` : ''}
           </div>
           <div class="day-content">
             ${items.map(item => renderCalendarItem(item, 'tiny')).join('')}
@@ -204,6 +206,7 @@
       </div>
     `;
 
+    const options = { timeZone: window.BRILLIANT_TIMEZONE };
     const sortedDates = Object.keys(state.data.items_by_date).sort();
     sortedDates.forEach(dateStr => {
       const items = state.data.items_by_date[dateStr];
@@ -214,8 +217,8 @@
       html += `
         <div class="week-row ${isToday ? 'is-today' : ''}">
           <div class="week-date-column">
-            <div class="week-day-name">${dayObj.toLocaleDateString(undefined, {weekday: 'long'})}</div>
-            <div class="week-day-number ${isToday ? 'has-text-primary' : ''}">${dayObj.toLocaleDateString(undefined, {month: 'short', day: '2-digit'})}</div>
+            <div class="week-day-name">${dayObj.toLocaleDateString(undefined, { ...options, weekday: 'long'})}</div>
+            <div class="week-day-number ${isToday ? 'has-text-primary' : ''}">${dayObj.toLocaleDateString(undefined, { ...options, month: 'short', day: '2-digit'})}</div>
           </div>
           <div class="week-items-column drop-zone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" data-date="${dateStr}">
             ${items.length === 0 ? `<div class="has-text-grey-light is-size-7 mt-2 no-items-msg">No items due.</div>` : ''}
@@ -245,7 +248,10 @@
     const compClass = isCompleted ? 'is-completed' : '';
     const optClass = isOptional ? 'is-optional' : '';
     
-    const dragAttrs = `draggable="true" ondragstart="handleDragStart(event)" data-type="${item.type}" data-item-id="${item.id}" data-db-id="${item.db_id}" data-name="${item.name}" data-date="${item.date}" data-full-date="${item.time}" data-course-id="${item.course_id}"`;
+    // Safely escape quotes for data attributes
+    const esc = (s) => (s || '').toString().replace(/"/g, '&quot;');
+    
+    const dragAttrs = `draggable="true" ondragstart="handleDragStart(event)" data-type="${esc(item.type)}" data-item-id="${esc(item.id)}" data-db-id="${esc(item.db_id)}" data-name="${esc(item.name)}" data-date="${esc(item.date)}" data-full-date="${esc(item.time)}" data-course-id="${esc(item.course_id)}"`;
 
     if (size === 'tiny') {
         return `
@@ -362,6 +368,28 @@
     }
   }
 
+  function getTZParts(date) {
+    if (!date) return { date: '', time: '23:59' };
+    const options = {
+      timeZone: window.BRILLIANT_TIMEZONE,
+      hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    };
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', options);
+      const parts = formatter.formatToParts(date);
+      const getPart = (type) => parts.find(p => p.type === type).value;
+      return {
+        date: `${getPart('year')}-${getPart('month')}-${getPart('day')}`,
+        time: `${getPart('hour')}:${getPart('minute')}`
+      };
+    } catch (e) {
+      console.error("TZ Formatting Error", e);
+      return { date: date.toISOString().split('T')[0], time: '23:59' };
+    }
+  }
+
   function handleEditClick(btn, event) {
     event.stopPropagation();
     const wrapper = btn.closest('.calendar-item-wrapper');
@@ -375,12 +403,14 @@
         .then(r => r.json())
         .then(assignment => {
            const dt = assignment.DueDate ? new Date(assignment.DueDate) : null;
+           const tz = getTZParts(dt);
+           
            openEditAssignmentModal({
              courseId: courseId,
              brightspaceId: itemId,
              name: assignment.Name || name,
-             dueDate: dt ? dt.toISOString().split('T')[0] : (date || ''),
-             dueTime: dt ? dt.toTimeString().split(' ')[0].substring(0, 5) : (fullDate.includes('T') ? fullDate.split('T')[1].substring(0,5) : '23:59'),
+             dueDate: dt ? tz.date : (date || ''),
+             dueTime: dt ? tz.time : (fullDate.includes('T') ? fullDate.split('T')[1].substring(0,5) : '23:59'),
              externalUrl: assignment.ExternalUrl || '',
              description: assignment.Instructions?.Text || assignment.Description || ''
            });
@@ -389,7 +419,8 @@
       // Fallback for non-assignments (like Grades)
       document.getElementById('simple-modal-item-name').innerText = name;
       document.getElementById('simple-modal-due-date').value = date;
-      document.getElementById('simple-modal-due-time').value = fullDate.includes('T') ? fullDate.split('T')[1].substring(0,5) : '23:59';
+      const dt = fullDate ? new Date(fullDate) : null;
+      document.getElementById('simple-modal-due-time').value = dt ? getTZParts(dt).time : '23:59';
       document.getElementById('simple-modal-item-type').value = type;
       document.getElementById('simple-modal-item-id').value = itemId;
       document.getElementById('simple-date-modal').classList.add('is-active');
@@ -540,7 +571,7 @@
   .week-date-column { width: 150px; padding: 20px; background: #f9f9f9; border-right: 1px solid #eee; text-align: center; }
   .week-items-column { flex: 1; padding: 15px; }
   .calendar-item-wrapper { display: flex; align-items: center; margin-bottom: 4px; border-radius: 4px; }
-  .calendar-item-wrapper.is-dragging { pointer-events: none; }
+  .calendar-item-wrapper.is-dragging { opacity: 0.5; }
   .calendar-item { font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; background: #f5f5f5; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 3px solid #ccc; }
   .calendar-item.assignment { background: #eef2ff; color: #4338ca; border-left-color: #6366f1; }
   .calendar-item.grade { background: #ecfdf5; color: #065f46; border-left-color: #10b981; }

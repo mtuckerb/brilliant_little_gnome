@@ -489,6 +489,7 @@ module Api
             course_name: c_name, course_prefix: info[:prefix], course_short_name: info[:short_name],
             pill_style: info[:pill_style], name: a.name, name_html: render_markdown_inline(a.name),
             description: a.description, external_url: a.external_url, synthetic: a.synthetic,
+            date: date_key,
             time: a.due_date, time_display: a.due_date.in_time_zone(tz_name).strftime("%I:%M %p"),
             completed: a.completed, optional: a.optional || false, url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
           }
@@ -506,6 +507,7 @@ module Api
             type: 'grade', id: g.brightspace_id, db_id: g.id, course_id: g.course_id,
             course_name: c_name, course_prefix: info[:prefix], course_short_name: info[:short_name],
             pill_style: info[:pill_style], name: g.name, name_html: render_markdown_inline(g.name),
+            date: date_key,
             time: g.due_date, time_display: g.due_date.in_time_zone(tz_name).strftime("%I:%M %p"),
             url: "/course/#{g.course_id}/grades"
           }

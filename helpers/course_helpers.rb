@@ -599,25 +599,25 @@ module CourseHelpers
     
     # Try to extract a date from the module title (e.g. "Week 1 - 1/19" or "Week 1, January 26")
     inferred_date = nil
-    year = Time.now.year
+    year = Time.zone.now.year
     
     # Pattern 1: M/D (1/19)
     date_match = module_title.match(/(\d{1,2}\/\d{1,2})/) || module_title.match(/(\d{1,2}-\d{1,2})/)
     if date_match
       begin
         month, day = date_match[1].split(/[\/-]/).map(&:to_i)
-        inferred_date = Time.new(year, month, day, 23, 59, 59)
+        inferred_date = Time.zone.local(year, month, day, 23, 59, 59)
       rescue; end
     elsif (month_match = module_title.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*,?\s*(\d{1,2})/i))
       # Pattern 2: Month Day (January 26 or Jan. 26 or January, 26)
       begin
-        parsed = Time.parse("#{month_match[1]} #{month_match[2]}")
-        inferred_date = Time.new(parsed.year, parsed.month, parsed.day, 23, 59, 59)
+        parsed = Time.zone.parse("#{month_match[1]} #{month_match[2]}")
+        inferred_date = Time.zone.local(parsed.year, parsed.month, parsed.day, 23, 59, 59)
       rescue; end
     elsif (end_match = module_title.match(/Ending\s+(?:on\s+)?(\d{1,2}\s+[A-Za-z]+|[A-Za-z]+\s+\d{1,2})/i))
       begin
-        parsed = Time.parse(end_match[1])
-        inferred_date = Time.new(parsed.year, parsed.month, parsed.day, 23, 59, 59)
+        parsed = Time.zone.parse(end_match[1])
+        inferred_date = Time.zone.local(parsed.year, parsed.month, parsed.day, 23, 59, 59)
       rescue; end
     elsif (week_match = module_title.match(/Week\s*(\d+)/i))
        # If we just have a week number, but no date, maybe we can find a date in descriptions?
@@ -630,7 +630,7 @@ module CourseHelpers
     if inferred_date && @course.respond_to?(:end_of_week_date)
       inferred_date = @course.end_of_week_date(inferred_date)
     elsif inferred_date.nil? && @course.respond_to?(:end_of_week_date)
-      inferred_date = @course.end_of_week_date(Time.now)
+      inferred_date = @course.end_of_week_date(Time.zone.now)
     end
 
     # 1. PROCESS TOPICS (Structural Identifying)
@@ -714,8 +714,8 @@ module CourseHelpers
           line_date = nil
           if (item_date_match = line.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)/))
             begin
-              line_date = Time.parse(item_date_match[1])
-              line_date = Time.new(line_date.year, line_date.month, line_date.day, 23, 59, 59)
+              line_date = Time.zone.parse(item_date_match[1])
+              line_date = Time.zone.local(line_date.year, line_date.month, line_date.day, 23, 59, 59)
             rescue; end
           end
 

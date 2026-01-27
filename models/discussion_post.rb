@@ -36,7 +36,7 @@ class DiscussionPost < ActiveRecord::Base
           post.body = (p.dig('Body', 'Html') || p.dig('Body', 'Text')).to_s
           post.author_name = p['PostingUserDisplayName']
           post.author_id = p.dig('Author', 'Identifier') || p['UserId']
-          post.posted_at = Time.parse(p['DatePosted']) rescue nil
+          post.posted_at = Time.zone.parse(p['DatePosted']) rescue nil
           post.is_instructor = p.dig('Author', 'IsInstructor') == true || p.dig('Author', 'RoleName').to_s =~ /Instructor/i rescue false
           
           post.save!
