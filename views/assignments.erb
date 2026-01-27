@@ -22,10 +22,11 @@
   let showCompleted = <%= @show_completed %>;
 
   async function loadAssignments() {
-    const root = document.getElementById('assignments-root');
     try {
       const response = await fetch(`/api/v1/courses/${COURSE_ID}/assignments/summary?show_completed=${showCompleted}`);
       if (!response.ok) throw new Error("Failed to fetch assignments");
+      
+      const root = document.getElementById('assignments-root');
       const data = await response.json();
       renderAssignments(data);
     } catch (err) {
@@ -138,7 +139,7 @@
                 <span class="tag is-light is-small ml-2 optional-tag ${!isOptional ? 'is-hidden' : ''}">
                   <i class="fas fa-hand-paper mr-1"></i> Optional
                 </span>
-                <button class="button is-ghost is-small p-0 ml-3" onclick="expandAssignmentRow('${db_id}', event)" style="height: auto;">
+                <button class="button is-ghost is-small p-0 ml-3 collapsible-trigger" onclick="expandAssignmentRow('${db_id}', event)" style="height: auto;">
                   <span class="icon is-small has-text-grey-light"><i class="fas fa-chevron-right toggle-icon"></i></span>
                 </button>
               </div>
@@ -265,16 +266,14 @@
 
   function expandAssignmentRow(dbId, event) {
     const detailsDiv = document.getElementById(`expand-${dbId}`);
-    const icon = event.currentTarget.querySelector('.toggle-icon');
+    const btn = event.currentTarget;
+    const isActive = btn.classList.toggle('is-active');
     
-    if (!detailsDiv.classList.contains('is-hidden')) {
+    if (isActive) {
+      detailsDiv.classList.remove('is-hidden');
+    } else {
       detailsDiv.classList.add('is-hidden');
-      icon.classList.replace('fa-chevron-down', 'fa-chevron-right');
-      return;
     }
-    
-    detailsDiv.classList.remove('is-hidden');
-    icon.classList.replace('fa-chevron-right', 'fa-chevron-down');
     
     if (detailsDiv.dataset.loaded !== 'true') {
       const row = detailsDiv.closest('.assignment-row');
@@ -327,7 +326,9 @@
 
   window.addEventListener('brilliant:assignments_updated', (e) => {
     const { course_id } = e.detail;
-    if (course_id == COURSE_ID) {
+    const root = document.getElementById('assignments-root');
+    
+    if (course_id == COURSE_ID && root && root.querySelector('.fa-circle-notch')) {
       console.log("[SSE] Assignments updated, refreshing list...");
       loadAssignments();
     }
@@ -340,4 +341,12 @@
   .assignment-row.is-completed { opacity: 0.6; background-color: #fafafa; }
   .assignment-row.is-completed strong a { text-decoration: line-through; }
   .assignment-row.is-optional { border-left: 4px solid #dbdbdb; background-color: #fcfcfc; }
+
+  .collapsible-trigger .toggle-icon {
+    transition: transform 0.2s ease;
+  }
+
+  .collapsible-trigger.is-active .toggle-icon {
+    transform: rotate(90deg);
+  }
 </style>
