@@ -340,6 +340,17 @@
   };
 
   document.addEventListener('DOMContentLoaded', () => loadTopic());
+
+  window.addEventListener('brilliant:discussion_updated', (e) => {
+    const { course_id, forum_id, topic_id, post_count } = e.detail;
+    if (course_id == COURSE_ID && forum_id == FORUM_ID && topic_id == TOPIC_ID) {
+      console.log("[SSE] Discussion updated, refreshing content...");
+      if (typeof showToast === 'function') {
+        showToast(`<strong>Updates Found</strong><br/>Refreshing discussion...`, 'is-success', 3000);
+      }
+      loadTopic();
+    }
+  });
 </script>
 
 <style>

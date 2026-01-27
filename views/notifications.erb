@@ -284,6 +284,16 @@
   }
 
   document.addEventListener('DOMContentLoaded', loadNotifications);
+
+  window.addEventListener('brilliant:notification_received', (e) => {
+    console.log("[SSE] Notification received, refreshing list...");
+    loadNotifications();
+  });
+
+  window.addEventListener('brilliant:notifications_synced', (e) => {
+    console.log("[SSE] Notifications synced, refreshing list...");
+    loadNotifications();
+  });
 </script>
 
 <style>

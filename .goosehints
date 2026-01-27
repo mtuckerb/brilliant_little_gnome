@@ -1,0 +1,17 @@
+# Goose Hints for Brilliant
+
+## Documentation Maintenance
+- **System Design Document**: The primary architectural reference is `docs/system_design.md`. 
+- **Auto-Update Protocol**: Every time a significant architectural change is made (e.g., changes to sync logic, database schema, IPC, or UI update patterns), you MUST:
+  1. Read `docs/system_design.md` to understand the current state.
+  2. Update the document to reflect the changes.
+  3. Mention the documentation update in your progress report.
+
+## Technical Conventions
+- **Local-First**: Always check if data can be served from the SQLite database before making an API call.
+- **Background Sync**: Long-running API operations should be backgrounded in threads using `ActiveRecord::Base.connection_pool.with_connection`.
+- **SSE Events**: When high-level data changes (sync complete), broadcast an event via `Brilliant::EventBus.publish`.
+- **Safe Persistence**: Prefer `upsert_all` with `unique_by` for batch operations to ensure performance and prevent index errors.
+
+## Portable Runtime
+- **Ruby Path**: Always use the vendored path for ruby execution if available: `bin/ruby_dist/macos-arm64/bin/ruby` (for Apple Silicon).

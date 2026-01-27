@@ -57,25 +57,26 @@ module CourseHelpers
     host = $client.host
     html = html.gsub(/href="(\/[^"]*)"/i, "href=\"https://#{host}\\1\"")
 
+    # If the string is very large, skip expensive auto-linking to prevent hangs
+    return html if html.length > 20000
+
     # Auto-link plain text URLs while avoiding existing HTML tags
     tags = []
     # Identify all HTML tags and existing <a> blocks to preserve them
-    temp_html = html.gsub(/<a\b[^>]*>.*?<\/a>|<[^>]+>/i) do |match|
+    temp_html = html.gsub(/<a\b[^>]*>.*?<\/a>|<[^>]+>/mi) do |match|
       tags << match
-      "__TAG_PLACEHOLDER_#{tags.size - 1}__"
+      "__T#{tags.size - 1}__"
     end
 
     # Linkify URLs in the remaining text
-    # Regex matches http/https URLs. We use a positive lookahead to exclude trailing punctuation
-    # that is likely part of the surrounding sentence/formatting (.,?!:) or parentheses.
     url_regex = %r{https?://[^\s<"']+[^\s<"'. ,?!:)]}i
-    temp_html = temp_html.gsub(url_regex) do |url|
+    temp_html.gsub!(url_regex) do |url|
       "<a href=\"#{url}\" target=\"_blank\">#{url}</a>"
     end
 
     # Restore the original tags
     tags.each_with_index do |tag, i|
-      temp_html.sub!("__TAG_PLACEHOLDER_#{i}__", tag)
+      temp_html.sub!("__T#{i}__", tag)
     end
 
     temp_html

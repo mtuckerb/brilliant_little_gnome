@@ -3,7 +3,7 @@ class UserPreference < ActiveRecord::Base
   serialize :semester_colors, type: Hash, coder: JSON
 
   def self.current
-    first_or_create!(
+    Thread.current[:user_preference] ||= first_or_create!(
       display_name: "User",
       time_zone: "UTC",
       brightspace_host: ENV['BS_HOST'] || "courses.maine.edu",

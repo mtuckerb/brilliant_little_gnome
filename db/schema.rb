@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_01_26_180000) do
+ActiveRecord::Schema[7.2].define(version: 2026_02_12_000000) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
@@ -18,6 +18,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_26_180000) do
     t.datetime "updated_at", precision: nil, null: false
     t.boolean "is_archived", default: false
     t.string "user_id"
+    t.index ["path", "is_archived"], name: "index_api_caches_on_path_and_archived"
     t.index ["path"], name: "index_api_caches_on_path"
     t.index ["user_id"], name: "index_api_caches_on_user_id"
   end
@@ -43,6 +44,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_26_180000) do
     t.datetime "manually_edited_at"
     t.string "user_id"
     t.index ["brightspace_id"], name: "index_assignments_on_brightspace_id"
+    t.index ["course_id", "brightspace_id"], name: "index_assignments_on_course_and_bs_id", unique: true
     t.index ["course_id"], name: "index_assignments_on_course_id"
     t.index ["grade_item_id"], name: "index_assignments_on_grade_item_id"
     t.index ["user_id"], name: "index_assignments_on_user_id"
@@ -61,6 +63,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_26_180000) do
     t.text "attachments"
     t.string "user_id"
     t.index ["brightspace_id"], name: "index_content_items_on_brightspace_id"
+    t.index ["module_id", "brightspace_id"], name: "index_content_items_on_module_and_bs_id", unique: true
     t.index ["module_id"], name: "index_content_items_on_module_id"
     t.index ["user_id"], name: "index_content_items_on_user_id"
   end
@@ -76,6 +79,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_26_180000) do
     t.datetime "updated_at", precision: nil, null: false
     t.string "user_id"
     t.index ["brightspace_id"], name: "index_content_modules_on_brightspace_id"
+    t.index ["course_id", "brightspace_id"], name: "index_content_modules_on_course_and_bs_id", unique: true
     t.index ["course_id"], name: "index_content_modules_on_course_id"
     t.index ["parent_id"], name: "index_content_modules_on_parent_id"
     t.index ["user_id"], name: "index_content_modules_on_user_id"
@@ -96,6 +100,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_26_180000) do
     t.string "custom_color"
     t.integer "end_of_week_day", default: 0
     t.string "user_id"
+    t.text "overview_raw"
     t.index ["org_unit_id"], name: "index_courses_on_org_unit_id"
     t.index ["user_id"], name: "index_courses_on_user_id"
   end
@@ -128,9 +133,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_26_180000) do
     t.string "user_id"
     t.integer "author_id"
     t.index ["author_id"], name: "index_discussion_posts_on_author_id"
-    t.index ["brightspace_id"], name: "index_discussion_posts_on_brightspace_id"
     t.index ["parent_post_id"], name: "index_discussion_posts_on_parent_post_id"
     t.index ["thread_id"], name: "index_discussion_posts_on_thread_id"
+    t.index ["topic_id", "brightspace_id"], name: "index_discussion_posts_on_topic_and_bs_id", unique: true
     t.index ["topic_id"], name: "index_discussion_posts_on_topic_id"
     t.index ["user_id"], name: "index_discussion_posts_on_user_id"
   end
@@ -213,6 +218,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_01_26_180000) do
     t.boolean "is_read", default: false
     t.text "attachments"
     t.string "user_id"
+    t.index ["course_id", "external_id"], name: "index_notifications_on_course_and_external_id", unique: true
     t.index ["course_id"], name: "index_notifications_on_course_id"
     t.index ["external_id", "course_id"], name: "index_notifications_on_external_id_and_course_id", unique: true
     t.index ["external_id"], name: "index_notifications_on_external_id"

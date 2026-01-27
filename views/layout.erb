@@ -63,27 +63,16 @@
     .toast.is-danger { border-left-color: #f14668; }
     .toast.is-success { border-left-color: #48c78e; }
     .toast.is-warning { border-left-color: #ffe08a; }
-    .toast.is-info { border-left-color: #3e8ed0; }
-
-    /* Auth Banner */
-    #auth-banner {
-      background-color: #f14668;
-      color: white;
-      text-align: center;
-      padding: 8px;
+    .main-content {
+      margin-top: 20px;
     }
-    #auth-banner a {
-      color: white;
-      text-decoration: underline;
-      font-weight: bold;
+    #auth-status-icon i {
+      transition: color 0.3s ease;
+      font-size: 0.75rem;
     }
   </style>
 </head>
 <body>
-  <div id="auth-banner" class="is-hidden">
-    <span class="icon mr-1"><i class="fas fa-exclamation-triangle"></i></span>
-    Brightspace session expired. <a href="javascript:void(0)" onclick="startAppLogin()">Click here to re-authenticate</a> to keep your data in sync.
-  </div>
   <nav class="navbar is-white">
     <script>
       window.BRILLIANT_TIMEZONE = "<%= @iana_timezone || 'UTC' %>";
@@ -113,6 +102,11 @@
           </a>
        </div>
        <div class="navbar-item">
+          <div id="auth-status-container" class="mr-3" style="cursor: pointer; display: flex; align-items: center;" onclick="startAppLogin()" title="Authenticated">
+            <span class="icon" id="auth-status-icon">
+              <i class="fas fa-circle has-text-success"></i>
+            </span>
+          </div>
           <% if $client.authenticated? %>
              <a href="/settings" class="button is-primary is-light" id="settings-button" style="border: 2px solid #739AC3 !important; font-weight: bold;">
                <span class="icon"><i class="fas fa-cog"></i></span>
@@ -240,7 +234,6 @@
           .then(data => {
             const indicator = document.getElementById('sync-indicator');
             const text = document.getElementById('sync-text');
-            const authBanner = document.getElementById('auth-banner');
             
             if (indicator && text) {
               if (data.status === 'syncing') {
@@ -251,41 +244,82 @@
               }
             }
 
-            if (authBanner) {
+            const authStatusIcon = document.getElementById('auth-status-icon');
+            if (authStatusIcon) {
+              const iconEl = authStatusIcon.querySelector('i');
               if (data.degraded_mode) {
-                authBanner.classList.remove('is-hidden');
+                iconEl.classList.remove('has-text-success');
+                iconEl.classList.add('has-text-danger');
+                authStatusIcon.parentElement.title = "Session Expired - Click to Re-authenticate";
               } else {
-                authBanner.classList.add('is-hidden');
+                iconEl.classList.remove('has-text-danger');
+                iconEl.classList.add('has-text-success');
+                authStatusIcon.parentElement.title = "Authenticated";
               }
             }
           })
           .catch(err => console.error('Sync Status Error:', err));
       }
       
-      setInterval(pollSyncStatus, 2000);
+      setInterval(pollSyncStatus, 4000);
       pollSyncStatus(); // Initial call
 
       // SSE Notifications Listener
       async function setupSSE() {
+        if (window.brilliantEventSource) {
+          window.brilliantEventSource.close();
+        }
         const token = await ensureToken();
-        const url = `/api/v1/events?api_key=${encodeURIComponent(token)}`; // Pass token as query param for EventSource
+        const url = `/api/v1/events?api_key=${encodeURIComponent(token)}`;
         const eventSource = new EventSource(url);
+        window.brilliantEventSource = eventSource;
+
+        eventSource.onopen = () => {
+          console.log("[SSE] Connected to event stream.");
+        };
 
         eventSource.addEventListener('notification_received', (e) => {
           const data = JSON.parse(e.data);
-          const message = `<strong>${data.course || 'Notification'}</strong><br/>${data.title}`;
-          showToast(message, 'is-success', 8000);
-          
-          // If on notifications page or dashboard, we might want to refresh content
-          if (window.location.pathname === '/notifications' || window.location.pathname === '/dashboard') {
-            // Optional: trigger partial refresh
+          if (data.title) {
+            const message = `<strong>${data.course || 'Notification'}</strong><br/>${data.title}`;
+            showToast(message, 'is-success', 8000);
           }
+          window.dispatchEvent(new CustomEvent('brilliant:notification_received', { detail: data }));
+        });
+
+        eventSource.addEventListener('notifications_synced', (e) => {
+          const data = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent('brilliant:notifications_synced', { detail: data }));
+        });
+
+        eventSource.addEventListener('assignments_updated', (e) => {
+          const data = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent('brilliant:assignments_updated', { detail: data }));
+        });
+
+        eventSource.addEventListener('grades_updated', (e) => {
+          const data = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent('brilliant:grades_updated', { detail: data }));
+        });
+
+        eventSource.addEventListener('discussion_topic_updated', (e) => {
+          const data = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent('brilliant:discussion_updated', { detail: data }));
+        });
+
+        eventSource.addEventListener('course_overview_updated', (e) => {
+          const data = JSON.parse(e.data);
+          window.dispatchEvent(new CustomEvent('brilliant:course_overview_updated', { detail: data }));
         });
 
         eventSource.addEventListener('authentication_failure', (e) => {
-          const authBanner = document.getElementById('auth-banner');
-          if (authBanner) authBanner.classList.remove('is-hidden');
-          showToast("<strong>Session Expired</strong><br/>Please re-authenticate to continue syncing.", 'is-danger', 10000);
+          const authStatusIcon = document.getElementById('auth-status-icon');
+          if (authStatusIcon) {
+            const iconEl = authStatusIcon.querySelector('i');
+            iconEl.classList.remove('has-text-success');
+            iconEl.classList.add('has-text-danger');
+            authStatusIcon.parentElement.title = "Session Expired - Click to Re-authenticate";
+          }
         });
 
         eventSource.onerror = (err) => {

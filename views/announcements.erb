@@ -127,6 +127,14 @@
   }
 
   document.addEventListener('DOMContentLoaded', loadAnnouncements);
+
+  window.addEventListener('brilliant:notification_received', (e) => {
+    const { course_id } = e.detail;
+    if (course_id == COURSE_ID) {
+      console.log("[SSE] Course news updated, refreshing announcements...");
+      loadAnnouncements();
+    }
+  });
 </script>
 
 <style>

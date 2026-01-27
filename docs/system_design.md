@@ -6,7 +6,7 @@ Brilliant is a lightweight, high-performance companion app for the Brightspace L
 ## 2. Architecture
 The application follows a **Hybrid Desktop Architecture**:
 - **Host Environment**: Electron (Node.js) handles the window management, system integration, and native UI shell.
-- **Backend (Sidecar)**: A Sinatra (Ruby) server running as a background process manages the business logic, database, and Brightspace API communication.
+- **Backend (Sidecar)**: A Sinatra (Ruby) server running as a background process manages the business logic, database, and Brightspace API communication. The system follows a strict **Local-Database-First** model, where all UI components serve data from SQLite immediately, while background threads asynchronously reconcile with the LMS.
 - **Database**: SQLite with ActiveRecord ORM for persistent local storage and synchronization.
 - **Inter-process Communication (IPC)**: Node.js `spawn` manages the Ruby lifecycle, and the Renderer communicates with the Ruby sidecar via internal HTTP requests.
 
@@ -15,6 +15,8 @@ The application follows a **Hybrid Desktop Architecture**:
 ### 3.1. Intelligent Synchronization Engine
 The `BrilliantClient` is responsible for fetching data from the D2L Valence API.
 - **Background Sync**: Operations run in non-blocking threads to keep the UI responsive.
+- **High-Speed Persistence**: Uses `upsert_all` with composite unique indices (`course_id`, `brightspace_id`) to perform high-frequency batch writes. This minimizes I/O overhead and prevents primary key collisions during concurrent sync operations.
+- **Thread Safety**: All background sync operations are wrapped in `ActiveRecord::Base.connection_pool.with_connection` to prevent database connection leakage and ensure stability in multi-threaded scenarios.
 - **Data Protection**: Implements "Defensive Persistence." If an API call for an archived or restricted course returns "thin" metadata (e.g., missing descriptions or banner URLs), the local database preserves the existing robust data rather than overwriting it with nulls.
 - **Sync Protection (Manual Overrides)**: Allows users to manually edit assignment names, descriptions, and due dates. A `manually_edited` flag in the database markers these records; when `true`, the sync engine skips updating these specific fields from the API. The system generates a notification after the sync process to list which items were protected, ensuring user transparency.
 - **Concurrency**: SQLite is configured in WAL (Write-Ahead Logging) mode to support simultaneous reads and writes from the sync engine and the user interface.
@@ -52,12 +54,23 @@ To ensure unified support for clickable resources across synthesized content:
 - **Background Sync**: Every course view triggers a background thread that fetches the latest LMS content, updates Markdown descriptions, and refreshes the cache without blocking the UI.
 - **HTML-to-Markdown Pipeline**: A refined regex pipeline handles common LMS formatting (bold, links, lists, headers) to ensure consistent rendering across the app.
 
-### 3.8. Hybrid Discussion Content Strategy
-Discussion data is handled through a tiered persistence model to balance synchronization speed with deep data availability:
-- **Structural Persistence (DB)**: Discussion Forums and Topics are fully synchronized to the SQLite database. This ensures the course hierarchy is always available offline and supports fast navigation.
-- **Content Caching (Stale-While-Revalidate)**: Individual Threads and Posts are managed via the `api_cache` system rather than strict ActiveRecord models. Content is fetched on-demand when a user views a topic and cached as raw JSON.
-- **Metadata Enrichment**: To support advanced UI features like "Mine & Replied" sorting, the system dynamically enriches cached JSON payloads with participation metadata (e.g., `UserIsAuthor`, `UserParticipated`) calculated during retrieval.
-- **Design Rationale**: This hybrid approach avoids the significant database overhead of mapping thousands of transient LMS posts to local records, ensuring the main sync process remains lightweight while providing rich, filterable content for active topics.
+### 3.8. Persistent Discussion Model
+Discussion data is fully integrated into the local-first database model:
+- **Full Synchronization**: Forums, Topics, and individual Posts are synchronized to specific database tables (`discussion_forums`, `discussion_topics`, `discussion_posts`).
+- **Metadata Enrichment**: To support advanced UI features like "Mine & Replied" sorting, the system calculates participation metadata (e.g., `UserIsAuthor`, `UserParticipated`) based on the local record set.
+- **Background Reconciliation**: Every discussion view triggers a targeted background sync of the specific topic. If new posts are discovered, they are upserted into the database, and the UI is notified via the SSE event bus.
+
+### 3.9. Live UI & Event-Driven Architecture (SSE)
+To eliminate disruptive page reloads while maintaining a real-time feel, Brilliant uses a Server-Sent Events (SSE) pattern:
+- **Event Bus**: A centralized `Brilliant::EventBus` publishes internal signals (e.g., `assignments_updated`, `grades_updated`, `notifications_synced`).
+- **SSE Stream**: The `api_controller` exposes a persistent SSE endpoint (`/api/v1/events`) that transmits these signals to the frontend.
+- **CustomEvent Dispatcher**: The global `layout.erb` listens to the SSE stream and dispatches `brilliant:*` CustomEvents to the browser window.
+- **Targeted DOM Refresh**: Individual views (e.g., Dashboard, Assignments) subscribe to relevant events and trigger local `fetch()` calls to refresh specific UI containers dynamically, preserving scroll position and user state.
+
+### 3.10. Performance Optimization
+- **SQLite WAL Mode**: Enabled by default to allow concurrent background writes and foreground reads.
+- **Proactive Sync**: The application triggers course-wide syncs upon dashboard load and detailed item syncs upon specific page views, ensuring the local database is always trending toward completion.
+- **Thin JSON Payloads**: API endpoints are optimized to serve only the data required for the current view, utilizing JSON serialization with `except` and `merge` to append calculated metadata.
 
 ## 4. Portability & Distribution
 Brilliant is designed to be "Zero-Dependency" for the end user:

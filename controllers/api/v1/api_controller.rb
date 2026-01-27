@@ -62,9 +62,34 @@ module Api
                                })
                              end
 
-        overview = $client.get_overview(params[:id])
+        overview = nil
+        if course.overview_raw.present?
+          overview = JSON.parse(course.overview_raw) rescue nil
+        end
+
+        # Proactively background sync the overview
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            begin
+              latest_overview = $client.get_overview(params[:id])
+              if latest_overview && latest_overview.to_json != course.overview_raw
+                course.update_columns(overview_raw: latest_overview.to_json)
+                Brilliant::EventBus.publish(:course_overview_updated, { course_id: params[:id] })
+              end
+            rescue => e
+              puts "[API] Background overview sync failed: #{e.message}"
+            end
+          end
+        end
+
         if overview
           overview['description_html'] = render_content(overview['Description'])
+        else
+           # Fallback to local-first fetch if still missing
+           overview = $client.get_overview(params[:id])
+           if overview
+             overview['description_html'] = render_content(overview['Description'])
+           end
         end
 
         {
@@ -81,6 +106,23 @@ module Api
         course_id = params[:id]
         show_completed = params[:show_completed] == 'true'
         
+        # Proactively trigger background sync for assignments and quizzes
+        if Assignment.where(course_id: course_id).empty?
+          Thread.new do
+            ActiveRecord::Base.connection_pool.with_connection do
+              begin
+                assignments = $client.get_assignments(course_id)
+                $client.sync_assignments(course_id, assignments) if assignments
+                quizzes = $client.get_quizzes(course_id)
+                $client.sync_quizzes(course_id, quizzes) if quizzes
+                Brilliant::EventBus.publish(:assignments_updated, { course_id: course_id })
+              rescue => sync_err
+                puts "[API] Background assignment sync failed: #{sync_err.message}"
+              end
+            end
+          end
+        end
+
         query = Assignment.where(course_id: course_id)
         query = query.where(completed: false) unless show_completed
         
@@ -98,6 +140,22 @@ module Api
 
       get '/api/v1/courses/:id/discussions' do
         course_id = params[:id]
+        
+        # Proactively trigger a background sync of discussion topics if none exist
+        # This makes subsequent loads much faster and ensures metadata (counts) is current
+        if DiscussionTopic.where(course_id: course_id).empty?
+          Thread.new do
+            ActiveRecord::Base.connection_pool.with_connection do
+              begin
+                forums = $client.get_discussions(course_id)
+                $client.sync_discussions(course_id, forums) if forums
+              rescue => sync_err
+                puts "[API] Background discussion sync failed: #{sync_err.message}"
+              end
+            end
+          end
+        end
+
         topics = DiscussionTopic.where(course_id: course_id).order(sort_order: :asc).map do |t|
           t.as_json.merge({
             display_thread_count: t.thread_count,
@@ -113,21 +171,35 @@ module Api
         topic_id = params[:topic_id]
         force_refresh = params[:force_refresh] == 'true'
 
-        puts "[API] Loading Topic: #{course_id} / #{forum_id} / #{topic_id}"
+        puts "[API] Loading Topic (Local-First): #{course_id} / #{forum_id} / #{topic_id}"
 
         begin
           forum = DiscussionForum.find_by(brightspace_id: forum_id, course_id: course_id) || $client.get_discussion_forum(course_id, forum_id)
           topic = DiscussionTopic.find_by(brightspace_id: topic_id, forum_id: forum_id) || $client.get_discussion_topic(course_id, forum_id, topic_id)
           evaluation = $client.get_discussion_evaluation(course_id, forum_id, topic_id)
 
-          posts_data_raw = $client.get_topic_posts(course_id, forum_id, topic_id, force_refresh: force_refresh)
-          all_posts = $client.ensure_array(posts_data_raw)
+          # Load posts from DB
+          posts_from_db = DiscussionPost.where(topic_id: topic_id.to_s).order(posted_at: :asc)
+          all_posts = posts_from_db.map(&:to_api_hash)
 
-          # Background sync posts to DB to avoid blocking the UI response
+          # Proactively sync in background
           Thread.new do 
             ActiveRecord::Base.connection_pool.with_connection do
               begin
-                DiscussionPost.sync_from_api(course_id, forum_id, topic_id, all_posts)
+                Time.zone = UserPreference.current&.time_zone || "UTC"
+                posts_data_raw = $client.get_topic_posts(course_id, forum_id, topic_id, force_refresh: force_refresh)
+                new_posts = $client.ensure_array(posts_data_raw)
+                DiscussionPost.sync_from_api(course_id, forum_id, topic_id, new_posts)
+                
+                # Signal completion if something changed or we were empty
+                if posts_from_db.empty? || force_refresh || new_posts.size != posts_from_db.size
+                  Brilliant::EventBus.publish(:discussion_topic_updated, { 
+                    course_id: course_id, 
+                    forum_id: forum_id, 
+                    topic_id: topic_id,
+                    post_count: new_posts.size
+                  })
+                end
               rescue => sync_err
                  puts "[API ERROR] Background sync failed: #{sync_err.message}"
               end
@@ -144,7 +216,7 @@ module Api
           
           threads_groups = all_posts.reject { |p| p.nil? || !p.is_a?(Hash) }.group_by { |p| p['ThreadId'] }
           threads_with_posts = threads_groups.map do |thread_id, posts|
-            root_post = posts.find { |p| p['ParentPostId'].nil? } || posts.min_by { |p| p['DatePosted'] || "9999" }
+            root_post = posts.find { |p| p['ParentPostId'].nil? || p['ParentPostId'].to_s == "0" || p['ParentPostId'].to_s == "" } || posts.min_by { |p| p['DatePosted'] || "9999" }
             
             root_author_id = root_post.dig('Author', 'Identifier') || root_post['UserId']
             user_is_author = current_bs_user_id.present? && root_author_id.to_s == current_bs_user_id.to_s
@@ -171,7 +243,8 @@ module Api
             participated: participated,
             threads_with_posts: threads_with_posts,
             instructions_collapsed: @user_prefs.topic_collapsed?("#{topic_id}:instructions") || participated,
-            feedback_collapsed: @user_prefs.topic_collapsed?("#{topic_id}:feedback")
+            feedback_collapsed: @user_prefs.topic_collapsed?("#{topic_id}:feedback"),
+            from_cache: posts_from_db.any? && !force_refresh
           }.to_json
         rescue => e
           puts "[API ERROR] Discussion Route Crash: #{e.message}"
@@ -204,17 +277,32 @@ module Api
 
       get '/api/v1/courses/:id/announcements' do
         course_id = params[:id]
-        announcements = Notification.where(course_id: course_id, notification_type: 'News').order(date: :desc).map do |n|
+
+        # Always trigger a targeted background sync for this course
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            begin
+              # Sync just this course's specific announcements
+              enrollments = $client.get_enrollments
+              course_enrollment = enrollments.select { |e| e['OrgUnit']['Id'].to_s == course_id.to_s }
+              
+              if course_enrollment.any?
+                $client.sync_notifications(course_enrollment, $client.get_who_am_i, limit: 1)
+                Brilliant::EventBus.publish(:notification_received, { course_id: course_id, type: 'News' })
+              end
+            rescue => e
+              puts "[API] Background course news sync failed: #{e.message}"
+            end
+          end
+        end
+        
+        # Limit to most recent 50 to prevent CPU hang during Markdown/FixLinks processing
+        announcements = Notification.where(course_id: course_id, notification_type: 'News').order(date: :desc).limit(50).map do |n|
           n.as_json.merge({
             formatted_date: format_date(n.date, "%b %d"),
             full_date: format_date(n.date),
             body_html: render_content(n.body)
           })
-        end
-
-        # If empty, trigger a background sync
-        if announcements.empty?
-          Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_notifications($client.get_enrollments, $client.get_who_am_i) } }
         end
 
         { announcements: announcements }.to_json
@@ -269,6 +357,22 @@ module Api
 
       get '/api/v1/courses/:id/grades/summary' do
         course_id = params[:id]
+
+        # Proactively trigger background sync for grades
+        if Grade.where(course_id: course_id).empty?
+          Thread.new do
+            ActiveRecord::Base.connection_pool.with_connection do
+              begin
+                grades_raw = $client.get_grades(course_id)
+                $client.sync_grades(course_id, grades_raw) if grades_raw
+                Brilliant::EventBus.publish(:grades_updated, { course_id: course_id })
+              rescue => sync_err
+                puts "[API] Background grade sync failed: #{sync_err.message}"
+              end
+            end
+          end
+        end
+
         grades = Grade.where(course_id: course_id).order(Arel.sql("due_date ASC NULLS LAST"), name: :asc).map do |g|
           perc = (g.numerator && g.denominator && g.denominator > 0) ? ((g.numerator / g.denominator.to_f) * 100).round(1) : nil
           rel_weight = 0 # Placeholder if weight logic is needed
@@ -288,9 +392,19 @@ module Api
 
       # Global Notifications Feed
       get '/api/v1/notifications' do
-        @courses = $client.get_enrollments
-        @user = $client.get_who_am_i
-        Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_notifications(@courses, @user) } }
+        # Proactively background sync notifications
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            begin
+              courses = $client.get_enrollments
+              user = $client.get_who_am_i
+              $client.sync_notifications(courses, user)
+              Brilliant::EventBus.publish(:notifications_synced, { count: Notification.count })
+            rescue => e
+              puts "[API] Background notification sync failed: #{e.message}"
+            end
+          end
+        end
 
         query = Notification.all
         query = query.where(course_id: params[:course_id]) if params[:course_id].present?
@@ -443,33 +557,39 @@ module Api
         Brilliant::EventBus.subscribe(queue)
         
         stream(:keep_open) do |out|
+          puts "[SSE] Client connection established."
+
+          # Immediately send a connection confirmation
+          out << ": connected\n\n" rescue nil
+
           heartbeat_thread = Thread.new do
             begin
               loop do
-                sleep 20
+                sleep 30
                 break if out.closed?
                 out << ": heartbeat\n\n"
               end
             rescue => e
-              # Expected when client disconnects
-              puts "[SSE Heartbeat] Stream clean-up: #{e.message}"
+              # Socket likely closed
+              queue << :stop # Wake up main loop to exit
             end
           end
 
           begin
             loop do
-              break if out.closed?
               event_data = queue.pop
+              break if event_data == :stop || out.closed?
               
-              out << "event: #{event_data[:event]}\n"
-              out << "data: #{event_data[:data].to_json}\n\n"
+              out << "event: #{event_data[:event]}\n" rescue break
+              out << "data: #{event_data[:data].to_json}\n\n" rescue break
             end
           rescue => e
             puts "[SSE] Main stream loop closed: #{e.message}"
           ensure
             heartbeat_thread.kill if heartbeat_thread
             Brilliant::EventBus.unsubscribe(queue)
-            out.close unless out.closed?
+            out.close rescue nil
+            puts "[SSE] Client connection cleaned up."
           end
         end
       end

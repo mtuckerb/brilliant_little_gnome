@@ -229,4 +229,12 @@
   }
 
   document.addEventListener('DOMContentLoaded', () => loadGrades());
+
+  window.addEventListener('brilliant:grades_updated', (e) => {
+    const { course_id } = e.detail;
+    if (course_id == COURSE_ID) {
+      console.log("[SSE] Grades updated, refreshing list...");
+      loadGrades();
+    }
+  });
 </script>

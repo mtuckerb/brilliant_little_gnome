@@ -35,7 +35,9 @@ class AssignmentController < BaseController
     @submissions_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:submissions")
     @rubric_collapsed = @user_prefs.topic_collapsed?("assignment:#{@assignment_id}:rubric")
 
-    if request.accept?('application/json')
+    @edit_mode = params[:edit] == 'true'
+    
+    if request.xhr? && request.accept?('application/json')
       content_type :json
       return @assignment.to_json
     end

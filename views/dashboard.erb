@@ -400,6 +400,16 @@
 
   // Initial Load
   document.addEventListener('DOMContentLoaded', () => loadDashboard());
+
+  window.addEventListener('brilliant:notification_received', (e) => {
+    console.log("[SSE] Notification received, refreshing dashboard...");
+    loadDashboard();
+  });
+
+  window.addEventListener('brilliant:notifications_synced', (e) => {
+    console.log("[SSE] Notifications synced, refreshing dashboard...");
+    loadDashboard();
+  });
 </script>
 
 <style>

@@ -475,3 +475,9 @@ function closeEditModal() {
 }
 </script>
 <% end %>
+
+<% if @edit_mode %>
+<script>
+  document.addEventListener('DOMContentLoaded', openEditModal);
+</script>
+<% end %>

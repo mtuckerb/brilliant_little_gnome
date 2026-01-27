@@ -6,10 +6,10 @@ class DiscussionTopic < ActiveRecord::Base
   has_many :discussion_threads, foreign_key: :topic_id, primary_key: :brightspace_id
 
   def display_thread_count
-    (thread_count && thread_count > 0) ? thread_count : discussion_posts.select(:thread_id).distinct.count
+    thread_count || 0
   end
 
   def display_post_count
-    (post_count && post_count > 0) ? post_count : discussion_posts.count
+    post_count || 0
   end
 end
