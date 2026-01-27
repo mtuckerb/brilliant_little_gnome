@@ -155,6 +155,17 @@ find "$BUNDLE_PATH" -name "*.bundle" -type f | while read -r bundle; do
   done
 done
 
+# 7. Prune Bloat
+echo "Pruning unnecessary files from bundle to speed up notarization/copy..."
+rm -rf "$BUNDLE_PATH/ruby/3.4.0/cache"/*.gem
+rm -rf "$BUNDLE_PATH/ruby/3.4.0/doc"
+find "$BUNDLE_PATH/ruby/3.4.0/gems" -maxdepth 2 -type d -name "spec" -exec rm -rf {} +
+find "$BUNDLE_PATH/ruby/3.4.0/gems" -maxdepth 2 -type d -name "test" -exec rm -rf {} +
+find "$BUNDLE_PATH/ruby/3.4.0/gems" -maxdepth 2 -type d -name "tests" -exec rm -rf {} +
+find "$BUNDLE_PATH/ruby/3.4.0/gems" -maxdepth 2 -type d -name "docs" -exec rm -rf {} +
+find "$BUNDLE_PATH/ruby/3.4.0/gems" -maxdepth 2 -type d -name "doc" -exec rm -rf {} +
+rm -rf "$BUNDLE_PATH/ruby/2.6.0"
+
 echo "Smoke test..."
 "$RUBY_BIN" -e "require 'sqlite3'; puts 'SQLite3: SUCCESS'"
 "$RUBY_BIN" -e "require 'pg'; puts 'PG: SUCCESS'" || echo "PG: FAILED (Check libpq linkage)"

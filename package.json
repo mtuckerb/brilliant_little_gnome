@@ -1,6 +1,6 @@
 {
   "name": "brilliant",
-  "version": "1.12.16",
+  "version": "1.12.17",
   "description": "A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard.",
   "main": "main.js",
   "scripts": {
@@ -32,6 +32,22 @@
             "arm64"
           ]
         }
+      ],
+      "extraResources": [
+        {
+          "from": "bin/ruby_dist/macos-arm64",
+          "to": "bin/ruby_dist/macos-arm64",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "vendor/bundle",
+          "to": "vendor/bundle",
+          "filter": [
+            "**/*"
+          ]
+        }
       ]
     },
     "win": {
@@ -41,6 +57,22 @@
           "target": "nsis",
           "arch": [
             "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "bin/ruby_dist/win-x64",
+          "to": "bin/ruby_dist/win-x64",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "vendor/bundle",
+          "to": "vendor/bundle",
+          "filter": [
+            "**/*"
           ]
         }
       ]
@@ -62,22 +94,6 @@
       "db/**/*",
       "views/**/*",
       "public/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "bin/ruby_dist",
-        "to": "bin/ruby_dist",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "vendor/bundle",
-        "to": "vendor/bundle",
-        "filter": [
-          "**/*"
-        ]
-      }
     ]
   },
   "keywords": [],
