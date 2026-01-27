@@ -45,6 +45,7 @@ jobs:
           node-version: 22
           cache: 'npm'
 
+      - name: Setup Ruby (System)
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4.1'
