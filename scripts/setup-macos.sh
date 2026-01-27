@@ -13,9 +13,10 @@ LIB_DIR="$PORTABLE_DIR/lib"
 ENTITLEMENTS="$(pwd)/build/entitlements.mac.plist"
 
 # 1. Unpack Portable Ruby
+RUBY_VER="3.4.1"
 mkdir -p "$PORTABLE_DIR"
-URL="https://github.com/ruby/ruby-builder/releases/download/ruby-3.4.1/ruby-3.4.1-darwin-arm64.tar.gz"
-echo "Downloading Ruby 3.4.1 from $URL..."
+URL="https://github.com/ruby/ruby-builder/releases/download/ruby-${RUBY_VER}/ruby-${RUBY_VER}-darwin-arm64.tar.gz"
+echo "Downloading Ruby ${RUBY_VER} from $URL..."
 if ! curl -L "$URL" | tar -xz -C "$PORTABLE_DIR" --strip-components=1; then
     echo "ERROR: Failed to download or unpack Ruby"
     exit 1
@@ -60,22 +61,30 @@ install_name_tool -add_rpath "@loader_path/../../lib" "$RUBY_BIN" 2>/dev/null ||
 
 # 4. Bundle Homebrew dependencies
 echo "Bundling native system dependencies..."
-for d in gmp libyaml openssl@3 sqlite; do
+# Added libpq for the pg gem
+for d in gmp libyaml openssl@3 sqlite libpq; do
   BREW_PREFIX=$(brew --prefix $d 2>/dev/null || true)
   if [ -n "$BREW_PREFIX" ] && [ -d "$BREW_PREFIX/lib" ]; then
     echo "  Found $d at $BREW_PREFIX"
-    # Only copy main dylibs to avoid bloat and circular symlinks
-    cp -af "$BREW_PREFIX/lib"/*.dylib "$LIB_DIR/" 2>/dev/null || true
+    # Copy main dylibs and follow symlinks to get the actual library
+    cp -afL "$BREW_PREFIX/lib"/*.dylib "$LIB_DIR/" 2>/dev/null || true
   fi
 done
 
 # Fix IDs and RPaths for bundled dylibs
-echo "Fixing library IDs..."
+echo "Fixing library IDs and internal references..."
 find "$LIB_DIR" -maxdepth 1 -name "*.dylib" -type f | while read -r d; do
   chmod +w "$d"
   libname=$(basename "$d")
   codesign --remove-signature "$d" 2>/dev/null || true
   install_name_tool -id "@rpath/$libname" "$d" 2>/dev/null || true
+
+  # Also search for any absolute homebrew paths inside these dylibs and make them @rpath
+  otool -L "$d" | grep "/opt/homebrew" | awk '{print $1}' | while read -r old_path; do
+     dep_name=$(basename "$old_path")
+     echo "    Updating dependency $old_path to @rpath/$dep_name in $libname"
+     install_name_tool -change "$old_path" "@rpath/$dep_name" "$d" 2>/dev/null || true
+  done
 done
 
 # 5. Build Gems
@@ -90,16 +99,18 @@ unset RUBYLIB RUBYOPT
 "$RUBY_BIN" -v
 
 echo "Installing Bundler..."
-"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.2 --no-document || true
+"$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/gem" install bundler -v 2.6.9 --no-document || true
 
 echo "Configuring gem build settings..."
-for d in openssl@3 sqlite libyaml gmp; do
+for d in openssl@3 sqlite libyaml gmp libpq; do
   PREFIX=$(brew --prefix $d 2>/dev/null || true)
   if [ -n "$PREFIX" ] && [ -d "$PREFIX" ]; then
     NAME=$(echo $d | sed 's/@3//')
     export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
     if [ "$NAME" == "sqlite" ]; then
       "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.sqlite3 --with-sqlite3-dir="$PREFIX" || true
+    elif [ "$NAME" == "libpq" ]; then
+      "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.pg --with-pg-config="$PREFIX/bin/pg_config" || true
     fi
     "$RUBY_BIN" -r rubygems "$PORTABLE_DIR/bin/bundle" config build.$NAME --with-$NAME-dir="$PREFIX" || true
   fi
@@ -122,15 +133,32 @@ echo "Relinking extensions..."
 find "$BUNDLE_PATH" -name "*.bundle" -type f | while read -r bundle; do
   chmod +w "$bundle"
   codesign --remove-signature "$bundle" 2>/dev/null || true
+  
+  # Add multiple rpath levels to be safe, plus relative to executable (ruby)
   install_name_tool -add_rpath "@loader_path/../../../../../../../bin/ruby_dist/macos-arm64/lib" "$bundle" 2>/dev/null || true
+  install_name_tool -add_rpath "@loader_path/../../../../../../../../../bin/ruby_dist/macos-arm64/lib" "$bundle" 2>/dev/null || true
+  install_name_tool -add_rpath "@executable_path/../lib" "$bundle" 2>/dev/null || true
+  
   otool -L "$bundle" | grep "libruby" | awk '{print $1}' | while read -r old_path; do
     if [[ "$old_path" != "@rpath"* ]]; then
       install_name_tool -change "$old_path" "@rpath/libruby.3.4.dylib" "$bundle" 2>/dev/null || true
     fi
   done
+  
+  # Handle other native dependencies in extensions (like libpq or libsqlite)
+  otool -L "$bundle" | grep -E "libpq|sqlite|openssl|yaml|gmp" | awk '{print $1}' | while read -r old_path; do
+    if [[ "$old_path" == "/opt/homebrew"* || "$old_path" == "/usr/local"* ]]; then
+      dep_name=$(basename "$old_path")
+      echo "    Fixing $dep_name in $(basename "$bundle")"
+      install_name_tool -change "$old_path" "@rpath/$dep_name" "$bundle" 2>/dev/null || true
+    fi
+  done
 done
 
 echo "Smoke test..."
+"$RUBY_BIN" -e "require 'sqlite3'; puts 'SQLite3: SUCCESS'"
+"$RUBY_BIN" -e "require 'pg'; puts 'PG: SUCCESS'" || echo "PG: FAILED (Check libpq linkage)"
+
 if ! "$RUBY_BIN" -e "require 'sqlite3'; puts 'SUCCESS'"; then
     echo "Smoke test failed - trying to fix sqlite3 specifically"
     # Potential fix: force @rpath for sqlite3 extension

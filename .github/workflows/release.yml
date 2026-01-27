@@ -39,25 +39,25 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$K_PASS" "$KEYCHAIN"
           rm -f certificate.p12
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
 
-      - name: Setup Ruby (System)
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.4'
+          ruby-version: '3.4.1'
+          bundler-cache: true
 
-      - name: Setup and Sign Native Dependencies (macOS)
+      - name: Prepare Portable Ruby Distribution (macOS)
         if: matrix.os == 'macos-14'
         shell: bash
         run: |
           chmod +x scripts/setup-macos.sh
-          ./scripts/setup-macos.sh "${{ secrets.APPLE_DEVELOPER_IDENTITY }}"
+          ./scripts/setup-macos.sh "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" | tee setup_macos.log
 
-      - name: Setup Native Dependencies (Windows)
+      - name: Prepare Portable Ruby Distribution (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
@@ -70,30 +70,37 @@ jobs:
             mv bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64/* bin/ruby_dist/win-x64/
           fi
           bundle config set --local path 'vendor/bundle'
-          bundle install --deployment || bundle install
+          bundle install --deployment
 
       - name: Install Dependencies
         run: npm ci
 
-      - name: Build Electron App
+      - name: Build, Sign and Notarize Electron App
         run: npm run build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
+          # For electron-builder built-in signing if needed
+          # CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          # CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
+          # We are using the imported keychain for shell signing in setup-macos.sh
+          # but electron-builder also needs these for the app bundle itself.
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.os }}
+          name: Brilliant-${{ matrix.os }}
           path: |
             dist/*.dmg
             dist/*.exe
             dist/*.zip
           if-no-files-found: error
+      
+      - name: Debug Setup Logs (on failure)
+        if: failure() && matrix.os == 'macos-14'
+        run: cat setup_macos.log || true
 
   release:
     needs: build
