@@ -8,20 +8,26 @@ module Brilliant
         last_sync_key = "last_notification_sync_at"
         last_sync_time = full_sync ? nil : UserPreference.get(last_sync_key)
 
+        # Track all changes detected during this sync session to publish a single aggregate event
+        @session_changes = []
+
         # 1. Sync Enrollment Metadata (Unified approach)
         sync_enrollments(courses)
 
         # 2. Sync Unified Feed
-        feed_items = client.get_unified_feed(courses, since: last_sync_time)
-        upsert_notification_batch(feed_items, publish_event_flag: true)
+        # Force refresh the unified feed to ensure we don't return stale cached data
+        # while waiting for the background worker.
+        feed_items = client.get_unified_feed(courses, since: last_sync_time, force_refresh: true)
+        @session_changes += upsert_notification_batch(feed_items, publish_event_flag: false)
 
         # 3. Course Specific Sync (News, Overviews)
-        courses_to_sync = limit ? courses.take(limit) : (full_sync ? courses : courses.take(15))
+        # Increase coverage to 30 courses to ensure we don't miss notifications from active but non-pinned courses
+        courses_to_sync = limit ? courses.take(limit) : (full_sync ? courses : courses.take(30))
         sync_course_specific_notifications(courses_to_sync, full_sync, last_sync_time)
 
         # 4. Global Alerts (Efficiency)
         if (global_alerts = client.get_global_alerts(since: last_sync_time)).any?
-          upsert_notification_batch(client.map_alerts_to_notifications(global_alerts, courses), publish_event_flag: true)
+          @session_changes += upsert_notification_batch(client.map_alerts_to_notifications(global_alerts, courses), publish_event_flag: false)
         end
 
         # 5. Assignment Deadlines
@@ -31,71 +37,130 @@ module Brilliant
           UserPreference.set(last_sync_key, Time.current.utc.iso8601)
         end
 
+        # Now that we've finished the batch, publish a single summary if there were many changes,
+        # or individual events if there were only a few.
+        publish_aggregated_changes(@session_changes)
+        
+        # Cleanup session tracking
+        @session_changes = nil
+
         publish_event(:notifications_synced, { count: Notification.count })
       end
 
       def upsert_notification_batch(items, publish_event_flag: false)
         items = items.compact
-        return if items.empty?
+        return [] if items.empty?
         
         course_ids = items.map { |i| i[:course_id].to_s }.uniq
         course_names = @course_model_cache ? 
                         @course_model_cache.slice(*course_ids).transform_values(&:name) : 
                         Course.where(org_unit_id: course_ids).pluck(:org_unit_id, :name).to_h
 
+        # Pre-fetch existing notifications to preserve state and detect changes
+        requested_external_ids = items.map { |i| i[:id].to_s }
+        existing_notifications = Notification.where(external_id: requested_external_ids).index_by(&:external_id)
+        
+        # Determine current user identity for upsert consistency (upsert_all skips callbacks)
+        current_uid = UserPreference.current&.brightspace_uid
+
         notifications_to_upsert = items.map do |data|
+          external_id = data[:id].to_s
+          existing = existing_notifications[external_id]
+
+          # Select the most recent date available to ensure updates move to the top
+          dates = [data[:date], data[:last_modified], data[:created_at], data[:start_date]].compact
+          parsed_dates = dates.map { |d| (Time.zone.parse(d.to_s) rescue nil) }.compact
+          best_date = parsed_dates.max
+
+          # FALLBACK: Use existing date if API returns none. If brand new, use Time.current.
+          final_date = best_date || (existing ? existing.date : Time.current)
+
           {
-            external_id: data[:id].to_s,
+            external_id: external_id,
             course_id: data[:course_id].to_s,
             notification_type: data[:type],
             title: data[:title].to_s,
             body: html_to_markdown(data[:body]),
-            date: (Time.zone.parse(data[:date].to_s) rescue Time.current),
+            date: final_date,
             course_name: data[:course_name] || course_names[data[:course_id].to_s],
             semester: (data[:semester] || client.extract_semester_from_name(data[:course_name])),
             attachments: data[:attachments],
             urgency: data[:urgency] || 1,
             is_personal: data[:is_personal] || false,
             url: data[:url],
+            user_id: current_uid,
             updated_at: Time.current,
-            created_at: Time.current
+            created_at: (existing ? existing.created_at : Time.current),
+            is_read: (existing ? existing.is_read : false)
           }
         end
 
         begin
-          # Filter for truly new notifications to avoid spamming flash notifications
-          existing_ids = Notification.where(external_id: items.map { |i| i[:id].to_s }).pluck(:external_id)
-          new_items = items.reject { |i| existing_ids.include?(i[:id].to_s) }
+          changes_detected = []
+          
+          notifications_to_upsert.each do |n|
+            existing = existing_notifications[n[:external_id]]
+            if existing.nil?
+              changes_detected << n
+            else
+              # Only reset unread status if it's a significant time jump (e.g. instructor reposted or updated)
+              # Also detect body/title changes to trigger notifications/toasts
+              content_changed = n[:body] != existing.body || n[:title] != existing.title
+              date_jumped = n[:date] > (existing.date + 1.hour) rescue false
+              date_tweaked = n[:date] > (existing.date + 1.minute) rescue false
+              
+              if content_changed || date_tweaked
+                # ONLY force unread if the update is substantial (more than 1 hour newer)
+                if date_jumped
+                  n[:is_read] = false
+                end
+                changes_detected << n
+              end
+            end
+          end
 
           Notification.upsert_all(notifications_to_upsert, unique_by: [:course_id, :external_id])
           
-          if publish_event_flag && new_items.size > 0
-            # If it's a small number of new items, publish individual events
-            # If it's a large number, maybe just one summary event to avoid UI lag
-            if new_items.size <= 3
-              new_items.each do |n_data|
-                publish_event(:notification_received, {
-                  id: n_data[:id],
-                  title: n_data[:title],
-                  body: n_data[:body],
-                  course: n_data[:course_name] || course_names[n_data[:course_id].to_s]
-                })
-              end
-            else
-              publish_event(:notification_received, {
-                id: "batch_#{Time.now.to_i}",
-                title: "#{new_items.size} New Notifications",
-                body: "Multiple new items have been synced to your feed.",
-                course: "System"
-              })
-            end
+          if publish_event_flag && !@session_changes
+            # Only publish immediately if we aren't currently in a big sync session
+            publish_aggregated_changes(changes_detected)
           end
+          
+          changes_detected
         rescue => e
           puts "[Sync::NotificationService] Batch upsert failed: #{e.message}"
+          puts e.backtrace.first(10).join("\n")
+          []
         end
       end
 
       private
+
+      def publish_aggregated_changes(changes)
+        return if changes.empty?
+        
+        # If it's a small number of changes, publish individual events for nice toast notifications
+        if changes.size <= 3
+          changes.each do |n_data|
+            # We don't have existing_notifications here, but we can infer it's an update if ID exists in system
+            # Actually, to keep it simple and clean for the user:
+            publish_event(:notification_received, {
+              id: n_data[:external_id],
+              title: n_data[:title],
+              body: n_data[:body],
+              course: n_data[:course_name]
+            })
+          end
+        else
+          # Aggregate multiple changes into a single summary flash
+          publish_event(:notification_received, {
+            id: "batch_#{Time.now.to_i}",
+            title: "#{changes.size} New/Updated Notifications",
+            body: "Multiple items have been updated in your feed.",
+            course: "System"
+          })
+        end
+      end
 
       def sync_enrollments(courses)
         ActiveRecord::Base.transaction do
@@ -121,62 +186,74 @@ module Brilliant
 
       def sync_course_specific_notifications(courses, full_sync, last_sync_time)
         courses.each do |c|
-          course_id = c['OrgUnit']['Id']
-          news_path = "/d2l/api/le/1.40/#{course_id}/news/"
-          
-          cache_rec = ApiCache.active.find_by(path: news_path)
-          needs_fresh = !cache_rec || (Time.current - cache_rec.updated_at > 300)
-          
-          news_data = client.do_get(news_path, force_refresh: (full_sync || needs_fresh))
-          items = client.ensure_array(news_data)
-          
-          news_notifications = items.map do |item|
-            body = item.dig('Summary', 'Text') || item.dig('Body', 'Text')
-            next if body.to_s.empty?
-
-            {
-              id: "news_#{course_id}_#{item['Id']}",
-              type: 'News',
-              title: item['Title'],
-              body: body,
-              date: item['StartDate'] || item['LastModifiedDate'] || item['CreatedDate'],
-              course_id: course_id,
-              course_name: c['OrgUnit']['Name'],
-              urgency: 1,
-              attachments: item['Attachments']&.to_json,
-              is_personal: false,
-              url: "/course/#{course_id}/announcements"
-            }
-          end.compact
-          
-          upsert_notification_batch(news_notifications, publish_event_flag: true)
-
-          # Overview Sync
-          overview = client.get_overview(course_id)
-          if overview
-            c_record = @course_model_cache[course_id.to_s]
-            c_record.update_columns(overview_raw: overview.to_json) if c_record
+          begin
+            course_id = c['OrgUnit']['Id']
+            news_path = "/d2l/api/le/1.40/#{course_id}/news/"
             
-            if overview['Description']&.fetch('Text', nil) || overview['Title']
-              upsert_notification_batch([{
-                id: "overview_#{course_id}",
-                type: 'Content',
-                title: "Course Overview: #{overview['Title'] || 'Updated'}",
-                body: overview.dig('Description', 'Text') || "The course overview has been updated.",
-                date: overview['LastModifiedDate'],
+            cache_rec = ApiCache.active.find_by(path: news_path)
+            needs_fresh = !cache_rec || (Time.current - cache_rec.updated_at > 300)
+            
+            news_data = client.do_get(news_path, force_refresh: (full_sync || needs_fresh))
+            items = client.ensure_array(news_data)
+            
+            news_notifications = items.map do |item|
+              body = item.dig('Summary', 'Text') || item.dig('Body', 'Text')
+              # Only skip if BOTH title and body are missing, which shouldn't happen
+              next if item['Title'].to_s.empty? && body.to_s.empty?
+
+              {
+                id: "news_#{course_id}_#{item['Id']}",
+                type: 'News',
+                title: item['Title'],
+                body: body,
+                date: item['LastModifiedDate'] || item['StartDate'] || item['CreatedDate'],
+                last_modified: item['LastModifiedDate'],
+                start_date: item['StartDate'],
+                created_at: item['CreatedDate'],
                 course_id: course_id,
                 course_name: c['OrgUnit']['Name'],
                 urgency: 1,
+                attachments: item['Attachments']&.to_json,
                 is_personal: false,
-                url: "/course/#{course_id}"
-              }], publish_event_flag: true)
+                url: "/course/#{course_id}/announcements"
+              }
+            end.compact
+            
+            results = upsert_notification_batch(news_notifications, publish_event_flag: false)
+            @session_changes += results if @session_changes
+
+            # Overview Sync
+            overview = client.get_overview(course_id)
+            if overview
+              c_record = @course_model_cache[course_id.to_s]
+              c_record.update_columns(overview_raw: overview.to_json) if c_record
+              
+              if overview['Description']&.fetch('Text', nil) || overview['Title']
+                results = upsert_notification_batch([{
+                  id: "overview_#{course_id}",
+                  type: 'Content',
+                  title: "Course Overview: #{overview['Title'] || 'Updated'}",
+                  body: overview.dig('Description', 'Text') || "The course overview has been updated.",
+                  date: overview['LastModifiedDate'],
+                  course_id: course_id,
+                  course_name: c['OrgUnit']['Name'],
+                  urgency: 1,
+                  is_personal: false,
+                  url: "/course/#{course_id}"
+                }], publish_event_flag: false)
+                @session_changes += results if @session_changes
+              end
             end
+          rescue => e
+            puts "[Sync::NotificationService] Error syncing course #{c.dig('OrgUnit', 'Id')}: #{e.message}"
+            # Continue to next course
           end
         end
 
         # Content updates for the batch
         content_updates = client.get_content_notifications(courses, since: last_sync_time)
-        upsert_notification_batch(content_updates, publish_event_flag: true)
+        results = upsert_notification_batch(content_updates, publish_event_flag: false)
+        @session_changes += results if @session_changes
       end
     end
   end

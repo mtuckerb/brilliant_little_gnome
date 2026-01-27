@@ -303,7 +303,9 @@ class BrilliantClient
           type: 'Content',
           title: "Content Updated: #{item['Title']}",
           body: "New or updated content in #{c['OrgUnit']['Name']}: #{item['Title']}",
-          date: item['CreatedDate'] || item['LastModifiedDate'] || Time.current.iso8601,
+          date: item['LastModifiedDate'] || item['CreatedDate'] || Time.current.iso8601,
+          last_modified: item['LastModifiedDate'],
+          created_at: item['CreatedDate'],
           course_id: course_id,
           course_name: c['OrgUnit']['Name'],
           urgency: 1,
@@ -507,20 +509,23 @@ class BrilliantClient
     do_get(path)
   end
 
-  def get_unified_feed(courses = [], since: nil)
+  def get_unified_feed(courses = [], since: nil, force_refresh: false)
     course_map = courses.each_with_object({}) { |c, h| h[c['OrgUnit']['Id'].to_s] = c['OrgUnit']['Name'] }
     path = "/d2l/api/lp/#{@api_version}/feed/"
     path += "?since=#{URI.encode_www_form_component(since)}" if since
-    feed_data = do_get(path)
+    feed_data = do_get(path, force_refresh: force_refresh)
     feed = ensure_array(feed_data)
     feed.map do |item|
       cid = item.dig('Metadata', 'ApiViewUrl')&.match(/\/(\d+)\/news/)&.to_a&.at(1)
+      news_id = item.dig('Metadata', 'Identifier')
       {
-        id: item.dig('Metadata', 'Identifier'),
+        id: cid ? "news_#{cid}_#{news_id}" : news_id,
         type: 'News',
         title: item.dig('Metadata', 'Title'),
         body: item.dig('Metadata', 'Summary', 'Text'),
-        date: item.dig('Metadata', 'Date') || item.dig('Resource', 'CreatedDate'),
+        date: item.dig('Metadata', 'Date') || item.dig('Resource', 'LastModifiedDate') || item.dig('Resource', 'CreatedDate'),
+        last_modified: item.dig('Resource', 'LastModifiedDate'),
+        created_at: item.dig('Resource', 'CreatedDate'),
         course_id: cid,
         course_name: cid ? course_map[cid.to_s] : "General",
         urgency: 1,

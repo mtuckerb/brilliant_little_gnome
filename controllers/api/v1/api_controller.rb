@@ -388,16 +388,26 @@ module Api
       get '/api/v1/notifications' do
         # Only trigger background sync if explicitly requested or if we have no notifications at all
         if params[:sync] == 'true' || Notification.count == 0
-          Thread.new do
-            ActiveRecord::Base.connection_pool.with_connection do
-              begin
-                courses = $client.get_enrollments
-                user = $client.get_who_am_i
-                $client.sync_notifications(courses, user)
-              rescue => e
-                puts "[API] Background notification sync failed: #{e.message}"
+          # Perform the fast Unified Feed sync synchronously to ensure immediate updates are seen
+          begin
+            courses = $client.get_enrollments
+            user = $client.get_who_am_i
+            # Get the feed stuff now
+            feed_items = $client.get_unified_feed(courses, force_refresh: true)
+            $client.upsert_notification_batch(feed_items, publish_event: true)
+            
+            # Kick off the deep dive in the background
+            Thread.new do
+              ActiveRecord::Base.connection_pool.with_connection do
+                begin
+                  $client.sync_notifications(courses, user)
+                rescue => e
+                  puts "[API] Background deep notification sync failed: #{e.message}"
+                end
               end
             end
+          rescue => e
+            puts "[API] Synchronous notification sync failed: #{e.message}"
           end
         end
 
