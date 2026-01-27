@@ -170,7 +170,8 @@
     const sortedDates = Object.keys(state.data.items_by_date).sort();
     sortedDates.forEach(dateStr => {
       const items = state.data.items_by_date[dateStr];
-      const dayObj = new Date(dateStr + "T00:00:00");
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dayObj = new Date(y, m - 1, d, 12, 0, 0); // Use noon to avoid TZ shifts
       const isToday = dateStr === state.data.today;
 
       html += `
@@ -206,7 +207,8 @@
     const sortedDates = Object.keys(state.data.items_by_date).sort();
     sortedDates.forEach(dateStr => {
       const items = state.data.items_by_date[dateStr];
-      const dayObj = new Date(dateStr + "T00:00:00");
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dayObj = new Date(y, m - 1, d, 12, 0, 0); // Use noon to avoid TZ shifts
       const isToday = dateStr === state.data.today;
 
       html += `
@@ -415,12 +417,15 @@
 
   // Override the saveAssignmentEdits from the partial to ensure we refresh our calendar
   // instead of assuming a location.reload() or doing nothing.
-  const originalSaveAssignmentEdits = window.saveAssignmentEdits;
   window.saveAssignmentEdits = async function() {
     const form = document.getElementById('editAssignmentForm');
     const btn = document.getElementById('save-assignment-btn');
+    const errorDiv = document.getElementById('edit-assignment-error');
     const formData = new FormData(form);
+    
+    errorDiv.classList.add('is-hidden');
     btn.classList.add('is-loading');
+    
     try {
       const response = await fetch(form.action, {
         method: 'POST',
@@ -431,8 +436,17 @@
       if (data.status === 'ok') {
         closeEditAssignmentModal();
         loadCalendar(); // Refresh just the calendar data
+      } else {
+        errorDiv.innerText = data.error || data.message || "Failed to save changes.";
+        errorDiv.classList.remove('is-hidden');
       }
-    } catch (err) { console.error(err); } finally { btn.classList.remove('is-loading'); }
+    } catch (err) { 
+      console.error(err);
+      errorDiv.innerText = "A network error occurred: " + err.message;
+      errorDiv.classList.remove('is-hidden');
+    } finally { 
+      btn.classList.remove('is-loading'); 
+    }
   };
 
   // Drag & Drop
@@ -453,17 +467,16 @@
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('application/json', JSON.stringify(data));
     
-    // Required for some browsers
-    setTimeout(() => wrapper.style.opacity = '0.4', 0);
+    // Required for some browsers to allow the drag ghost to show before reducing opacity
+    setTimeout(() => wrapper.style.opacity = '0.4', 50);
   }
 
+  // Use a more robust global listener for cleanup
   document.addEventListener('dragend', e => { 
-    const wrapper = e.target.closest('.calendar-item-wrapper');
-    if (wrapper) {
-      wrapper.style.opacity = '1';
-      wrapper.classList.remove('is-dragging');
-    }
-    // Cleanup any lingering drop zones
+    document.querySelectorAll('.calendar-item-wrapper.is-dragging').forEach(w => {
+      w.style.opacity = '1';
+      w.classList.remove('is-dragging');
+    });
     document.querySelectorAll('.drop-zone').forEach(dz => dz.classList.remove('drag-over'));
   });
 

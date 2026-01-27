@@ -54,17 +54,26 @@ class AssignmentController < BaseController
       end
     end
 
-    assignment.update(
+    if assignment.update(
       name: params[:name], description: params[:description], due_date: parsed_date,
       external_url: params[:external_url], manually_edited: true, manually_edited_at: Time.current
     )
-    
-    if request.xhr?
-      content_type :json
-      { status: 'ok', message: "Task updated" }.to_json
+      if request.xhr?
+        content_type :json
+        { status: 'ok', message: "Task updated" }.to_json
+      else
+        flash[:success] = "Task updated"
+        redirect "/course/#{params[:id]}/assignments/#{params[:assignment_id]}"
+      end
     else
-      flash[:success] = "Task updated"
-      redirect "/course/#{params[:id]}/assignments/#{params[:assignment_id]}"
+      if request.xhr?
+        content_type :json
+        status 422
+        { status: 'error', error: assignment.errors.full_messages.join(", ") }.to_json
+      else
+        flash[:error] = assignment.errors.full_messages.join(", ")
+        redirect back
+      end
     end
   end
 

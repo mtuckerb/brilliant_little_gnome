@@ -1,0 +1,32 @@
+# Project "Polyglot Identity": Scope of Work
+
+**Objective:** Transition Brilliant to a multi-user architecture using Brightspace as the identity provider, enabling reliable personal content filtering and secure session management via internal JWTs.
+
+## Analysis of Potential Flaws
+1. **The "Bootstrap" Migration:** Thousands of records will have `NULL` user IDs. A transition script must claim existing data for the first user to log in.
+2. **LMS vs. Brilliant Session Sync:** Handle cases where Brightspace cookies expire but Brilliant JWT remains valid.
+3. **ActiveRecord Complexity:** Runtime validation of `user_id` on all calls creates verbosity and requires careful scoping.
+4. **Discussion Enrichment ID Mismatch:** Distinguish between `UniqueIdentifier` (UUID/String) and `UserId` (Integer) provided by different Brightspace API endpoints.
+
+## Phase 1: Identity Discovery & Storage
+* **Implement Identity Fetching:** Update `BrilliantClient` to call the `/d2l/api/lp/(version)/users/whoami` endpoint immediately after successful login.
+* **Extend UserPreferences:** Add fields for `brightspace_uid` (String), `brightspace_user_id` (Integer), and `last_login_at`.
+* **Update Preferences Controller:** Store these values during the authentication handshake.
+
+## Phase 2: Database Schema Evolution
+* **Global Migration:** Add indexed `user_id` (string) column to primary tables (`courses`, `modules`, `topics`, `assignments`, `grades`, `discussion_forums`, etc.).
+* **Data Integrity:** Implement "Claim Data" service populating `user_id` for orphaned records upon first verified login.
+
+## Phase 3: ActiveRecord Runtime Enforcement
+* **Identity Concern:** Create `HasUserIdentity` module for all models.
+* **Validation Hook:** Add `before_validation` callback raising `MissingUserIdentityError` if `user_id` is missing or invalid.
+* **Global Scoping:** Use `.for_user(id)` scope to prevent data leakage between users.
+
+## Phase 4: Authentication & JWT Management
+* **JWT Issuance:** Create `AuthService` generating signed JWTs with `brightspace_uid` and expiry.
+* **Middleware Update:** Refactor API auth middleware to validate Brilliant JWT, check Brightspace session cookies, and inject `current_user_id`.
+* **Login Flow:** Update captive auth window to return JWT to the Electron renderer.
+
+## Phase 5: Feature Repair ("Mine & Replied")
+* **Refactor Discussion Enrichment:** Use `brightspace_user_id` (Integer) to identify the user in threads/posts, replacing name-based matching.
+* **UI Update:** Send JWT in the `Authorization` header for all requests.

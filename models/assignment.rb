@@ -1,6 +1,6 @@
 class Assignment < ActiveRecord::Base
   include HasUserIdentity
-  validates :title, presence: true
+  validates :name, presence: true
   belongs_to :course, foreign_key: :course_id, primary_key: :org_unit_id
 
   def parsed_attachments
