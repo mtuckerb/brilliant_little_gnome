@@ -28,8 +28,11 @@ export BUNDLE_PATH="$BASE_DIR/vendor/bundle"
 export BUNDLE_DEPLOYMENT="true"
 
 # Detect Ruby version directory
-if [ -d "$BASE_DIR/vendor/bundle/ruby" ]; then
-    RUBY_VER_DIR=$(ls -1 "$BASE_DIR/vendor/bundle/ruby" | head -n 1)
+# Prefer 3.4.0 if it exists, otherwise pick the highest version
+if [ -d "$BASE_DIR/vendor/bundle/ruby/3.4.0" ]; then
+    RUBY_VER_DIR="3.4.0"
+elif [ -d "$BASE_DIR/vendor/bundle/ruby" ]; then
+    RUBY_VER_DIR=$(ls -1 "$BASE_DIR/vendor/bundle/ruby" | sort -V | tail -n 1)
 else
     RUBY_VER_DIR="3.4.0"
 fi

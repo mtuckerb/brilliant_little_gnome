@@ -249,6 +249,32 @@
       
       setInterval(pollSyncStatus, 2000);
       pollSyncStatus(); // Initial call
+
+      // SSE Notifications Listener
+      async function setupSSE() {
+        const token = await ensureToken();
+        const url = `/api/v1/events?api_key=${encodeURIComponent(token)}`; // Pass token as query param for EventSource
+        const eventSource = new EventSource(url);
+
+        eventSource.addEventListener('notification_received', (e) => {
+          const data = JSON.parse(e.data);
+          const message = `<strong>${data.course || 'Notification'}</strong><br/>${data.title}`;
+          showToast(message, 'is-success', 8000);
+          
+          // If on notifications page or dashboard, we might want to refresh content
+          if (window.location.pathname === '/notifications' || window.location.pathname === '/dashboard') {
+            // Optional: trigger partial refresh
+          }
+        });
+
+        eventSource.onerror = (err) => {
+          console.error("SSE Connection Error. Retrying in 5s...", err);
+          eventSource.close();
+          setTimeout(setupSSE, 5000);
+        };
+      }
+
+      setupSSE();
     });
   </script>
 </body>

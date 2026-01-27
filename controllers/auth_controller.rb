@@ -30,23 +30,4 @@ class AuthController < BaseController
       "Authentication Failed. <a href='/'>Retry</a>"
     end
   end
-
-  get '/local_login' do
-    erb :login, layout: false
-  end
-
-  post '/local_login' do
-    if @user_prefs.web_access_passcode.present? && params[:passcode] == @user_prefs.web_access_passcode
-      session[:local_authenticated] = true
-      redirect '/dashboard'
-    else
-      @error = "Invalid passcode"
-      erb :login, layout: false
-    end
-  end
-
-  get '/local_logout' do
-    session[:local_authenticated] = false
-    redirect '/local_login'
-  end
 end

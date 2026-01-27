@@ -386,6 +386,7 @@ class BrilliantClient
 
   def upsert_notification(data)
     n = Notification.find_or_initialize_by(external_id: data[:id].to_s, course_id: data[:course_id].to_s)
+    is_new = n.new_record?
     
     new_title = data[:title]
     new_body = data[:body]
@@ -419,7 +420,16 @@ class BrilliantClient
     n.urgency = data[:urgency]
     n.is_personal = data[:is_personal]
     n.url = data[:url]
-    n.save!
+    
+    if n.save && is_new
+      Brilliant::EventBus.publish(:notification_received, {
+        id: n.id,
+        title: n.title,
+        body: n.body,
+        type: n.notification_type,
+        course: n.course_name
+      })
+    end
   end
 
   def extract_semester_from_name(full_name)
@@ -493,12 +503,17 @@ class BrilliantClient
 
   def get_who_am_i
     data = do_get("/d2l/api/lp/#{@api_version}/users/whoami")
-    if data
+    if data && data["Identifier"]
       @user_display_name = data['DisplayName']
       # Store identity in UserPreference for Polyglot Identity
-      UserPreference.set('brightspace_uid', data['UniqueIdentifier'])
-      UserPreference.set('brightspace_user_id', data['Identifier'])
-      UserPreference.set('last_login_at', Time.now)
+      ActiveRecord::Base.connection_pool.with_connection do
+        pref = UserPreference.current
+        pref.update(
+          brightspace_uid: data['UniqueIdentifier'], 
+          brightspace_user_id: data['Identifier'], 
+          last_login_at: Time.now
+        )
+      end
     end
     data
   end

@@ -74,10 +74,17 @@ class BaseController < Sinatra::Base
         return true
       end
 
-      # 2. Check for JWT Token in Authorization Header
+      # 2. Check for JWT Token in Authorization Header or Param
+      token = nil
       auth_header = request.env['HTTP_AUTHORIZATION']
       if auth_header && auth_header.start_with?('Bearer ')
         token = auth_header.split(' ').last
+      elsif params[:api_key].present?
+        # If it's not the static API key, try it as a JWT
+        token = params[:api_key]
+      end
+
+      if token.present?
         begin
           @decoded_token = decode_jwt_token(token)
           return true if @decoded_token
@@ -87,7 +94,7 @@ class BaseController < Sinatra::Base
       end
 
       # 3. Internal Session Fallback
-      if session[:local_authenticated] == true || configured?
+      if configured?
         return true
       end
 
@@ -165,18 +172,8 @@ class BaseController < Sinatra::Base
     @user_prefs ||= UserPreference.current
     Time.zone = @user_prefs.time_zone || "UTC"
 
-    # 1. Passcode Gate
-    if @user_prefs.web_access_passcode.present?
-      unless ['/local_login', '/favicon.ico', '/logo.png', '/health', '/api/v1/token'].include?(request.path_info) || 
-             request.path_info.start_with?('/public') || 
-             request.path_info.start_with?('/api/')
-        
-        redirect '/local_login' if session[:local_authenticated] != true
-      end
-    end
-
-    # 2. Config Check
-    return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/login', '/docs', '/sync/status', '/local_login'].include?(request.path_info) || 
+    # Config Check
+    return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/login', '/docs', '/sync/status'].include?(request.path_info) || 
               request.path_info.start_with?('/public') || 
               request.path_info.start_with?('/api/') || 
               request.path_info.start_with?('/docs/')

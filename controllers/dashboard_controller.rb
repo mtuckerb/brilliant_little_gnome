@@ -5,7 +5,7 @@ class DashboardController < BaseController
     if configured?
       redirect '/dashboard'
     else
-      erb :login
+      redirect '/setup'
     end
   end
 
@@ -196,7 +196,6 @@ class DashboardController < BaseController
       time_zone: params[:time_zone],
       api_enabled: params[:api_enabled] == 'true',
       api_key: params[:api_key],
-      web_access_passcode: params[:web_access_passcode],
       show_course_list: params[:show_course_list] == 'true',
       show_upcoming_assignments: params[:show_upcoming_assignments] == 'true',
       show_recent_updates: params[:show_recent_updates] == 'true'

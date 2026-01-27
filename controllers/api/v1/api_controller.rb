@@ -91,50 +91,71 @@ module Api
         topic_id = params[:topic_id]
         force_refresh = params[:force_refresh] == 'true'
 
-        forum = DiscussionForum.find_by(brightspace_id: forum_id, course_id: course_id) || $client.get_discussion_forum(course_id, forum_id)
-        topic = DiscussionTopic.find_by(brightspace_id: topic_id, forum_id: forum_id) || $client.get_discussion_topic(course_id, forum_id, topic_id)
-        evaluation = $client.get_discussion_evaluation(course_id, forum_id, topic_id)
+        puts "[API] Loading Topic: #{course_id} / #{forum_id} / #{topic_id}"
 
-        posts_data_raw = $client.get_topic_posts(course_id, forum_id, topic_id, force_refresh: force_refresh)
-        all_posts = posts_data_raw.is_a?(Hash) ? (posts_data_raw['Items'] || []) : (posts_data_raw || [])
+        begin
+          forum = DiscussionForum.find_by(brightspace_id: forum_id, course_id: course_id) || $client.get_discussion_forum(course_id, forum_id)
+          topic = DiscussionTopic.find_by(brightspace_id: topic_id, forum_id: forum_id) || $client.get_discussion_topic(course_id, forum_id, topic_id)
+          evaluation = $client.get_discussion_evaluation(course_id, forum_id, topic_id)
 
-        # Sync posts to DB for local querying
-        DiscussionPost.sync_from_api(course_id, forum_id, topic_id, all_posts)
+          posts_data_raw = $client.get_topic_posts(course_id, forum_id, topic_id, force_refresh: force_refresh)
+          all_posts = $client.ensure_array(posts_data_raw)
 
-        current_bs_user_id = @user_prefs.brightspace_user_id
-        participated = DiscussionPost.where(topic_id: topic_id.to_s, author_id: current_bs_user_id).exists?
-        
-        threads_groups = all_posts.group_by { |p| p['ThreadId'] }
-        threads_with_posts = threads_groups.map do |thread_id, posts|
-          root_post = posts.find { |p| p['ParentPostId'].nil? } || posts.min_by { |p| p['DatePosted'] || "9999" }
+          # Background sync posts to DB to avoid blocking the UI response
+          Thread.new do 
+            ActiveRecord::Base.connection_pool.with_connection do
+              begin
+                DiscussionPost.sync_from_api(course_id, forum_id, topic_id, all_posts)
+              rescue => sync_err
+                 puts "[API ERROR] Background sync failed: #{sync_err.message}"
+              end
+            end
+          end
+
+          current_bs_user_id = @user_prefs.brightspace_user_id
           
-          root_author_id = root_post.dig('Author', 'Identifier') || root_post['UserId']
-          user_is_author = current_bs_user_id.present? && root_author_id.to_s == current_bs_user_id.to_s
-          user_participated = posts.any? { |p| (p.dig('Author', 'Identifier') || p['UserId']).to_s == current_bs_user_id.to_s }
+          # Robust participated check
+          participated = false
+          if current_bs_user_id.present?
+            participated = DiscussionPost.where(topic_id: topic_id.to_s).where("author_id = ? OR author_id = ?", current_bs_user_id.to_s, current_bs_user_id.to_i).exists?
+          end
+          
+          threads_groups = all_posts.reject { |p| p.nil? || !p.is_a?(Hash) }.group_by { |p| p['ThreadId'] }
+          threads_with_posts = threads_groups.map do |thread_id, posts|
+            root_post = posts.find { |p| p['ParentPostId'].nil? } || posts.min_by { |p| p['DatePosted'] || "9999" }
+            
+            root_author_id = root_post.dig('Author', 'Identifier') || root_post['UserId']
+            user_is_author = current_bs_user_id.present? && root_author_id.to_s == current_bs_user_id.to_s
+            user_participated = posts.any? { |p| (p.dig('Author', 'Identifier') || p['UserId']).to_s == current_bs_user_id.to_s }
 
-          thread = {
-            'ThreadId' => thread_id, 
-            'Subject' => root_post['Subject'] || "No Subject",
-            'PostingUserDisplayName' => root_post['PostingUserDisplayName'],
-            'ThreadDate' => root_post['DatePosted'],
-            'LastReplyDate' => posts.map { |p| p['DatePosted'] }.compact.max,
-            'IsPinned' => root_post['IsPinned'] || false,
-            'ReplyCount' => posts.size - 1,
-            'UserIsAuthor' => user_is_author,
-            'UserParticipated' => user_participated
-          }
-          { thread: thread, post_tree: build_post_tree(posts) }
-        end.sort_by { |item| item[:thread]['IsPinned'] ? 0 : 1 }
+            thread = {
+              'ThreadId' => thread_id, 
+              'Subject' => root_post['Subject'] || "No Subject",
+              'PostingUserDisplayName' => root_post['PostingUserDisplayName'],
+              'ThreadDate' => root_post['DatePosted'],
+              'LastReplyDate' => posts.map { |p| p['DatePosted'] }.compact.max,
+              'IsPinned' => root_post['IsPinned'] || false,
+              'ReplyCount' => posts.size - 1,
+              'UserIsAuthor' => user_is_author,
+              'UserParticipated' => user_participated
+            }
+            { thread: thread, post_tree: build_post_tree(posts) }
+          end.sort_by { |item| item[:thread]['IsPinned'] ? 0 : 1 }
 
-        {
-          forum: forum,
-          topic: topic,
-          evaluation: evaluation,
-          participated: participated,
-          threads_with_posts: threads_with_posts,
-          instructions_collapsed: @user_prefs.topic_collapsed?("#{topic_id}:instructions") || participated,
-          feedback_collapsed: @user_prefs.topic_collapsed?("#{topic_id}:feedback")
-        }.to_json
+          {
+            forum: forum,
+            topic: topic,
+            evaluation: evaluation,
+            participated: participated,
+            threads_with_posts: threads_with_posts,
+            instructions_collapsed: @user_prefs.topic_collapsed?("#{topic_id}:instructions") || participated,
+            feedback_collapsed: @user_prefs.topic_collapsed?("#{topic_id}:feedback")
+          }.to_json
+        rescue => e
+          puts "[API ERROR] Discussion Route Crash: #{e.message}"
+          puts e.backtrace.first(15).join("\n")
+          halt 500, { error: e.message }.to_json
+        end
       end
 
       get '/api/v1/courses/:id/discussions/:forum_id/topics' do
@@ -148,7 +169,11 @@ module Api
         if topics.empty? || force_refresh
           topics_raw = $client.get_discussion_topics(course_id, forum_id, force_refresh: force_refresh)
           topics_data = topics_raw.is_a?(Hash) ? (topics_raw['Items'] || []) : (topics_raw || [])
-          Thread.new { $client.sync_discussion_topics(course_id, forum_id, topics_data) }
+          Thread.new do 
+            ActiveRecord::Base.connection_pool.with_connection do
+              $client.sync_discussion_topics(course_id, forum_id, topics_data)
+            end
+          end
           topics = topics_data if topics.empty?
         end
 
@@ -384,6 +409,38 @@ module Api
           host: $client.host,
           sync_status: $client.sync_status
         }.to_json
+      end
+
+      # Live updates via Server-Sent Events
+      get '/api/v1/events', provides: 'text/event-stream' do
+        content_type 'text/event-stream'
+        headers 'Cache-Control' => 'no-cache', 'Connection' => 'keep-alive', 'X-Accel-Buffering' => 'no'
+        
+        queue = Queue.new
+        Brilliant::EventBus.subscribe(queue)
+        
+        stream(:keep_open) do |out|
+          begin
+            # Keep-alive heartbeats
+            heartbeat_thread = Thread.new do
+              loop do
+                sleep 20
+                out << ": heartbeat\n\n"
+              end
+            end
+
+            loop do
+              event_data = queue.pop
+              out << "event: #{event_data[:event]}\n"
+              out << "data: #{event_data[:data].to_json}\n\n"
+            end
+          rescue => e
+            puts "[SSE] Stream closed: #{e.message}"
+          ensure
+            heartbeat_thread.kill if heartbeat_thread
+            Brilliant::EventBus.unsubscribe(queue)
+          end
+        end
       end
 
       get '/api/v1/calendar' do

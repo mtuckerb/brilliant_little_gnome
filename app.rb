@@ -23,6 +23,7 @@ require 'jwt'
 require_relative 'models/concerns/has_user_identity'
 Dir.glob('./models/*.rb').each { |f| require_relative f }
 require_relative 'helpers/course_helpers'
+require_relative 'lib/brilliant/event_bus'
 require_relative 'lib/brilliant/client'
 require_relative 'lib/brilliant/auth'
 require_relative 'lib/brilliant/auth_helper'

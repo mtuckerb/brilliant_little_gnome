@@ -10,41 +10,15 @@
               <p class="subtitle is-6 has-text-grey">Your simplified learning experience.</p>
             </div>
 
-            <% if @user_prefs.web_access_passcode.present? && session[:local_authenticated] != true %>
-              <form action="/local_login" method="POST">
-                <div class="field mb-5">
-                  <label class="label has-text-grey">Secure Device Access</label>
-                  <div class="control has-icons-left">
-                    <input class="input is-medium" type="password" name="passcode" placeholder="••••" required autofocus 
-                           style="letter-spacing: 0.8em; text-align: center; border-radius: 10px; border: 2px solid #eee;">
-                    <span class="icon is-small is-left">
-                      <i class="fas fa-key" style="color: #739AC3;"></i>
-                    </span>
-                  </div>
-                  <% if @error %>
-                    <p class="help is-danger mt-2"><i class="fas fa-exclamation-circle mr-1"></i> <%= @error %></p>
-                  <% end %>
-                </div>
-                
-                <div class="field">
-                  <div class="control">
-                    <button type="submit" class="button is-medium is-fullwidth" style="background-color: #739AC3; color: white; border-radius: 10px; font-weight: 700;">
-                      Unlock Device
-                    </button>
-                  </div>
-                </div>
-              </form>
-            <% else %>
-              <div class="has-text-centered">
-                <a href="/login" class="button is-large is-fullwidth mb-4" style="background-color: #739AC3; color: white; border-radius: 10px; font-weight: 700;">
-                  <span class="icon"><i class="fas fa-magic"></i></span>
-                  <span>Bright Space Login</span>
-                </a>
-                <div class="notification is-light is-size-7 py-2" style="background-color: #f8fafc; border: 1px dashed #cbd5e1;">
-                  Authentication requires valid configuration in your Brightspace environment.
-                </div>
+            <div class="has-text-centered">
+              <a href="/login" class="button is-large is-fullwidth mb-4" style="background-color: #739AC3; color: white; border-radius: 10px; font-weight: 700;">
+                <span class="icon"><i class="fas fa-magic"></i></span>
+                <span>Bright Space Login</span>
+              </a>
+              <div class="notification is-light is-size-7 py-2" style="background-color: #f8fafc; border: 1px dashed #cbd5e1;">
+                Connect your account to view courses, assignments, and grades.
               </div>
-            <% end %>
+            </div>
           </div>
           
           <div class="has-text-centered mt-5">

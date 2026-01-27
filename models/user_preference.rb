@@ -15,7 +15,6 @@ class UserPreference < ActiveRecord::Base
       remote_server_enabled: false,
       remote_server_ip: nil,
       remote_server_port: 4567,
-      web_access_passcode: nil,
       show_upcoming_assignments: true,
       show_course_list: true,
       show_recent_updates: true,
@@ -26,13 +25,13 @@ class UserPreference < ActiveRecord::Base
   end
 
   def self.get(key)
-    pref = self.current
-    pref.respond_to?(key) ? pref.send(key) : nil
+    pref = self.current rescue nil
+    pref && pref.respond_to?(key) ? pref.send(key) : nil
   end
 
   def self.set(key, value)
-    pref = self.current
-    pref.update(key => value) if pref.respond_to?("#{key}=")
+    pref = self.current rescue nil
+    pref.update(key => value) if pref && pref.respond_to?("#{key}=")
   end
 
   def topic_collapsed?(topic_id)
