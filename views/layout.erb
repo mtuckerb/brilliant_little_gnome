@@ -122,6 +122,22 @@
   <div class="main-content container">
     <div id="toast-container"></div>
 
+    <!-- Global Sync Indicator (Subtle) -->
+    <div id="sync-indicator" class="is-hidden mb-4 px-2">
+      <div class="is-flex is-justify-content-space-between is-align-items-center">
+        <div class="is-flex is-align-items-center">
+          <span class="icon is-small has-text-primary mr-2">
+            <i class="fas fa-sync fa-spin"></i>
+          </span>
+          <span id="sync-text" class="is-size-7 has-text-grey-dark">Syncing...</span>
+        </div>
+        <div style="flex-grow: 1; margin: 0 15px;">
+          <progress id="sync-progress-bar" class="progress is-small is-primary" value="0" max="100" style="height: 4px;"></progress>
+        </div>
+        <span id="sync-percent" class="is-size-7 has-text-grey">0%</span>
+      </div>
+    </div>
+
     <% if flash[:error] || flash[:success] %>
       <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -234,11 +250,15 @@
           .then(data => {
             const indicator = document.getElementById('sync-indicator');
             const text = document.getElementById('sync-text');
+            const progressBar = document.getElementById('sync-progress-bar');
+            const percentText = document.getElementById('sync-percent');
             
-            if (indicator && text) {
+            if (indicator && text && progressBar && percentText) {
               if (data.status === 'syncing') {
                 indicator.classList.remove('is-hidden');
                 text.innerText = data.current_task || 'Syncing...';
+                progressBar.value = data.progress || 0;
+                percentText.innerText = (data.progress || 0) + '%';
               } else {
                 indicator.classList.add('is-hidden');
               }

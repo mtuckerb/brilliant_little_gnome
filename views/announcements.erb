@@ -71,7 +71,7 @@
                 </span>
               </div>
               <span class="icon is-small has-text-grey">
-                <i class="fas fa-chevron-down"></i>
+                <i class="fas fa-chevron-right"></i>
               </span>
             </div>
           </summary>
@@ -131,15 +131,23 @@
   window.addEventListener('brilliant:notification_received', (e) => {
     const { course_id } = e.detail;
     if (course_id == COURSE_ID) {
-      console.log("[SSE] Course news updated, refreshing announcements...");
-      loadAnnouncements();
+      console.log("[SSE] Course news updated. Current container has contents: ", document.getElementById('announcements-container').children.length);
+      // Only refresh if we were empty or showing the spinner
+      const container = document.getElementById('announcements-container');
+      if (container.querySelector('.fa-spinner') || container.children.length === 0) {
+        loadAnnouncements();
+      } else {
+        // Otherwise just show the refresh button as active or a toast
+        const btn = document.getElementById('refresh-btn');
+        if (btn) btn.classList.add('has-text-info');
+      }
     }
   });
 </script>
 
 <style>
   .announcement-item summary::-webkit-details-marker { display: none; }
-  .announcement-item[open] summary .fa-chevron-down { transform: rotate(180deg); }
-  .announcement-item summary .fa-chevron-down { transition: transform 0.2s ease-in-out; }
+  .announcement-item[open] summary .fa-chevron-right { transform: rotate(90deg); }
+  .announcement-item summary .fa-chevron-right { transition: transform 0.2s ease-in-out; }
   .announcement-body img { max-width: 100%; height: auto; }
 </style>
