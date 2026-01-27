@@ -21,8 +21,8 @@
                    c_name = n.is_a?(Hash) ? n['course_name'] : (n.respond_to?(:course_name) ? n.course_name : nil)
                    c_id = n.is_a?(Hash) ? n['course_id'] : (n.respond_to?(:course_id) ? n.course_id : nil)
                 %>
-                <% info = extract_course_info(c_name || c_id) %>
-                <% if info[:prefix] %><span class="px-1 mr-2" style="border-radius: 3px; font-size: 0.65rem; font-weight: bold; <%= course_pill_style(c_name) %>"><%= info[:prefix] %></span><% end %>
+                <% info = extract_course_info(c_name || "", c_id) %>
+                <% if info[:prefix] %><span class="px-1 mr-2" style="border-radius: 3px; font-size: 0.65rem; font-weight: bold; <%= info[:pill_style] %>"><%= info[:prefix] %></span><% end %>
                 <% if c_name.present? %>
                   <%= info[:short_name] || c_name %>
                 <% else %>

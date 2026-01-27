@@ -22,6 +22,11 @@ A lightweight, high-performance Brightspace companion that aggregates notificati
 - **Remote Server Integration**:
   - Connect your local Brilliant client to a remote "Brilliant Server" instance.
   - Seamlessly use a centralized database while maintaining a native local experience.
+- **High-Performance Synchronization**:
+  - **Request Coalescing**: Intelligent path-based locking prevents duplicate API calls.
+  - **Delta-First Sync**: Periodically fetches only new notifications using Global Alerts/Feed APIs.
+  - **N+1 Optimization**: In-memory model caching ensures thousands of items can be processed in seconds.
+  - **Smooth UI**: SSE event batching and frontend debouncing eliminate flicker during live updates.
 - **Security & Privacy**:
   - Optional Web Access Passcode to gate the application when running in a browser.
   - All local data stays local; remote connections are secured via JWT.

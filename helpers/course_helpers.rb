@@ -398,12 +398,13 @@ module CourseHelpers
     nil
   end
 
-  def extract_course_info(full_name)
+  def extract_course_info(full_name, org_unit_id = nil)
     return { course_display: "", short_name: "", prefix: "", is_online: false, semester: nil, pill_style: "" } if full_name.to_s.empty?
 
     # Sanity check: if it's just a number, it's not a full name
     if full_name.to_s.match?(/^\d+$/)
-      course = Course.find_by(org_unit_id: full_name.to_s)
+      org_unit_id ||= full_name.to_s
+      course = Course.find_by(org_unit_id: org_unit_id)
       full_name = course.name if course && course.name.present? && !course.name.to_s.match?(/^\d+$/)
     end
 
@@ -423,7 +424,7 @@ module CourseHelpers
         prefix: prefix,
         is_online: !match[3].to_s.empty?,
         semester: semester,
-        pill_style: course_pill_style(full_name, semester)
+        pill_style: course_pill_style(full_name, semester, org_unit_id)
       }
     else 
       # Fallback logic
@@ -449,7 +450,7 @@ module CourseHelpers
         prefix: prefix,
         is_online: is_online,
         semester: semester,
-        pill_style: course_pill_style(full_name, semester)
+        pill_style: course_pill_style(full_name, semester, org_unit_id)
       }
     end
   end
@@ -755,11 +756,16 @@ module CourseHelpers
     
     tasks.uniq { |t| t[:name] }
   end
-  def course_pill_style(course_name, semester = nil)
-    return "" if course_name.nil?
+  def course_pill_style(course_name, semester = nil, course_id = nil)
+    return "" if course_name.nil? && course_id.nil?
     
     # 1. Check if we have a custom color saved for this course
-    course = Course.find_by(name: course_name)
+    course = nil
+    if course_id
+      course = Course.find_by(org_unit_id: course_id.to_s)
+    end
+    course ||= Course.find_by(name: course_name) if course_name.present?
+    
     color_val = nil
 
     if course && course.respond_to?(:custom_color) && course.custom_color.present?

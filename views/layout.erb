@@ -119,24 +119,26 @@
     </div>
   </nav>
 
+  <!-- Global Sync Indicator (Pinned below Navbar) -->
+  <div id="sync-indicator" class="is-hidden" style="background: white; border-bottom: 2px solid #739AC3; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); width: 100%; z-index: 1000;">
+      <div class="container px-5 py-2">
+         <div class="is-flex is-justify-content-space-between is-align-items-center">
+            <div class="is-flex is-align-items-center" style="min-width: 200px;">
+               <span class="icon is-small has-text-primary mr-3"><i class="fas fa-sync fa-spin"></i></span>
+               <span id="sync-text" class="is-size-7 has-text-weight-bold has-text-grey-darker">Syncing...</span>
+            </div>
+            <div style="flex-grow: 1; margin: 0 20px;">
+               <progress id="sync-progress-bar" class="progress is-small is-primary mb-0" value="0" max="100" style="height: 6px;"></progress>
+            </div>
+            <div style="min-width: 50px;" class="has-text-right">
+               <span id="sync-percent" class="is-size-7 has-text-weight-bold has-text-primary">0%</span>
+            </div>
+         </div>
+      </div>
+  </div>
+
   <div class="main-content container">
     <div id="toast-container"></div>
-
-    <!-- Global Sync Indicator (Subtle) -->
-    <div id="sync-indicator" class="is-hidden mb-4 px-2">
-      <div class="is-flex is-justify-content-space-between is-align-items-center">
-        <div class="is-flex is-align-items-center">
-          <span class="icon is-small has-text-primary mr-2">
-            <i class="fas fa-sync fa-spin"></i>
-          </span>
-          <span id="sync-text" class="is-size-7 has-text-grey-dark">Syncing...</span>
-        </div>
-        <div style="flex-grow: 1; margin: 0 15px;">
-          <progress id="sync-progress-bar" class="progress is-small is-primary" value="0" max="100" style="height: 4px;"></progress>
-        </div>
-        <span id="sync-percent" class="is-size-7 has-text-grey">0%</span>
-      </div>
-    </div>
 
     <% if flash[:error] || flash[:success] %>
       <script>

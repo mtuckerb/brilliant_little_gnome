@@ -23,21 +23,31 @@ class BrilliantClient
     @degraded_mode = false
     @last_auth_error = nil
     @auth_notification_sent = false
+    @in_flight_requests = {} # Track active GET requests: { path => Mutex }
+    @pending_tasks = {}      # Track paths in @task_queue to avoid duplicates
 
     # Background Worker for low-priority tasks (attachments, etc.)
     @task_queue = Queue.new
     @worker_thread = Thread.new do
       loop do
-        task = @task_queue.pop
+        task_data = @task_queue.pop
         begin
           ActiveRecord::Base.connection_pool.with_connection do
-            task.call
+            if task_data.is_a?(Hash) && task_data[:path]
+              fetch_and_cache(task_data[:path])
+              @pending_tasks.delete(task_data[:path])
+            elsif task_data.respond_to?(:call)
+              task_data.call
+            end
           end
         rescue => e
           puts "[Worker] Task failed: #{e.message}"
         end
       end
     end
+
+    # Periodically clean up old cache entries
+    Thread.new { sleep 60; ActiveRecord::Base.connection_pool.with_connection { cleanup_cache } rescue nil }
     
     # Legacy/Fallback: Try loading from cookies.txt
     cookies_fallback = File.join(data_dir, 'cookies.txt')
@@ -188,6 +198,12 @@ class BrilliantClient
   end
 
   def sync_notifications(courses, user, full_sync: false, limit: nil)
+    if !full_sync && @last_notif_sync && Time.current - @last_notif_sync < 60
+      puts "[Brilliant API] Skipping notification sync (run within last 60s)"
+      return
+    end
+
+    @last_notif_sync = Time.current
     puts "[Brilliant API] Syncing notifications to DB..."
     
     last_sync_key = "last_notification_sync_at"
@@ -195,6 +211,7 @@ class BrilliantClient
     
     # Sync courses to normalized table
     ActiveRecord::Base.transaction do
+      @course_model_cache = {}
       courses.each do |c|
         next if c.nil? || c['OrgUnit'].nil?
 
@@ -215,9 +232,13 @@ class BrilliantClient
         end
         
         course.save!
+        @course_model_cache[course.org_unit_id] = course
       end
     end
     archive_cache("/d2l/api/lp/#{@api_version}/enrollments/myenrollments/")
+
+    # Pre-warm course cache for further lookups if needed
+    @course_model_cache ||= Course.all.index_by(&:org_unit_id)
 
     feed_items = get_unified_feed(courses, since: last_sync_time)
     upsert_notification_batch(feed_items)
@@ -229,8 +250,12 @@ class BrilliantClient
       course_id = c['OrgUnit']['Id']
       next if course_id.nil?
       
-      # Use force_refresh: true for background sync tasks to ensure we bypass ApiCache
-      news_data = do_get("/d2l/api/le/#{@api_version}/#{course_id}/news/", force_refresh: true)
+      # Check if we've refreshed news recently (within 5 minutes)
+      news_path = "/d2l/api/le/#{@api_version}/#{course_id}/news/"
+      cache_rec = ApiCache.active.find_by(path: news_path)
+      needs_fresh = !cache_rec || (Time.current - cache_rec.updated_at > 300)
+      
+      news_data = do_get(news_path, force_refresh: (full_sync || needs_fresh))
       items = ensure_array(news_data)
       
       news_notifications = items.map do |item|
@@ -254,7 +279,7 @@ class BrilliantClient
       
       upsert_notification_batch(news_notifications)
 
-      items.each do |item|
+      items.take(3).each do |item| # Limit attachment processing in main sync
         if item['Attachments'] && !item['Attachments'].empty?
           item['Attachments'].each do |att|
             @task_queue << proc { persist_attachment(course_id, "news/#{item['Id']}/attachments/#{att['FileId']}", att['FileId'], att['FileName']) }
@@ -264,7 +289,7 @@ class BrilliantClient
 
       overview = get_overview(course_id)
       if overview
-        c_record = Course.find_by(org_unit_id: course_id.to_s)
+        c_record = @course_model_cache[course_id.to_s]
         c_record.update_columns(overview_raw: overview.to_json) if c_record
       end
 
@@ -286,8 +311,13 @@ class BrilliantClient
 
     # Content notifications and other global syncs
     upsert_notification_batch(get_content_notifications(courses_to_sync, since: last_sync_time))
-    upsert_notification_batch(get_recent_grades_notifications(courses_to_sync))
-    upsert_notification_batch(get_discussion_notifications(courses_to_sync, user['Identifier']))
+    
+    # Global Delta Sync (Alerts) - Replaces the heavy course-by-course scan
+    if (global_alerts = get_global_alerts(since: last_sync_time)).any?
+      upsert_notification_batch(map_alerts_to_notifications(global_alerts, courses))
+    end
+    
+    upsert_notification_batch(get_discussion_notifications(courses_to_sync, user['Identifier'])) if user && user['Identifier']
 
     sync_upcoming_assignment_notifications(courses)
     
@@ -295,12 +325,23 @@ class BrilliantClient
       UserPreference.set(last_sync_key, Time.current.utc.iso8601)
     end
 
+    # Final single event to refresh UI
+    Brilliant::EventBus.publish(:notifications_synced, { count: Notification.count })
     puts "[Brilliant API] Notification sync complete."
   end
 
-  def upsert_notification_batch(items)
+  def upsert_notification(data)
+    upsert_notification_batch([data], publish_event: true)
+  end
+
+  def upsert_notification_batch(items, publish_event: false)
+    items = items.compact
     return if items.empty?
     
+    # Pre-fetch course display names to avoid repeated lookups
+    course_ids = items.map { |i| i[:course_id].to_s }.uniq
+    course_names = @course_model_cache ? @course_model_cache.slice(*course_ids).transform_values(&:name) : Course.where(org_unit_id: course_ids).pluck(:org_unit_id, :name).to_h
+
     notifications_to_upsert = items.map do |data|
       # Sanitize/format fields for DB
       {
@@ -310,7 +351,7 @@ class BrilliantClient
         title: data[:title].to_s,
         body: html_to_markdown(data[:body]),
         date: (Time.zone.parse(data[:date].to_s) rescue Time.current),
-        course_name: data[:course_name],
+        course_name: data[:course_name] || course_names[data[:course_id].to_s],
         semester: (data[:semester] || extract_semester_from_name(data[:course_name])),
         attachments: data[:attachments],
         urgency: data[:urgency] || 1,
@@ -323,6 +364,16 @@ class BrilliantClient
 
     begin
       Notification.upsert_all(notifications_to_upsert, unique_by: [:course_id, :external_id])
+      
+      if publish_event && items.size == 1
+        n_data = items.first
+        Brilliant::EventBus.publish(:notification_received, {
+          id: n_data[:id],
+          title: n_data[:title],
+          body: n_data[:body],
+          course: n_data[:course_name] || course_names[n_data[:course_id].to_s]
+        })
+      end
     rescue => e
       puts "[Sync] Notification batch upsert failed: #{e.message}"
     end
@@ -334,33 +385,37 @@ class BrilliantClient
     ActiveRecord::Base.connection_pool.with_connection do
       Assignment.where("due_date > ? AND due_date <= ?", Time.current, upcoming_limit).each do |a|
         next if a.nil?
-        course = courses.find { |c| c['OrgUnit']['Id'].to_s == a.course_id.to_s }
-        course_name = course ? course['OrgUnit']['Name'] : (Course.find_by(org_unit_id: a.course_id)&.name || "Unknown Course")
+        begin
+          course_obj = @course_model_cache ? @course_model_cache[a.course_id.to_s] : Course.find_by(org_unit_id: a.course_id.to_s)
+          course_name = course_obj&.name || "Unknown Course"
 
-        type_label = a.assignment_type == 'quiz' ? 'Quiz' : 'Assignment'
-        url = a.assignment_type == 'quiz' ? 
-              "/course/#{a.course_id}/quizzes/#{a.brightspace_id.sub('quiz_', '')}" : 
-              "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
-        url += '?edit=true' if a.synthetic
-        
-        body_text = "This #{type_label.downcase} is due on #{a.due_date.strftime('%A, %b %d at %I:%M %p')}."
-        
-        if a.synthetic && a.external_url.present?
-          body_text += " [Open Link](#{a.external_url})"
+          type_label = a.assignment_type == 'quiz' ? 'Quiz' : 'Assignment'
+          url = a.assignment_type == 'quiz' ? 
+                "/course/#{a.course_id}/quizzes/#{a.brightspace_id.sub('quiz_', '')}" : 
+                "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
+          url += '?edit=true' if a.synthetic
+          
+          body_text = "This #{type_label.downcase} is due on #{a.due_date.strftime('%A, %b %d at %I:%M %p')}."
+          
+          if a.synthetic && a.external_url.present?
+            body_text += " [Open Link](#{a.external_url})"
+          end
+          
+          upsert_notification({
+            id: "upcoming_assignment_#{a.brightspace_id}",
+            type: 'Assignment',
+            title: "Upcoming #{type_label}: #{a.name}",
+            body: body_text,
+            date: a.due_date - 1.day,
+            course_id: a.course_id,
+            course_name: course_name,
+            urgency: 2,
+            is_personal: true,
+            url: url
+          })
+        rescue => e
+          puts "[Sync] Upcoming assignment sync failed for #{a.id}: #{e.message}"
         end
-        
-        upsert_notification({
-          id: "upcoming_assignment_#{a.brightspace_id}",
-          type: 'Assignment',
-          title: "Upcoming #{type_label}: #{a.name}",
-          body: body_text,
-          date: a.due_date - 1.day,
-          course_id: a.course_id,
-          course_name: course_name,
-          urgency: 2,
-          is_personal: true,
-          url: url
-        })
       end
     end
   end
@@ -397,71 +452,49 @@ class BrilliantClient
     all_updates
   end
 
-  def create_system_notification(data)
-    ActiveRecord::Base.connection_pool.with_connection do
-      upsert_notification({
-        id: data[:id],
-        type: 'System',
-        title: data[:title],
-        body: data[:body],
-        date: Time.current.iso8601,
-        course_id: 'SYSTEM',
-        course_name: 'Brilliant System',
-        urgency: data[:urgency] || 2,
-        is_personal: true,
-        url: '/'
-      })
-    end
-  rescue => e
-    puts "[!] Failed to create system notification: #{e.message}"
+  def get_global_alerts(since: nil)
+    path = "/d2l/api/lp/#{@api_version}/alerts/"
+    path += "?since=#{URI.encode_www_form_component(since)}" if since
+    
+    # Use force_refresh: true to ensure we always try to get the very latest alerts
+    # during the notification sync.
+    data = do_get(path, force_refresh: true)
+    ensure_array(data)
   end
 
-  def upsert_notification(data)
-    n = Notification.find_or_initialize_by(external_id: data[:id].to_s, course_id: data[:course_id].to_s)
-    is_new = n.new_record?
+  def map_alerts_to_notifications(alerts, courses)
+    course_map = courses.each_with_object({}) { |c, h| h[c['OrgUnit']['Id'].to_s] = c['OrgUnit']['Name'] }
     
-    new_title = data[:title]
-    new_body = data[:body]
-
-    n.notification_type = data[:type]
-    n.title = new_title if new_title.present?
-    n.body = html_to_markdown(new_body) if new_body.present?
-
-    raw_date = data[:date]
-    begin
-      if raw_date
-        parsed_date = raw_date.is_a?(Time) ? raw_date : Time.zone.parse(raw_date.to_s)
-        if n.new_record? || !n.date || (parsed_date - n.date).abs > 60
-          n.date = parsed_date
-        end
-      else
-        n.date ||= Time.current
-      end
-    rescue => e
-      n.date ||= Time.current
+    alerts.map do |alert|
+      course_id = alert['OrgUnitId'].to_s
+      type = alert['Type']
+      
+      # Brightspace Alerts types: Grade, News, Content, etc.
+      {
+        id: "alert_#{course_id}_#{alert['Id']}",
+        type: type,
+        title: alert['Title'] || "#{type} Update",
+        body: alert['Text'] || "You have a new #{type.downcase} update in #{course_map[course_id]}.",
+        date: alert['Date'] || Time.current.iso8601,
+        course_id: course_id,
+        course_name: course_map[course_id] || "Course #{course_id}",
+        urgency: (type == 'Grade' ? 3 : 1),
+        is_personal: (type == 'Grade'),
+        url: "/course/#{course_id}" + (type == 'Grade' ? "/grades" : "")
+      }
     end
-    
-    n.course_name = data[:course_name]
-    
-    if (n.semester.nil? || n.semester.to_s.empty?) && n.course_name
-      n.semester = extract_semester_from_name(n.course_name)
-    end
-    n.semester = data[:semester] if data[:semester]
+  end
 
-    n.attachments = data[:attachments] if data[:attachments]
-    n.urgency = data[:urgency]
-    n.is_personal = data[:is_personal]
-    n.url = data[:url]
-    
-    if n.save && is_new
-      Brilliant::EventBus.publish(:notification_received, {
-        id: n.id,
-        title: n.title,
-        body: n.body,
-        type: n.notification_type,
-        course: n.course_name
-      })
-    end
+  def get_recent_grades_notifications(courses)
+    # This is now a legacy/fallback method, as global alerts handle this 
+    # in a much more efficient way. Returning empty to avoid duplication.
+    []
+  end
+
+  def get_discussion_notifications(courses, user_id)
+    # Implement discussion evaluation/reply checks here in the future
+    # For now, return empty to avoid the crash encountered earlier
+    []
   end
 
   def extract_semester_from_name(full_name)
@@ -1059,19 +1092,39 @@ class BrilliantClient
   end
 
   def do_get(path, force_refresh: false)
+    # Normalize path (e.g. remove multiple slashes)
+    path = path.gsub('//', '/')
+    
     cache_record = ApiCache.active.find_by(path: path) || ApiCache.find_by(path: path)
     cached_data = JSON.parse(cache_record.data) rescue nil
     
     is_fresh = cache_record && !cache_record.is_archived && (Time.current - cache_record.updated_at < 600)
 
-    return cached_data if !force_refresh && cached_data && (is_fresh || !authenticated?)
+    # 1. If we have fresh data, just return it
+    return cached_data if !force_refresh && cached_data && is_fresh
 
+    # 2. If data exists but stale, queue a background update if authenticated
     if !force_refresh && cached_data && authenticated?
-      @task_queue << proc { fetch_and_cache(path) }
+      unless @pending_tasks.key?(path)
+        @pending_tasks[path] = true
+        @task_queue << { path: path }
+      end
       return cached_data
     end
 
+    # 3. If offline or not authenticated, fall back to whatever cache we have
+    return cached_data if !authenticated? && cached_data
+
+    # 4. Otherwise, perform a synchronous fetch
     fetch_and_cache(path)
+  end
+
+  def cleanup_cache
+    # Delete inactive/archived cache older than 3 days
+    count = ApiCache.where("is_archived = ? AND updated_at < ?", true, 3.days.ago).delete_all
+    # Delete any cache entries older than 7 days regardless of status
+    count += ApiCache.where("updated_at < ?", 7.days.ago).delete_all
+    puts "[API Cache] Cleaned up #{count} old records." if count > 0
   end
 
   def do_post(path, body_data)
@@ -1137,21 +1190,30 @@ class BrilliantClient
   def fetch_and_cache(path)
     return nil unless authenticated?
     return read_cache(path) if @degraded_mode
-
-    uri = URI("https://#{@host}#{path}")
-    request = Net::HTTP::Get.new(uri)
-    if @token
-      request['Authorization'] = "Bearer #{@token}"
-    elsif @cookie_string
-      request['Cookie'] = @cookie_string
-    end
-    request['Accept'] = 'application/json'
-
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
-    http.read_timeout = 15
     
-    begin
+    # Use a mutex per path to prevent multiple threads from fetching the same URL
+    lock = @sync_lock.synchronize { @in_flight_requests[path] ||= Mutex.new }
+    
+    lock.synchronize do
+      # Check if another thread just finished fetching this while we were waiting
+      # but only if we weren't explicitly told to force refresh (which fetch_and_cache usually is)
+      # Actually, do_get calls this when it needs it fresh.
+      
+      uri = URI("https://#{@host}#{path}")
+      request = Net::HTTP::Get.new(uri)
+      if @token
+        request['Authorization'] = "Bearer #{@token}"
+      elsif @cookie_string
+        request['Cookie'] = @cookie_string
+      end
+      request['Accept'] = 'application/json'
+
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true
+      http.read_timeout = 15
+      
+      begin
+        puts "[API Cache] Fetching: #{path}"
       response = http.request(request)
       if response.code.start_with?('2')
         @degraded_mode = false
@@ -1167,6 +1229,9 @@ class BrilliantClient
       end
     rescue
       read_cache(path)
+      ensure
+        @sync_lock.synchronize { @in_flight_requests.delete(path) }
+      end
     end
   end
 

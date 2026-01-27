@@ -34,9 +34,6 @@ class DashboardController < BaseController
     context_id = params[:from_course] || params[:course_id]
     @context_course = Course.find_by(org_unit_id: context_id) if context_id
     
-    # Sync in background
-    Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_notifications(@courses, @user) } }
-    
     erb :notifications
   end
 

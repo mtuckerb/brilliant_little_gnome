@@ -40,7 +40,7 @@
               <select name="course_id" onchange="runFilter()">
                 <option value="">All Courses</option>
                 <% @courses.each do |c| %>
-                  <% info = extract_course_info(c['OrgUnit']['Name']) %>
+                  <% info = extract_course_info(c['OrgUnit']['Name'], c['OrgUnit']['Id']) %>
                   <option value="<%= c['OrgUnit']['Id'] %>" <%= 'selected' if params[:course_id] == c['OrgUnit']['Id'].to_s %>>
                     <%= info[:course_display] %>
                   </option>
@@ -195,6 +195,10 @@
     const form = document.getElementById('filter-form');
     const formData = new FormData(form);
     const params = new URLSearchParams(formData);
+
+    // Only sync on initial load
+    if (!window.hasInitiallyLoaded) params.set('sync', 'true');
+
     params.set('limit', PER_PAGE);
     params.set('offset', (currentPage - 1) * PER_PAGE);
 
@@ -206,6 +210,7 @@
       const data = await response.json();
       renderNotifications(data.notifications, data.total);
       renderPagination(data.total);
+      window.hasInitiallyLoaded = true;
     } catch (err) {
       container.innerHTML = `<div class="notification is-danger">Failed to load notifications.</div>`;
     } finally {
@@ -274,8 +279,12 @@
     }
     
     html += `</ul></nav>`;
-    container.innerHTML = html;
-  }
+</script>
+
+<script>
+  // Setup SSE Debounce to prevent flickering
+  let sseTimer = null;
+  const SSE_DEBOUNCE_MS = 2000;
 
   function changePage(p) {
     currentPage = p;
@@ -287,12 +296,21 @@
 
   window.addEventListener('brilliant:notification_received', (e) => {
     console.log("[SSE] Notification received, refreshing list...");
-    loadNotifications();
+    // Debounce to prevent multiple refreshes during bulk sync
+    clearTimeout(sseTimer);
+    sseTimer = setTimeout(() => {
+      loadNotifications();
+    }, SSE_DEBOUNCE_MS);
   });
 
   window.addEventListener('brilliant:notifications_synced', (e) => {
     console.log("[SSE] Notifications synced, refreshing list...");
-    loadNotifications();
+    // If we've already set a timer for persistent updates, clear it.
+    // A full sync completion event should trigger regardless but respect debounce.
+    clearTimeout(sseTimer);
+    sseTimer = setTimeout(() => {
+      loadNotifications();
+    }, 500); // 500ms after final sync is usually safe
   });
 </script>
 

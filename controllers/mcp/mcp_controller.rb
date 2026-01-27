@@ -18,8 +18,12 @@ class McpController < BaseController
       settings.mcp_connections[session_id] = out
       
       # Metadata for the client to know where to POST messages
+      # The MCP SSE spec requires the endpoint to be sent as the data of the 'endpoint' event.
+      # Many clients expect this to be JSON-encoded if they use a generic stream parser.
       out << "event: endpoint\n"
-      out << "data: /api/v1/mcp/messages?session_id=#{session_id}\n\n"
+      endpoint_url = "/api/v1/mcp/messages?session_id=#{session_id}"
+      endpoint_url += "&api_key=#{params[:api_key]}" if params[:api_key]
+      out << "data: #{endpoint_url.to_json}\n\n"
       
       out.callback do
         settings.mcp_connections.delete(session_id)
@@ -80,7 +84,7 @@ class McpController < BaseController
             inputSchema: { 
               type: "object", 
               properties: { 
-                course_id: { type: "string", description: "Course OrgUnitId" } 
+                course_id: { type: "string", description: "Course OrgUnitId or Course Code (e.g. 'SWO-390' or 'SWO 390')" } 
               }, 
               required: ["course_id"] 
             } 
@@ -91,7 +95,7 @@ class McpController < BaseController
             inputSchema: { 
               type: "object", 
               properties: { 
-                course_id: { type: "string", description: "Filter by Course OrgUnitId" },
+                course_id: { type: "string", description: "Filter by Course OrgUnitId or Course Code" },
                 semester: { type: "string", description: "Filter by semester (e.g. '2026 Spring')" },
                 urgency: { type: "integer", description: "Filter by urgency level (1-5)" },
                 is_personal: { type: "boolean", description: "Filter for personal/direct notifications" },
@@ -100,8 +104,8 @@ class McpController < BaseController
               } 
             } 
           },
-          { name: "get_course_assignments", description: "Get assignments and due dates for a course", inputSchema: { type: "object", properties: { course_id: { type: "string" } }, required: ["course_id"] } },
-          { name: "list_synthetic_tasks", description: "List all custom synthetic tasks", inputSchema: { type: "object", properties: { course_id: { type: "string" } } } }
+          { name: "get_course_assignments", description: "Get assignments and due dates for a course", inputSchema: { type: "object", properties: { course_id: { type: "string", description: "Course OrgUnitId or Code" } }, required: ["course_id"] } },
+          { name: "list_synthetic_tasks", description: "List all custom synthetic tasks", inputSchema: { type: "object", properties: { course_id: { type: "string", description: "Course OrgUnitId or Code" } } } }
         ] } }
       when 'tools/call'
         result = call_mcp_tool(params['name'], params['arguments'] || {})
@@ -113,7 +117,40 @@ class McpController < BaseController
       end
     end
 
+    def resolve_course_id(id_or_code)
+      return nil if id_or_code.blank?
+      
+      # 1. Try as exact org_unit_id (numeric)
+      return id_or_code.to_s if id_or_code.to_s.match?(/^\d+$/)
+      
+      # 2. Try exact match on code
+      course = Course.find_by(code: id_or_code)
+      return course.org_unit_id if course
+      
+      # 3. Try fuzzy match on name/code
+      # Normalize "SWO-390" to "SWO 390"
+      normalized = id_or_code.to_s.gsub(/[-_]/, ' ')
+      
+      # Try matching the beginning of the name (most common for "SWO 390")
+      course = Course.where("name LIKE ?", "#{normalized}%").first
+      return course.org_unit_id if course
+      
+      # Try matching anywhere in the name
+      course = Course.where("name LIKE ?", "%#{normalized}%").first
+      return course.org_unit_id if course
+      
+      # Try matching the code with hyphen/space normalization if needed
+      # (though codes often look like internal IDs)
+      
+      id_or_code # fallback to original if nothing found
+    end
+
     def call_mcp_tool(name, args)
+      # Resolve course_id if present
+      if args['course_id']
+        args['course_id'] = resolve_course_id(args['course_id'])
+      end
+
       case name
       when 'list_courses'
         query = Course.all
