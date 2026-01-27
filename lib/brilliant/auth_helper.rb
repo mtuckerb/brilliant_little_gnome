@@ -24,7 +24,9 @@ class BrilliantAuthHelper
         break if (Time.now - start_time) > 300 # 5 minute timeout
         
         current_url = browser.url
-        if current_url.include?("/d2l/home") || current_url.include?("/d2l/lp/homepage")
+        has_session = browser.cookies.all.values.any? { |c| c.name == 'd2lSessionVal' }
+
+        if current_url.include?("/d2l/home") || current_url.include?("/d2l/lp/homepage") || has_session
           # Success! Grab all cookies
           # Ferrum returns an array of cookie hashes
           raw_cookies = browser.cookies.all.values

@@ -148,21 +148,30 @@ ipcMain.on('start-login', (event, host) => {
   });
 
   loginWindow.webContents.on('did-navigate', (event, url) => {
-    if (url.includes("/d2l/home") || url.includes("/d2l/lp/homepage")) {
-      session.defaultSession.cookies.get({ domain: host })
-        .then((cookies) => {
-          const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-          mainWindow.webContents.send('login-complete', { host, cookies: cookieString });
-          
-          setTimeout(() => {
-            loginWindow.close();
-          }, 1000);
-        })
-        .catch((error) => {
-          console.error("Failed to get cookies:", error);
-        });
-    }
+    checkLoginSuccess(url);
   });
+
+  loginWindow.webContents.on('did-frame-navigate', (event, url) => {
+    checkLoginSuccess(url);
+  });
+
+  async function checkLoginSuccess(url) {
+    // 1. Success by URL pattern
+    const isHome = url.includes("/d2l/home") || url.includes("/d2l/lp/homepage");
+    
+    // 2. Success by Cookie presence (Preferred)
+    const cookies = await session.defaultSession.cookies.get({ domain: host });
+    const hasSession = cookies.some(c => c.name === 'd2lSessionVal');
+
+    if (isHome || hasSession) {
+      const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+      mainWindow.webContents.send('login-complete', { host, cookies: cookieString });
+      
+      setTimeout(() => {
+        loginWindow.close();
+      }, 1000);
+    }
+  }
 
   loginWindow.on('closed', () => {
   });

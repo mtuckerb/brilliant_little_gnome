@@ -407,7 +407,8 @@ module Api
           authenticated: $client.authenticated?,
           degraded_mode: $client.degraded_mode,
           host: $client.host,
-          sync_status: $client.sync_status
+          sync_status: $client.sync_status,
+          oauth_enabled: !!(ENV['BS_CLIENT_ID'] && ENV['BS_CLIENT_SECRET'])
         }.to_json
       end
 

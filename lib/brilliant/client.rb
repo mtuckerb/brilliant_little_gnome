@@ -1083,8 +1083,7 @@ class BrilliantClient
 
   def handle_auth_failure(code)
     @degraded_mode = true
-    # We no longer create a persistent Notification object for auth failure
-    # because the user is notified via the global Flash/Banner in the UI.
     @auth_notification_sent = true
+    Brilliant::EventBus.publish(:authentication_failure, { code: code, host: @host })
   end
 end

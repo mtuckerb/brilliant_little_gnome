@@ -216,7 +216,19 @@
             window.electron.startLogin(location.hostname);
           });
       } else {
-        window.location.href = '/login';
+        // Smart redirect for web: Check if OAuth is configured
+        fetch('/api/v1/status')
+          .then(r => r.json())
+          .then(data => {
+            if (data.oauth_enabled) {
+              window.location.href = '/login';
+            } else {
+              window.location.href = '/setup';
+            }
+          })
+          .catch(() => {
+            window.location.href = '/login';
+          });
       }
     }
 
@@ -268,6 +280,12 @@
           if (window.location.pathname === '/notifications' || window.location.pathname === '/dashboard') {
             // Optional: trigger partial refresh
           }
+        });
+
+        eventSource.addEventListener('authentication_failure', (e) => {
+          const authBanner = document.getElementById('auth-banner');
+          if (authBanner) authBanner.classList.remove('is-hidden');
+          showToast("<strong>Session Expired</strong><br/>Please re-authenticate to continue syncing.", 'is-danger', 10000);
         });
 
         eventSource.onerror = (err) => {
