@@ -12,6 +12,7 @@
 <script>
   // Helper: Grade Colors
   function getGradeColor(score) {
+    if (score === null) return 'is-light';
     if (score >= 90) return 'is-success';
     if (score >= 80) return 'is-info';
     if (score >= 70) return 'is-warning';
@@ -181,7 +182,7 @@
                    <div class="level is-mobile">
                      <div class="level-left">
                         <span class="tag ${getGradeColor(sg.stats.score)} is-light has-text-weight-bold">
-                          ${sg.stats.score}%
+                          ${sg.stats.score !== null ? sg.stats.score + '%' : 'TBD'}
                         </span>
                      </div>
                    </div>

@@ -57,7 +57,7 @@
               <div class="level-item has-text-centered px-4">
                 <div>
                   <p class="heading">Current Grade</p>
-                  <p class="title ${getGradeColor(grade_stats.score)}">${grade_stats.score}%</p>
+                  <p class="title ${getGradeColor(grade_stats.score)}">${grade_stats.score !== null ? grade_stats.score + '%' : 'TBD'}</p>
                 </div>
               </div>
               <div class="level-item has-text-centered px-4" style="border-left: 1px solid #eee;">
@@ -117,7 +117,7 @@
                 </td>
                 <td class="has-text-right">
                   <span class="tag ${getGradeColor(grade_stats.score)} is-medium" style="font-weight: bold;">
-                    ${grade_stats.score}%
+                    ${grade_stats.score !== null ? grade_stats.score + '%' : 'TBD'}
                   </span>
                 </td>
               </tr>
@@ -234,6 +234,7 @@
   }
 
   function getGradeColor(score) {
+    if (score === null) return 'is-light';
     if (score >= 90) return 'is-primary';
     if (score >= 80) return 'is-warning';
     return score < 70 ? 'is-danger' : 'is-warning';

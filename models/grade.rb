@@ -27,7 +27,7 @@ class Grade < ActiveRecord::Base
     if graded_items.empty?
       all_possible_points = (grades.where(is_extra_credit: false).sum(:denominator) || 0).to_f
       return { 
-        score: 0, 
+        score: nil, 
         confidence: 0, 
         total_points_earned: 0, 
         total_points_possible: 0,
