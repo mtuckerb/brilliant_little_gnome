@@ -67,6 +67,22 @@
                 </div>
               </div>
             ` : ''}
+            <div class="level-item ml-4">
+              <div class="dropdown is-right" id="course-actions-dropdown">
+                <div class="dropdown-trigger">
+                  <button class="button is-small" aria-haspopup="true" aria-controls="dropdown-menu" onclick="document.getElementById('course-actions-dropdown').classList.toggle('is-active')">
+                    <span class="icon is-small"><i class="fas fa-ellipsis-v"></i></span>
+                  </button>
+                </div>
+                <div class="dropdown-menu" id="dropdown-menu" role="menu">
+                  <div class="dropdown-content">
+                    <a class="dropdown-item has-text-danger" onclick="openDropModal()">
+                      <i class="fas fa-user-minus mr-2"></i> Drop Course
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -237,4 +253,68 @@
       loadGrades();
     }
   });
+
+  // --- Dropped Course Logic ---
+
+  function openDropModal() {
+    document.getElementById('drop-course-modal').classList.add('is-active');
+    document.getElementById('course-actions-dropdown').classList.remove('is-active');
+  }
+
+  function closeDropModal() {
+    document.getElementById('drop-course-modal').classList.remove('is-active');
+  }
+
+  async function confirmDrop() {
+    const status = document.getElementById('drop-status-select').value;
+    const btn = event.currentTarget;
+    btn.classList.add('is-loading');
+
+    try {
+      const response = await fetch(`/course/${COURSE_ID}/drop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `status=${status}`
+      });
+      const data = await response.json();
+      if (data.status === 'ok') {
+        window.location.href = '/dashboard'; // Go back to dashboard as course is now hidden from GPA/active
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update course status.");
+    } finally {
+      btn.classList.remove('is-loading');
+    }
+  }
 </script>
+
+<div class="modal" id="drop-course-modal">
+  <div class="modal-background" onclick="closeDropModal()"></div>
+  <div class="modal-card">
+    <header class="modal-card-head">
+      <p class="modal-card-title">Drop Course</p>
+      <button class="delete" aria-label="close" onclick="closeDropModal()"></button>
+    </header>
+    <section class="modal-card-body">
+      <p class="mb-4">Are you sure you want to drop <strong><%= @course_name %></strong>?</p>
+      <div class="field">
+        <label class="label">Withdrawal Type</label>
+        <div class="control">
+          <div class="select is-fullwidth">
+            <select id="drop-status-select">
+              <option value="early_withdrawal">Early Withdrawal (No impact on GPA)</option>
+              <option value="withdrawn">Withdrawal (W on transcript, no impact on GPA)</option>
+              <option value="dropped_fail">Dropped with Failure (Calculates as 0.0 in GPA)</option>
+            </select>
+          </div>
+        </div>
+        <p class="help">This only affects the app's local GPA calculations. It does not affect your official Brightspace records.</p>
+      </div>
+    </section>
+    <footer class="modal-card-foot">
+      <button class="button is-danger" onclick="confirmDrop()">Confirm Drop</button>
+      <button class="button" onclick="closeDropModal()">Cancel</button>
+    </footer>
+  </div>
+</div>

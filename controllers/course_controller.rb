@@ -209,4 +209,22 @@ class CourseController < BaseController
       { status: 'error', message: 'No assignments selected' }.to_json if request.xhr?
     end
   end
+
+  post '/course/:id/drop' do
+    status = params[:status]
+    halt 400, "Invalid status" unless ['withdrawn', 'early_withdrawal', 'dropped_fail', 'active'].include?(status)
+    
+    if @course
+      @course.update(status: status, dropped_at: (status == 'active' ? nil : Time.current))
+      if request.xhr?
+        content_type :json
+        { status: 'ok', course_status: @course.status }.to_json
+      else
+        flash[:success] = "Course status updated: #{status.titleize}"
+        redirect "/course/#{@course_id}/grades"
+      end
+    else
+      halt 404, "Course not found"
+    end
+  end
 end

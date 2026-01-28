@@ -19,4 +19,12 @@ class Course < ActiveRecord::Base
     days_to_add = (target_day - reference_date.wday) % 7
     (reference_date + days_to_add.days).change(hour: 23, min: 59, sec: 59)
   end
+
+  def dropped?
+    status == 'dropped' || status == 'withdrawn' || status == 'early_withdrawal'
+  end
+
+  def fail_on_drop?
+    status == 'dropped_fail'
+  end
 end

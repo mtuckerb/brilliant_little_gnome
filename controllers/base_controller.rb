@@ -108,6 +108,10 @@ class BaseController < Sinatra::Base
       # For now, to maintain legacy signature:
       data
     end
+
+    def extract_course_info(full_name, org_unit_id = nil)
+      CourseHelpers.extract_course_info(full_name, org_unit_id)
+    end
   end
 
   before do

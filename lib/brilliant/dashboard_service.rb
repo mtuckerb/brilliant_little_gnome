@@ -15,6 +15,8 @@ module Brilliant
       if overview_semester
         overview_weight = semester_weight(overview_semester)
         courses.each do |c|
+          next if c.dropped? # Skip dropped courses from GPA
+          
           next unless c.semester
           c_weight = semester_weight(c.semester)
           next if c_weight > overview_weight
@@ -27,11 +29,17 @@ module Brilliant
           end
 
           target = c.target_grade || 93.0
-          score_to_use = (c_weight == overview_weight) ? 
-            (stats[:all_possible_points] > 0 ? ((stats[:total_points_earned] + (stats[:all_possible_points] - stats[:total_points_possible]) * (target/100.0)) / stats[:all_possible_points] * 100.0) : target) : 
-            stats[:score]
+          
+          # Handle failing grade if course was dropped with a fail status
+          if c.fail_on_drop?
+            score_to_use = 0.0
+          else
+            score_to_use = (c_weight == overview_weight) ? 
+              (stats[:all_possible_points] > 0 ? ((stats[:total_points_earned] + (stats[:all_possible_points] - stats[:total_points_possible]) * (target/100.0)) / stats[:all_possible_points] * 100.0) : target) : 
+              stats[:score]
+          end
 
-          if stats[:total_points_possible] > 0 || c_weight == overview_weight
+          if stats[:total_points_possible] > 0 || c_weight == overview_weight || c.fail_on_drop?
             cumulative_points_earned += stats[:total_points_earned]
             cumulative_points_possible += stats[:total_points_possible]
             

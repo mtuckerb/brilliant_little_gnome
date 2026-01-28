@@ -320,6 +320,10 @@ module CourseHelpers
   end
 
   def extract_course_info(full_name, org_unit_id = nil)
+    self.class.extract_course_info(full_name, org_unit_id)
+  end
+
+  def self.extract_course_info(full_name, org_unit_id = nil)
     return { course_display: "", short_name: "", prefix: "", is_online: false, semester: nil, pill_style: "" } if full_name.to_s.empty?
 
     # Sanity check: if it's just a number, it's not a full name
