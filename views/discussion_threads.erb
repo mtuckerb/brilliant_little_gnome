@@ -20,6 +20,7 @@
   const FORUM_ID = "<%= @forum_id %>";
   const TOPIC_ID = "<%= @topic_id %>";
   let threadData = [];
+  let currentSearchQuery = "";
 
   async function loadTopic(forceRefresh = false) {
     const root = document.getElementById('topic-root');
@@ -91,6 +92,11 @@
     container.innerHTML = renderThreads(sorted);
   }
 
+  function handleSearch(query) {
+    currentSearchQuery = query.toLowerCase().trim();
+    applySort(); // Re-render with current sort + search
+  }
+
   function renderTopic(data) {
     const root = document.getElementById('topic-root');
     const { forum, topic, evaluation, threads_with_posts, instructions_collapsed, feedback_collapsed, participated } = data;
@@ -152,6 +158,14 @@
             <h5 class="title is-5 mb-0">Threads</h5>
           </div>
           <div class="level-right">
+            <div class="field mr-4">
+              <p class="control has-icons-left">
+                <input class="input is-small" type="text" placeholder="Search posts..." oninput="handleSearch(this.value)">
+                <span class="icon is-small is-left">
+                  <i class="fas fa-search"></i>
+                </span>
+              </p>
+            </div>
             <div class="field has-addons">
               <p class="control">
                 <span class="button is-static is-small">Sort By</span>
@@ -210,27 +224,55 @@
     `;
   }
 
-  function renderThreads(threads) {
-    if (!threads || threads.length === 0) {
-      return '<p class="has-text-grey">No threads found in this topic.</p>';
-    }
-
     return threads.map(item => {
       const thread = item.thread;
       const isParticipated = thread.UserParticipated;
 
+      // Search Filtering
+      let isVisible = true;
+      let matchedPosts = [];
+
+      if (currentSearchQuery) {
+        const subjectMatch = (thread.Subject || thread.Title || "").toLowerCase().includes(currentSearchQuery);
+        const authorMatch = (thread.PostingUserDisplayName || "").toLowerCase().includes(currentSearchQuery);
+        
+        // Flatten and search all posts in the tree
+        const findMatches = (posts) => {
+          let found = [];
+          posts.forEach(p => {
+            const bodyMatch = (p.Message?.Html || p.Message?.Text || "").toLowerCase().includes(currentSearchQuery);
+            const postAuthorMatch = (p.Author?.DisplayName || p.PostingUserDisplayName || "").toLowerCase().includes(currentSearchQuery);
+            const postSubjectMatch = (p.Subject || "").toLowerCase().includes(currentSearchQuery);
+            
+            if (bodyMatch || postAuthorMatch || postSubjectMatch) {
+              found.push(p.PostId);
+            }
+            if (p.Replies) found = found.concat(findMatches(p.Replies));
+          });
+          return found;
+        };
+
+        matchedPosts = findMatches(item.post_tree);
+        isVisible = subjectMatch || authorMatch || matchedPosts.length > 0;
+      }
+
+      if (!isVisible) return '';
+
+      const threadContentClass = (currentSearchQuery && matchedPosts.length > 0) ? 'discussion-timeline' : 'discussion-timeline is-hidden';
+      const chevronIcon = (currentSearchQuery && matchedPosts.length > 0) ? 'fa-chevron-down' : 'fa-chevron-right';
+
       return `
-        <div class="thread-container announcement-item" id="thread-${thread.ThreadId}">
-          <div class="is-clickable py-3 collapsible-trigger" onclick="toggleThread('${thread.ThreadId}', this)" style="cursor: pointer; border-bottom: 1px solid #f5f5f5;">
+        <div class="thread-container announcement-item ${currentSearchQuery ? 'is-searching' : ''}" id="thread-${thread.ThreadId}">
+          <div class="is-clickable py-3 collapsible-trigger ${currentSearchQuery && matchedPosts.length > 0 ? 'is-active' : ''}" onclick="toggleThread('${thread.ThreadId}', this)" style="cursor: pointer; border-bottom: 1px solid #f5f5f5;">
             <div class="is-flex is-align-items-start">
-              <span class="icon is-small mt-1 ml-4 mr-2 has-text-grey-light"><i class="fas fa-chevron-right"></i></span>
+              <span class="icon is-small mt-1 ml-4 mr-2 has-text-grey-light"><i class="fas ${chevronIcon}"></i></span>
               <div style="flex: 1;">
                 <h5 class="title is-5 mb-1">
                   ${thread.IsPinned ? '<i class="fas fa-thumbtack mr-2 has-text-primary"></i>' : ''}
-                  ${thread.Subject || thread.Title}
+                  ${highlightText(thread.Subject || thread.Title, currentSearchQuery)}
                 </h5>
                 <div class="is-size-7 has-text-grey">
-                  <span class="has-text-weight-semibold author-name"><i class="fas fa-user-circle mr-1"></i> ${thread.PostingUserDisplayName || 'Anonymous'}</span>
+                  <span class="has-text-weight-semibold author-name"><i class="fas fa-user-circle mr-1"></i> ${highlightText(thread.PostingUserDisplayName || 'Anonymous', currentSearchQuery)}</span>
                   ${thread.ThreadDate ? `
                     <span class="mx-2">&bull;</span>
                     <i class="fas fa-calendar-plus mr-1"></i> <span>${new Date(thread.ThreadDate).toLocaleString()}</span>
@@ -247,50 +289,69 @@
                     <span class="mx-2">&bull;</span>
                     <span class="tag is-success is-light is-small"><i class="fas fa-user-check mr-1"></i> Participated</span>
                   ` : ''}
+                  ${matchedPosts.length > 0 && currentSearchQuery ? `
+                    <span class="mx-2">&bull;</span>
+                    <span class="tag is-info is-light is-small">${matchedPosts.length} post matches</span>
+                  ` : ''}
                 </div>
               </div>
             </div>
           </div>
           
-          <div id="content-${thread.ThreadId}" class="discussion-timeline is-hidden ml-5 mt-2 pb-4">
-            ${item.post_tree.map(post => renderPost(post, 1)).join('')}
+          <div id="content-${thread.ThreadId}" class="${threadContentClass} ml-5 mt-2 pb-4">
+            ${item.post_tree.map(post => renderPost(post, 1, matchedPosts)).join('')}
           </div>
         </div>
       `;
     }).join('');
   }
 
-  function renderPost(post, depth) {
+  function highlightText(text, query) {
+    if (!query || !text) return text;
+    const parts = text.split(new RegExp(`(${query})`, 'gi'));
+    return parts.map(p => p.toLowerCase() === query.toLowerCase() ? `<mark class="p-0 has-background-warning">${p}</mark>` : p).join('');
+  }
+
+  function renderPost(post, depth, matchedIds = []) {
     const isInstructor = post.IsInstructor || (post.Author && (post.Author.IsInstructor || /Instructor/i.test(post.Author.RoleName)));
     const author = post.PostingUserDisplayName || (post.Author ? post.Author.DisplayName : 'Anonymous');
+    const isMatched = matchedIds.includes(post.PostId);
     
+    // Auto-expand replies if searching and they have matches
+    const findSubMatches = (replies) => {
+       if (!replies) return false;
+       return replies.some(r => matchedIds.includes(r.PostId) || findSubMatches(r.Replies));
+    };
+    const hasSubMatches = findSubMatches(post.Replies);
+    const showReplies = currentSearchQuery && (isMatched || hasSubMatches);
+
     return `
-      <div class="post-item ${depth > 1 ? 'post-replies' : ''}">
-        <div class="post-card ${isInstructor ? 'is-instructor' : ''}" id="post-${post.PostId}">
+      <div class="post-item ${depth > 1 ? 'post-replies' : ''} ${isMatched ? 'is-matched' : ''}">
+        <div class="post-card ${isInstructor ? 'is-instructor' : ''} ${isMatched ? 'has-border-warning' : ''}" id="post-${post.PostId}">
           <div class="post-header is-flex is-align-items-center is-justify-content-space-between">
             <div class="is-flex is-align-items-center">
               <div class="image is-24x24 mr-2">
                 <img class="is-rounded" src="https://ui-avatars.com/api/?name=${encodeURIComponent(author)}&background=${isInstructor ? '739AC3' : 'ddd'}&color=fff" alt="Avatar">
               </div>
               <div class="is-size-7">
-                <span class="has-text-weight-bold">${author}</span>
+                <span class="has-text-weight-bold">${highlightText(author, currentSearchQuery)}</span>
                 ${isInstructor ? '<span class="instructor-tag ml-1">INSTRUCTOR</span>' : ''}
               </div>
             </div>
             <div class="post-date">${new Date(post.DatePosted).toLocaleString()}</div>
           </div>
           <div class="post-body content">
-             ${post.Message ? (post.Message.Html || post.Message.Text) : ''}
+             ${highlightText(post.Message ? (post.Message.Html || post.Message.Text) : '', currentSearchQuery)}
           </div>
         </div>
         ${post.Replies && post.Replies.length > 0 ? `
           <div class="ml-4 mb-2">
-            <a class="is-size-7 has-text-link is-flex is-align-items-center collapsible-trigger" onclick="toggleReplies('${post.PostId}', this)" data-count="${post.Replies.length}" style="cursor: pointer;">
-              <span class="icon is-small mr-1"><i class="fas fa-chevron-right"></i></span>
-              <span>Show ${post.Replies.length} replies</span>
+            <a class="is-size-7 has-text-link is-flex is-align-items-center collapsible-trigger ${showReplies ? 'is-active' : ''}" onclick="toggleReplies('${post.PostId}', this)" data-count="${post.Replies.length}" style="cursor: pointer;">
+              <span class="icon is-small mr-1"><i class="fas ${showReplies ? 'fa-chevron-down' : 'fa-chevron-right'}"></i></span>
+              <span>${showReplies ? 'Hide replies' : `Show ${post.Replies.length} replies`}</span>
             </a>
-            <div id="replies-${post.PostId}" class="is-hidden mt-2">
-              ${post.Replies.map(reply => renderPost(reply, depth + 1)).join('')}
+            <div id="replies-${post.PostId}" class="${showReplies ? '' : 'is-hidden'} mt-2">
+              ${post.Replies.map(reply => renderPost(reply, depth + 1, matchedIds)).join('')}
             </div>
           </div>
         ` : ''}
@@ -359,6 +420,8 @@
   .is-instructor { border-left: 4px solid #739AC3 !important; background: #f9fbfd; }
   .instructor-tag { background: #739AC3; color: white; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
   .post-date { color: #888; font-size: 0.75rem; }
+  .has-border-warning { border-color: #ffdd57 !important; border-width: 2px; }
+  .post-item.is-matched { background-color: rgba(255, 221, 87, 0.05); }
 
   .collapsible-trigger .fa-chevron-right {
     transition: transform 0.2s ease;
