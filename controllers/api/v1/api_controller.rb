@@ -559,6 +559,33 @@ module Api
         }.to_json
       end
 
+      get '/api/v1/search' do
+        query = params[:q].to_s.downcase
+        results = []
+
+        # Courses
+        Course.where("lower(name) LIKE ? OR lower(code) LIKE ?", "%#{query}%", "%#{query}%").limit(5).each do |c|
+          results << { type: 'course', title: c.name, url: "/course/#{c.org_unit_id}", subtitle: c.code }
+        end
+
+        # Assignments
+        Assignment.includes(:course).where("lower(assignments.name) LIKE ?", "%#{query}%").limit(10).each do |a|
+          results << { type: 'assignment', title: a.name, url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}", subtitle: a.course&.name }
+        end
+
+        # Content Items
+        ContentItem.where("lower(title) LIKE ?", "%#{query}%").limit(10).each do |i|
+          results << { type: 'content', title: i.title, url: "/course/#{i.content_module&.course_id}/module/#{i.module_id}", subtitle: "Module: #{i.content_module&.title}" }
+        end
+
+        # Notifications
+        Notification.where("lower(title) LIKE ? OR lower(body) LIKE ?", "%#{query}%", "%#{query}%").limit(10).each do |n|
+          results << { type: 'notification', title: n.title, url: "/notifications/#{n.id}/view", subtitle: n.course_name }
+        end
+
+        { results: results }.to_json
+      end
+
       # Live updates via Server-Sent Events
       get '/api/v1/events' do
         content_type 'text/event-stream'

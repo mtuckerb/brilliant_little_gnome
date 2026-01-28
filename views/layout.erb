@@ -84,6 +84,16 @@
     </div>
     <div class="navbar-end">
        <div class="navbar-item">
+         <div class="field">
+           <p class="control has-icons-left is-hidden-touch" style="width: 250px;">
+             <input class="input is-small is-rounded" type="text" id="global-search-input" placeholder="Global search..." onkeydown="handleGlobalSearch(event)">
+             <span class="icon is-small is-left">
+               <i class="fas fa-search"></i>
+             </span>
+           </p>
+         </div>
+       </div>
+       <div class="navbar-item">
           <a href="/archive" class="button is-white <%= 'has-text-primary' if @active_tab == 'archive' %>" title="Archives">
             <span class="icon"><i class="fas fa-archive"></i></span>
             <span>Archives</span>
@@ -138,6 +148,20 @@
   </div>
 
   <div class="main-content container">
+    <div id="global-search-results" class="modal">
+      <div class="modal-background" onclick="closeGlobalSearch()"></div>
+      <div class="modal-card" style="width: 800px; max-width: 95vw;">
+        <header class="modal-card-head">
+          <p class="modal-card-title">Search Results</p>
+          <button class="delete" aria-label="close" onclick="closeGlobalSearch()"></button>
+        </header>
+        <section class="modal-card-body" id="global-search-body">
+          <div class="has-text-centered py-6">
+            <span class="icon is-large has-text-grey-light"><i class="fas fa-spinner fa-pulse fa-2x"></i></span>
+          </div>
+        </section>
+      </div>
+    </div>
     <div id="toast-container"></div>
 
     <% if flash[:error] || flash[:success] %>
@@ -183,6 +207,68 @@
       }
       return originalFetch.apply(this, args);
     };
+
+    async function handleGlobalSearch(e) {
+      if (e.key === 'Enter') {
+        const query = e.target.value.trim();
+        if (query.length < 2) return;
+        
+        const modal = document.getElementById('global-search-results');
+        const body = document.getElementById('global-search-body');
+        modal.classList.add('is-active');
+        body.innerHTML = '<div class="has-text-centered py-6"><span class="icon is-large has-text-grey-light"><i class="fas fa-spinner fa-pulse fa-2x"></i></span></div>';
+
+        try {
+          const resp = await fetch(`/api/v1/search?q=${encodeURIComponent(query)}`);
+          const data = await resp.json();
+          renderGlobalResults(data.results, query);
+        } catch (err) {
+          body.innerHTML = '<div class="notification is-danger">Search failed.</div>';
+        }
+      }
+    }
+
+    function closeGlobalSearch() {
+      document.getElementById('global-search-results').classList.remove('is-active');
+    }
+
+    function renderGlobalResults(results, query) {
+      const body = document.getElementById('global-search-body');
+      if (results.length === 0) {
+        body.innerHTML = '<p class="has-text-grey py-4">No results found.</p>';
+        return;
+      }
+
+      let html = '<div class="list is-hoverable">';
+      results.forEach(r => {
+        let icon = 'fa-info-circle';
+        if (r.type === 'course') icon = 'fa-graduation-cap';
+        else if (r.type === 'assignment') icon = 'fa-tasks';
+        else if (r.type === 'notification') icon = 'fa-bell';
+        else if (r.type === 'content') icon = 'fa-file-alt';
+
+        html += `
+          <a href="${r.url}" class="list-item" onclick="closeGlobalSearch()">
+            <div class="is-flex is-align-items-center">
+              <span class="icon is-medium has-text-primary mr-3"><i class="fas ${icon}"></i></span>
+              <div style="flex: 1;">
+                <p class="has-text-weight-bold is-size-6 mb-0">${highlightText(r.title, query)}</p>
+                <p class="is-size-7 has-text-grey">${r.subtitle || ''}</p>
+              </div>
+              <span class="tag is-light is-small uppercase">${r.type}</span>
+            </div>
+          </a>
+        `;
+      });
+      html += '</div>';
+      body.innerHTML = html;
+    }
+
+    function highlightText(text, query) {
+      if (!query || !text) return text;
+      const parts = text.split(new RegExp(`(${query})`, 'gi'));
+      return parts.map(p => p.toLowerCase() === query.toLowerCase() ? `<mark class="p-0 has-background-warning">${p}</mark>` : p).join('');
+    }
 
     function showToast(message, type = 'is-info', duration = 5000) {
       const container = document.getElementById('toast-container');
