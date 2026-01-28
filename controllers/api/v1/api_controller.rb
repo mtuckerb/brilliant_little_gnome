@@ -176,7 +176,7 @@ module Api
 
           # Load posts from DB
           # Participation and threading requires correct user IDs
-          current_bs_user_id = @user_prefs.brightspace_user_id
+          current_bs_user_id = @user_prefs.brightspace_user_id.to_s
           
           posts_from_db = DiscussionPost.where(topic_id: topic_id.to_s).order(posted_at: :asc)
           all_posts = posts_from_db.map(&:to_api_hash)
@@ -187,6 +187,9 @@ module Api
               Time.zone = UserPreference.current&.time_zone || "UTC"
               posts_data_raw = $client.get_topic_posts(course_id, forum_id, topic_id, force_refresh: force_refresh)
               new_posts = $client.ensure_array(posts_data_raw)
+              
+              # Capture current user ID from prefs for the sync context
+              current_user_bs_id = UserPreference.current&.brightspace_user_id
               DiscussionPost.sync_from_api(course_id, forum_id, topic_id, new_posts)
 
               # Signal completion if something changed or we were empty
@@ -208,7 +211,8 @@ module Api
           # Robust participated check
           participated = false
           if current_bs_user_id.present?
-            participated = DiscussionPost.where(topic_id: topic_id.to_s).where("author_id = ? OR author_id = ?", current_bs_user_id.to_s, current_bs_user_id.to_i).exists?
+            # Use to_s to ensure string comparison for IDs which can be large integers or strings in API
+            participated = DiscussionPost.where(topic_id: topic_id.to_s).where(author_id: current_bs_user_id.to_s).exists?
           end
 
           threads_groups = all_posts.reject { |p| p.nil? || !p.is_a?(Hash) }.group_by { |p| p['ThreadId'] }
