@@ -175,6 +175,9 @@ module Api
           evaluation = $client.get_discussion_evaluation(course_id, forum_id, topic_id)
 
           # Load posts from DB
+          # Participation and threading requires correct user IDs
+          current_bs_user_id = @user_prefs.brightspace_user_id
+          
           posts_from_db = DiscussionPost.where(topic_id: topic_id.to_s).order(posted_at: :asc)
           all_posts = posts_from_db.map(&:to_api_hash)
 

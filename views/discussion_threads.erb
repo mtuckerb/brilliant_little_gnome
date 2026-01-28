@@ -72,10 +72,11 @@
         // 1. User is Author
         if (tA.UserIsAuthor && !tB.UserIsAuthor) return -1;
         if (!tA.UserIsAuthor && tB.UserIsAuthor) return 1;
-        // 2. User participated
+        // 2. User participated (replied to)
         if (tA.UserParticipated && !tB.UserParticipated) return -1;
         if (!tA.UserParticipated && tB.UserParticipated) return 1;
-        // Fallback to last reply
+        
+        // Secondary: Most recent activity (so newest "mine" threads are at top)
         return new Date(tB.LastReplyDate || 0) - new Date(tA.LastReplyDate || 0);
       } else if (sortBy === 'created') {
         return new Date(tB.ThreadDate || 0) - new Date(tA.ThreadDate || 0);
