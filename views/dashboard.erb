@@ -115,6 +115,55 @@
     }
 
     root.innerHTML = html;
+    initSortable();
+  }
+
+  function initSortable() {
+    const el = document.getElementById('semester-courses-grid');
+    if (!el) return;
+    if (typeof Sortable === 'undefined') {
+      console.error("Sortable library not loaded");
+      return;
+    }
+
+    if (el.sortable) el.sortable.destroy();
+
+    el.sortable = Sortable.create(el, {
+      animation: 150,
+      handle: '.drag-handle',
+      draggable: '.course-sortable-item',
+      ghostClass: 'sortable-ghost',
+      dragClass: 'sortable-drag',
+      fallbackClass: 'sortable-fallback',
+      forceFallback: true,
+      fallbackTolerance: 4,
+      onStart: function() {
+        el.classList.add('is-sorting');
+      },
+      onEnd: function() {
+        el.classList.remove('is-sorting');
+        saveCourseOrder();
+      }
+    });
+  }
+
+  async function saveCourseOrder() {
+    const el = document.getElementById('semester-courses-grid');
+    const ids = Array.from(el.querySelectorAll('.course-sortable-item')).map(item => item.getAttribute('data-id'));
+    
+    try {
+      const resp = await fetch('/api/v1/courses/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids })
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') {
+        console.log("Order saved successfully");
+      }
+    } catch (err) {
+      console.error("Failed to save course order:", err);
+    }
   }
 
   function renderSemesterOverview(data) {
@@ -151,13 +200,21 @@
            </div>
          </div>
          
-         <div class="columns is-multiline mt-4">
+         <div id="semester-courses-grid" class="columns is-multiline mt-4">
            ${semGrades.map(sg => `
-             <div class="column is-4">
+             <div class="column is-4 course-sortable-item" data-id="${sg.org_unit_id}">
                <div class="box is-clickable p-0 has-background-white overflow-hidden" 
                     onclick="window.location='/course/${sg.org_unit_id}'"
-                    style="border: 1px solid #eee; transition: all 0.2s; height: 100%; border-radius: 8px; overflow: hidden;">
+                    style="border: 1px solid #eee; transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s; height: 100%; border-radius: 8px; overflow: hidden; position: relative;">
                  
+                 <div class="course-refresh-btn" id="refresh-btn-${sg.org_unit_id}" onclick="event.stopPropagation(); refreshCourseInline('${sg.org_unit_id}')" style="position: absolute; top: 8px; left: 8px; z-index: 1000; cursor: pointer; opacity: 0.4; transition: opacity 0.2s; background: rgba(255,255,255,0.9); border-radius: 6px; padding: 6px 8px; border: 1px solid #ccc;" title="Refresh Course">
+                   <i class="fas fa-sync has-text-grey"></i>
+                 </div>
+
+                 <div class="drag-handle" onclick="event.stopPropagation()" style="position: absolute; top: 8px; right: 8px; z-index: 1000; cursor: grab; opacity: 0.4; transition: opacity 0.2s, background-color 0.2s; background: rgba(255,255,255,0.9); border-radius: 6px; padding: 6px 10px; border: 1px solid #ccc;">
+                   <i class="fas fa-grip-vertical has-text-grey" style="pointer-events: none;"></i>
+                 </div>
+
                  ${sg.banner_url ? `
                    <div style="height: 80px; width: 100%; background: url('/api/proxy/banner?url=${encodeURIComponent(sg.banner_url)}') center center; background-size: cover; border-bottom: 1px solid #eee;"></div>
                  ` : `
@@ -238,7 +295,7 @@
             <div class="column is-6">
               <div class="box p-0 course-card-wide is-clickable" 
                    onclick="window.location='/course/${c.org_unit_id}'"
-                   style="overflow: hidden; border: 1px solid #eee; transition: all 0.2s; height: 100%;">
+                   style="overflow: hidden; border: 1px solid #eee; transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s; height: 100%;">
                 <div class="is-flex" style="height: 100%;">
                   <div style="width: 120px; min-width: 120px; background-color: #f5f5f5;">
                     ${c.banner_url ? `
@@ -358,6 +415,31 @@
     });
   };
 
+  async function refreshCourseInline(courseId) {
+    const btn = document.getElementById(`refresh-btn-${courseId}`);
+    if (btn) {
+      btn.classList.add('is-loading');
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin has-text-grey"></i>';
+    }
+    
+    try {
+      const resp = await fetch(`/course/${courseId}/refresh`, { 
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      if (resp.ok) {
+        loadDashboard();
+      }
+    } catch (err) {
+      console.error("Refresh failed:", err);
+    } finally {
+      if (btn) {
+        btn.classList.remove('is-loading');
+        btn.innerHTML = '<i class="fas fa-sync has-text-grey"></i>';
+      }
+    }
+  }
+
   // Initial Load
   document.addEventListener('DOMContentLoaded', () => loadDashboard());
 
@@ -375,6 +457,16 @@
 <style>
   .notification-card-small { transition: transform 0.1s; }
   .notification-card-small:hover { transform: translateX(3px); background-color: #f9f9f9; }
+  .box.is-clickable { transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s; }
   .box.is-clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(115, 154, 195, 0.15); border-color: #739AC3 !important; }
+  .course-sortable-item .box.is-clickable:hover { transform: none !important; }
+  .is-sorting .box.is-clickable:hover { transform: none !important; }
+  .is-sorting .box.is-clickable { transform: none !important; transition: none !important; }
+  .box.is-clickable:hover .drag-handle { opacity: 1 !important; }
   .select.is-ghost select:hover { color: #739AC3 !important; }
+  .sortable-ghost { opacity: 0; }
+  .sortable-fallback { opacity: 0.9 !important; transform: scale(1.02) !important; box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important; z-index: 9999 !important; }
+  .sortable-drag { opacity: 0; }
+  .drag-handle { cursor: grab !important; z-index: 1000; }
+  .drag-handle:active { cursor: grabbing !important; }
 </style>

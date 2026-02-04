@@ -1,0 +1,112 @@
+[
+    {
+      "PointsNumerator": 100,
+      "PointsDenominator": 100,
+      "WeightedNumerator": 33.333333333,
+      "WeightedDenominator": 0,
+      "GradeObjectIdentifier": "2960050",
+      "GradeObjectName": "Chapter 1",
+      "GradeObjectType": 1,
+      "GradeObjectTypeName": "Numeric",
+      "DisplayedGrade": "100 %",
+      "Comments": {
+        "Text": "",
+        "Html": ""
+      },
+      "PrivateComments": {
+        "Text": "",
+        "Html": ""
+      },
+      "LastModified": "2026-01-25T01:31:45.973Z",
+      "LastModifiedBy": null,
+      "ReleasedDate": null
+    },
+    {
+      "PointsNumerator": 100,
+      "PointsDenominator": 100,
+      "WeightedNumerator": 33.333333333,
+      "WeightedDenominator": 0,
+      "GradeObjectIdentifier": "2960108",
+      "GradeObjectName": "Chapter 2: Biological Beginnings",
+      "GradeObjectType": 1,
+      "GradeObjectTypeName": "Numeric",
+      "DisplayedGrade": "100 %",
+      "Comments": {
+        "Text": "",
+        "Html": ""
+      },
+      "PrivateComments": {
+        "Text": "",
+        "Html": ""
+      },
+      "LastModified": "2026-01-29T20:10:20.933Z",
+      "LastModifiedBy": null,
+      "ReleasedDate": null
+    },
+    {
+      "PointsNumerator": 90,
+      "PointsDenominator": 100,
+      "WeightedNumerator": 0,
+      "WeightedDenominator": 0,
+      "GradeObjectIdentifier": "2960109",
+      "GradeObjectName": "Ch 2 Quiz",
+      "GradeObjectType": 1,
+      "GradeObjectTypeName": "Numeric",
+      "DisplayedGrade": "90 %",
+      "Comments": {
+        "Text": "",
+        "Html": ""
+      },
+      "PrivateComments": {
+        "Text": "",
+        "Html": ""
+      },
+      "LastModified": "2026-01-29T20:22:45.523Z",
+      "LastModifiedBy": null,
+      "ReleasedDate": null
+    },
+    {
+      "PointsNumerator": 0,
+      "PointsDenominator": 0,
+      "WeightedNumerator": 0,
+      "WeightedDenominator": 0,
+      "GradeObjectIdentifier": "2960140",
+      "GradeObjectName": "ReadingQuiz",
+      "GradeObjectType": 9,
+      "GradeObjectTypeName": "Category",
+      "DisplayedGrade": "-%",
+      "Comments": {
+        "Text": "",
+        "Html": ""
+      },
+      "PrivateComments": {
+        "Text": "",
+        "Html": ""
+      },
+      "LastModified": "2026-01-29T20:22:52.527Z",
+      "LastModifiedBy": null,
+      "ReleasedDate": null
+    },
+    {
+      "PointsNumerator": 0,
+      "PointsDenominator": 0,
+      "WeightedNumerator": 0,
+      "WeightedDenominator": 0,
+      "GradeObjectIdentifier": "2960143",
+      "GradeObjectName": "CumulativeQuiz",
+      "GradeObjectType": 9,
+      "GradeObjectTypeName": "Category",
+      "DisplayedGrade": "0 %",
+      "Comments": {
+        "Text": "",
+        "Html": ""
+      },
+      "PrivateComments": {
+        "Text": "",
+        "Html": ""
+      },
+      "LastModified": "2026-01-29T20:10:21.380Z",
+      "LastModifiedBy": null,
+      "ReleasedDate": null
+    }
+  ]

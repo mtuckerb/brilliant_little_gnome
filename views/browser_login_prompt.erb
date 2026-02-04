@@ -1,0 +1,40 @@
+<section class="section">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-half">
+        <div class="box">
+          <h1 class="title has-text-centered">Magic Login</h1>
+          <p class="subtitle has-text-centered">Automated authentication via Browser</p>
+          
+          <div class="notification is-info is-light">
+            <p>Brilliant will open a <strong>new browser window</strong> for you to log in to Brightspace. Once you reach your home page, Brilliant will capture your session automatically.</p>
+            <p class="is-size-7 mt-2"><strong>Note:</strong> The login window will open on the computer where the Brilliant server is running. If you are accessing this app remotely, please use Manual Setup instead.</p>
+          </div>
+
+          <form action="/auth/magic" method="POST">
+            <div class="field">
+              <label class="label">Brightspace Host</label>
+              <div class="control has-icons-left">
+                <input class="input" type="text" name="host" value="<%= @host %>" required>
+                <span class="icon is-small is-left">
+                  <i class="fas fa-globe"></i>
+                </span>
+              </div>
+            </div>
+
+            <div class="field mt-5">
+              <button type="submit" class="button is-primary is-fullwidth">
+                <span class="icon"><i class="fas fa-rocket"></i></span>
+                <span>Launch Login Browser</span>
+              </button>
+            </div>
+            
+            <div class="has-text-centered mt-4">
+              <a href="/setup" class="is-size-7">Back to Manual Setup</a>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

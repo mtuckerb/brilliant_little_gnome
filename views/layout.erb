@@ -4,6 +4,7 @@
   <title>Brilliant | <%= @course_name || "Dashboard" %></title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.9.4/css/bulma.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   <style>
     body { background: #fdfdfd; min-height: 100vh; }
     .main-content { padding: 40px; }
@@ -121,7 +122,7 @@
              <a href="/settings" class="button is-primary is-light" id="settings-button" style="border: 2px solid #739AC3 !important; font-weight: bold;">
                <span class="icon"><i class="fas fa-cog"></i></span>
                <span>
-                 <%= (@user && @user['FirstName']) ? (@user_prefs.display_name || "#{@user['FirstName']} #{@user['LastName']}") : (@user_prefs.display_name || "Settings") %>
+                 <%= (@user && @user['FirstName']) ? ((@user_prefs && @user_prefs.display_name) || "#{@user['FirstName']} #{@user['LastName']}") : ((@user_prefs && @user_prefs.display_name) || "Settings") %>
                </span>
              </a>
           <% end %>
@@ -184,11 +185,15 @@
     // JWT Management
     async function ensureToken() {
       let token = localStorage.getItem('brilliant_jwt');
-      if (!token) {
+      if (!token || token === 'undefined' || token === 'null') {
         const res = await originalFetch('/api/v1/token');
-        const data = await res.json();
-        token = data.token;
-        localStorage.setItem('brilliant_jwt', token);
+        if (res.ok) {
+          const data = await res.json();
+          token = data.token;
+          if (token) {
+            localStorage.setItem('brilliant_jwt', token);
+          }
+        }
       }
       return token;
     }
@@ -200,12 +205,25 @@
       const url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof URL ? args[0].href : '');
       
       if (url && (url.startsWith('/api/v1/') || url.startsWith('/sync/')) && !url.includes('/api/v1/token')) {
-        const token = await ensureToken();
+        let token = await ensureToken();
         args[1] = args[1] || {};
         args[1].headers = args[1].headers || {};
         args[1].headers['Authorization'] = `Bearer ${token}`;
       }
-      return originalFetch.apply(this, args);
+      
+      const response = await originalFetch.apply(this, args);
+      
+      // If we get a 401 Unauthorized, clear the token and reload the page to re-authenticate
+      if (response.status === 401 && !url.includes('/api/v1/token')) {
+        console.warn("[Brilliant] 401 Unauthorized detected. Clearing token and redirecting to setup.");
+        localStorage.removeItem('brilliant_jwt');
+        // Check if we are already on setup to avoid loop
+        if (!window.location.pathname.includes('/setup')) {
+          window.location.href = '/setup';
+        }
+      }
+      
+      return response;
     };
 
     async function handleGlobalSearch(e) {
@@ -241,11 +259,7 @@
 
       let html = '<div class="list is-hoverable">';
       results.forEach(r => {
-        let icon = 'fa-info-circle';
-        if (r.type === 'course') icon = 'fa-graduation-cap';
-        else if (r.type === 'assignment') icon = 'fa-tasks';
-        else if (r.type === 'notification') icon = 'fa-bell';
-        else if (r.type === 'content') icon = 'fa-file-alt';
+        let icon = r.icon || 'fa-info-circle';
 
         html += `
           <a href="${r.url}" class="list-item" onclick="closeGlobalSearch()">
@@ -314,14 +328,14 @@
             window.electron.startLogin(location.hostname);
           });
       } else {
-        // Smart redirect for web: Check if OAuth is configured
+        // For browser users, try the Magic Login flow first, then fallback to Setup
         fetch('/api/v1/status')
           .then(r => r.json())
           .then(data => {
             if (data.oauth_enabled) {
               window.location.href = '/login';
             } else {
-              window.location.href = '/setup';
+              window.location.href = `/auth/magic?host=${encodeURIComponent(data.host || location.hostname)}`;
             }
           })
           .catch(() => {

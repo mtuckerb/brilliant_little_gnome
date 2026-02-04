@@ -56,6 +56,10 @@ begin
   
   # Ensure models have latest column info after migrations
   UserPreference.reset_column_information if defined?(UserPreference)
+  Course.reset_column_information if defined?(Course)
+  Assignment.reset_column_information if defined?(Assignment)
+  Grade.reset_column_information if defined?(Grade)
+  Notification.reset_column_information if defined?(Notification)
 rescue => e
   puts "[Brilliant] DB Init Error: #{e.message}"
 end
@@ -74,14 +78,25 @@ require_relative 'controllers/sync_controller'
 require_relative 'controllers/mcp/mcp_controller'
 require_relative 'controllers/api/v1/api_controller'
 
-class BrilliantApp < Sinatra::Base
+class BrilliantApp < BaseController
   # Global settings
   set :port, 4567
   set :bind, '0.0.0.0'
-  set :views, File.join(File.dirname(__FILE__), 'views')
-  set :public_folder, File.join(File.dirname(__FILE__), 'public')
 
-  # Middleware / Middleware-style controllers
+  # Use explicit session middleware at the top of the stack to ensure all modular
+  # controllers (used as middleware) can access the session.
+  use Rack::Session::Cookie,
+      key: 'brilliant.session',
+      path: '/',
+      expire_after: 2592000, # 30 days
+      secret: (ENV['SESSION_SECRET'] || 'brilliant_app_session_persistent_secret_12345'),
+      same_site: :lax,
+      secure: false
+
+  use Rack::Flash, :sweep => true
+  use Rack::CommonLogger, $stdout
+
+  # --- Middleware / Middleware-style controllers ---
   use AuthController
   use DashboardController
   use CourseController
@@ -97,6 +112,27 @@ class BrilliantApp < Sinatra::Base
     pid_path = File.join(ENV['BRILLIANT_DATA_DIR'], 'ruby_sidecar.pid')
     File.write(pid_path, Process.pid.to_s)
     at_exit { File.delete(pid_path) if File.exist?(pid_path) }
+  end
+
+  # --- Error Handling ---
+  not_found do
+    @error_title = "404 - Not Found"
+    @error_message = "The page you are looking for does not exist."
+    erb :error
+  end
+
+  error do
+    @error = env['sinatra.error']
+    @error_title = "500 - Server Error"
+    @error_message = "An unexpected error occurred."
+    puts "[Brilliant Error] #{@error.message}" if @error
+    puts @error.backtrace.first(10).join("\n") if @error && @error.respond_to?(:backtrace)
+    erb :error
+  end
+
+  get '/*' do
+    puts "[Brilliant 404 Catch-All] #{request.request_method} #{request.path_info} - Params: #{params.inspect}"
+    pass # Let it fall through to the not_found block
   end
 end
 

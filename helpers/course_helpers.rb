@@ -349,7 +349,7 @@ module CourseHelpers
         prefix: prefix,
         is_online: !match[3].to_s.empty?,
         semester: semester,
-        pill_style: course_pill_style(full_name, semester, org_unit_id)
+        pill_style: CourseHelpers.course_pill_style(full_name, semester, org_unit_id)
       }
     else 
       # Fallback logic
@@ -375,7 +375,7 @@ module CourseHelpers
         prefix: prefix,
         is_online: is_online,
         semester: semester,
-        pill_style: course_pill_style(full_name, semester, org_unit_id)
+        pill_style: CourseHelpers.course_pill_style(full_name, semester, org_unit_id)
       }
     end
   end
@@ -386,13 +386,13 @@ module CourseHelpers
     
     q = query.downcase
     modules.each do |m|
-      if m['Title'].downcase.include?(q)
+      if m['Title'].to_s.downcase.include?(q)
         results[:modules] << { id: m['ModuleId'], title: m['Title'] }
       end
       
       if m['Topics']
         m['Topics'].each do |t|
-          if t['Title'].downcase.include?(q)
+          if t['Title'].to_s.downcase.include?(q)
             results[:topics] << { 
               id: (t['Id'] || t['TopicId']), 
               title: t['Title'], 
@@ -406,6 +406,40 @@ module CourseHelpers
       
       search_toc(m['Modules'], query, results) if m['Modules']
     end
+    results
+  end
+
+  # NEW: Global Search across all content
+  def global_search(query)
+    q = "%#{query.downcase}%"
+    results = []
+
+    # 1. Courses
+    ::Course.where("lower(name) LIKE ? OR lower(code) LIKE ?", q, q).limit(5).each do |c|
+      results << { type: 'course', title: c.name, url: "/course/#{c.org_unit_id}", subtitle: c.code, icon: 'fas fa-graduation-cap' }
+    end
+
+    # 2. Assignments
+    ::Assignment.includes(:course).where("lower(assignments.name) LIKE ? OR lower(description) LIKE ?", q, q).limit(10).each do |a|
+      results << { type: 'assignment', title: a.name, url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}", subtitle: a.course&.name, icon: 'fas fa-tasks' }
+    end
+
+    # 3. Content Items (Files/Modules)
+    ::ContentItem.where("lower(title) LIKE ?", q).limit(10).each do |i|
+      results << { type: 'content', title: i.title, url: "/course/#{i.content_module&.course_id}/module/#{i.module_id}", subtitle: "Module: #{i.content_module&.title}", icon: 'fas fa-file-alt' }
+    end
+
+    # 4. Discussion Posts
+    ::DiscussionPost.where("lower(subject) LIKE ? OR lower(body) LIKE ? OR lower(author_name) LIKE ?", q, q, q).limit(10).each do |p|
+      topic = p.discussion_topic
+      results << { type: 'discussion', title: p.subject, url: "/course/#{topic&.course_id}/discussions/#{topic&.forum_id}/topics/#{p.topic_id}", subtitle: "By #{p.author_name} in #{topic&.name}", icon: 'fas fa-comment-alt' }
+    end
+
+    # 5. Notifications
+    ::Notification.where("lower(title) LIKE ? OR lower(body) LIKE ?", q, q).limit(10).each do |n|
+      results << { type: 'notification', title: n.title, url: "/notifications/#{n.id}/view", subtitle: n.course_name, icon: 'fas fa-bell' }
+    end
+
     results
   end
 
@@ -681,22 +715,23 @@ module CourseHelpers
     
     tasks.uniq { |t| t[:name] }
   end
-  def course_pill_style(course_name, semester = nil, course_id = nil)
+  def self.course_pill_style(course_name, semester = nil, course_id = nil)
     return "" if course_name.nil? && course_id.nil?
     
     # 1. Check if we have a custom color saved for this course
     course = nil
     if course_id
-      course = Course.find_by(org_unit_id: course_id.to_s)
+      # We use CourseHelpers to avoid constant lookup issues if possible, but Course is a model
+      course = ::Course.find_by(org_unit_id: course_id.to_s)
     end
-    course ||= Course.find_by(name: course_name) if course_name.present?
+    course ||= ::Course.find_by(name: course_name) if course_name.present?
     
     color_val = nil
 
     if course && course.respond_to?(:custom_color) && course.custom_color.present?
       color_val = course.custom_color
     elsif semester.present?
-      prefs = UserPreference.current
+      prefs = ::UserPreference.current
       if prefs.semester_colors && prefs.semester_colors[semester].present?
         color_val = prefs.semester_colors[semester]
       end
@@ -734,7 +769,7 @@ module CourseHelpers
     end
 
     if hue.nil?
-      prefix = course_name[0..6].upcase.strip
+      prefix = (course_name || "").to_s[0..6].upcase.strip
       # Stable hash using character values
       hash_val = prefix.chars.map(&:ord).reduce(0, :+)
       hue = (hash_val * 137) % 360 # Spread the colors
@@ -746,6 +781,10 @@ module CourseHelpers
     text = "hsl(#{hue}, 80%, 25%)"
     
     "background-color: #{bg}; color: #{text}; border: 1px solid #{border};"
+  end
+
+  def course_pill_style(course_name, semester = nil, course_id = nil)
+    self.class.course_pill_style(course_name, semester, course_id)
   end
 
 end

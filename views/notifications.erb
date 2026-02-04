@@ -170,8 +170,23 @@
 
   async function markAllRead() {
     if (!confirm("Mark all notifications as read?")) return;
+    
+    const form = document.getElementById('filter-form');
+    let params = new URLSearchParams();
+    if (form) {
+       const formData = new FormData(form);
+       params = new URLSearchParams(formData);
+    }
+
     try {
-      await fetch('/notifications/mark_all_read', { method: 'POST' });
+      await fetch('/notifications/mark_all_read', { 
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: params.toString()
+      });
       loadNotifications();
     } catch (err) {
       console.error("Failed to mark all read", err);

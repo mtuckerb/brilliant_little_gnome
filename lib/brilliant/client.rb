@@ -5,6 +5,7 @@ require 'base64'
 require 'digest'
 require 'fileutils'
 require 'time'
+require 'set'
 
 class BrilliantClient
   class AuthenticationError < StandardError; attr_reader :status_code; def initialize(msg, code); super(msg); @status_code = code; end; end
@@ -12,7 +13,19 @@ class BrilliantClient
   attr_accessor :token, :cookie_string, :host, :user_display_name, :sync_status, :degraded_mode, :last_auth_error
 
   def initialize
-    data_dir = ENV['BRILLIANT_DATA_DIR'] || '.'
+    data_dir = ENV['BRILLIANT_DATA_DIR']
+    
+    # Fallback for CLI usage to find Electron data
+    if data_dir.nil?
+      electron_data = File.expand_path("~/Library/Application Support/Brilliant")
+      if Dir.exist?(electron_data)
+        data_dir = electron_data
+        puts "[Brilliant] Using Electron data directory: #{data_dir}"
+      else
+        data_dir = '.'
+      end
+    end
+    
     @config_path = File.join(data_dir, 'config', 'connection.json')
     load_connection_config
     
@@ -32,6 +45,7 @@ class BrilliantClient
     @assignment_service = Brilliant::Sync::AssignmentService.new(self)
     @discussion_service = Brilliant::Sync::DiscussionService.new(self)
     @grade_service = Brilliant::Sync::GradeService.new(self)
+    @psy220_scraper = Brilliant::Sync::Psy220ScraperService.new(self)
 
     # Background Worker
     @task_queue = Queue.new
@@ -56,6 +70,21 @@ class BrilliantClient
     # Periodically clean up old cache entries
     Thread.new { sleep 60; ActiveRecord::Base.connection_pool.with_connection { cleanup_cache } rescue nil }
     
+    # Background Periodic Sync (runs every 30 minutes to keep data fresh)
+    Thread.new do
+      loop do
+        sleep 1800 # 30 minutes
+        begin
+          if authenticated? && !@syncing
+            puts "[Periodic Sync] Starting background sync..."
+            sync_all_courses_proactively
+          end
+        rescue => e
+          puts "[Periodic Sync] Failed: #{e.message}"
+        end
+      end
+    end
+    
     # Legacy/Fallback: Try loading from cookies.txt
     cookies_fallback = File.join(data_dir, 'cookies.txt')
     load_cookies_from_file(cookies_fallback) if !authenticated? && File.exist?(cookies_fallback)
@@ -76,8 +105,22 @@ class BrilliantClient
   end
 
   def save_connection_config(host, cookies)
-    @host = host.to_s.gsub(/https?:\/\//, '').split('/').first
-    @cookie_string = cookies.sub(/^Cookie:\s*/i, '')
+    # Robust host normalization
+    @host = host.to_s.gsub(/https?:\/\//, '').split('/').first.strip
+    
+    # Robust cookie normalization: remove 'Cookie:' prefix, strip whitespace, 
+    # and handle multiple lines if the user copied from a header block.
+    # Also handles semicolon-separated pairs more cleanly.
+    cleaned_cookies = cookies.to_s
+      .gsub(/^Cookie:\s*/i, '')     # Remove 'Cookie: ' prefix
+      .strip                        # Remove leading/trailing whitespace
+      .gsub(/[\r\n]+/, '; ')        # Convert newlines to semicolons
+      .gsub(/;\s*;/, ';')           # Remove empty pairs
+      .gsub(/\s+/, ' ')             # Normalize spaces
+      .strip
+    
+    @cookie_string = cleaned_cookies
+    
     @degraded_mode = false # Reset degraded mode on new config
     
     FileUtils.mkdir_p(File.dirname(@config_path))
@@ -111,74 +154,80 @@ class BrilliantClient
           total_steps = 1 + courses.size # Notifications + each course
           current_step = 0
 
-          @sync_status[:current_task] = "Syncing Notifications..."
-          sync_notifications(courses, user, full_sync: full_sync)
-
           # Reset full sync flag if set
           UserPreference.set('force_full_sync', 'false') if full_sync
 
+          courses.each do |c|
+            begin
+              course_id = c['OrgUnit']['Id']
+              course_name = c['OrgUnit']['Name']
+              puts "[Sync] Processing Course: #{course_name} (ID: #{course_id})"
+              
+              # Simple truncation helper for status display
+              short_name = course_name.length > 10 ? course_name[0...9] + "…" : course_name
+
+              @sync_status[:current_task] = "#{short_name} - Syncing Core Content..."
+              
+              # Sync Core (Force refresh during proactive sync to ensure accuracy)
+              toc_path = "/d2l/api/le/#{@api_version}/#{course_id}/content/toc"
+              toc = get_toc(course_id, force_refresh: true)
+              puts "[Sync] TOC for #{course_id} fetched: #{toc.is_a?(Hash) ? toc.keys : toc.class}"
+              sync_course_content(course_id, toc) if toc
+              archive_cache(toc_path) if toc
+              
+              sleep 0.1
+              @sync_status[:current_task] = "#{short_name} - Syncing Assignments..."
+              assign_path = "/d2l/api/le/#{@api_version}/#{course_id}/dropbox/folders/"
+              assignments = get_assignments(course_id, force_refresh: true)
+              puts "[Sync] Assignments for #{course_id} fetched: #{assignments.is_a?(Array) ? assignments.size : assignments.class}"
+              skipped_items += sync_assignments(course_id, assignments) if assignments
+              archive_cache(assign_path) if assignments
+
+              sleep 0.1
+              @sync_status[:current_task] = "#{short_name} - Syncing Quizzes..."
+              quiz_path = "/d2l/api/le/#{@api_version}/#{course_id}/quizzes/"
+              quizzes = get_quizzes(course_id, force_refresh: true)
+              skipped_items += sync_quizzes(course_id, quizzes) if quizzes
+              archive_cache(quiz_path) if quizzes
+              
+              sleep 0.1
+              
+              @sync_status[:current_task] = "#{short_name} - Syncing Discussions..."
+              # Sync Discussions
+              disc_path = "/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/"
+              forums = get_discussions(course_id, force_refresh: true) || []
+              sync_discussions(course_id, forums) if forums.any?
+              archive_cache(disc_path) if forums.any?
+              
+              sleep 0.1
+              
+              @sync_status[:current_task] = "#{short_name} - Syncing Grades..."
+              # Sync Grades
+              grades_path = "/d2l/api/le/#{@api_version}/#{course_id}/grades/values/myGradeValues/"
+              grades_raw = get_grades(course_id, force_refresh: true)
+              sync_grades(course_id, grades_raw) if grades_raw.is_a?(Array)
+              archive_cache(grades_path) if grades_raw.is_a?(Array)
+
+              current_step += 1
+              @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
+
+              # Publish course-wide update event
+              Brilliant::EventBus.publish(:course_overview_updated, { course_id: course_id })
+              Brilliant::EventBus.publish(:assignments_updated, { course_id: course_id })
+              Brilliant::EventBus.publish(:grades_updated, { course_id: course_id })
+            rescue => e
+              puts "[Sync] Failed to process course #{course_id}: #{e.message}"
+              puts e.backtrace.first(5).join("\n")
+              next
+            end
+          end
+          
+          @sync_status[:current_task] = "Syncing Notifications..."
+          sync_notifications(courses, user, full_sync: full_sync)
+          
           current_step += 1
           @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
 
-          courses.each do |c|
-            course_id = c['OrgUnit']['Id']
-            course_name = c['OrgUnit']['Name']
-            puts "[Sync] Processing Course: #{course_name} (ID: #{course_id})"
-            
-            # Simple truncation helper for status display
-            short_name = course_name.length > 10 ? course_name[0...9] + "…" : course_name
-
-            @sync_status[:current_task] = "#{short_name} - Syncing Core Content..."
-            
-            # Sync Core
-            toc_path = "/d2l/api/le/#{@api_version}/#{course_id}/content/toc"
-            toc = get_toc(course_id)
-            puts "[Sync] TOC for #{course_id} fetched: #{toc.is_a?(Hash) ? toc.keys : toc.class}"
-            sync_course_content(course_id, toc) if toc
-            archive_cache(toc_path) if toc
-            
-            sleep 0.1
-            @sync_status[:current_task] = "#{short_name} - Syncing Assignments..."
-            assign_path = "/d2l/api/le/#{@api_version}/#{course_id}/dropbox/folders/"
-            assignments = get_assignments(course_id)
-            puts "[Sync] Assignments for #{course_id} fetched: #{assignments.is_a?(Array) ? assignments.size : assignments.class}"
-            skipped_items += sync_assignments(course_id, assignments) if assignments
-            archive_cache(assign_path) if assignments
-
-            sleep 0.1
-            @sync_status[:current_task] = "#{short_name} - Syncing Quizzes..."
-            quiz_path = "/d2l/api/le/#{@api_version}/#{course_id}/quizzes/"
-            quizzes = get_quizzes(course_id)
-            skipped_items += sync_quizzes(course_id, quizzes) if quizzes
-            archive_cache(quiz_path) if quizzes
-            
-            sleep 0.1
-            
-            @sync_status[:current_task] = "#{short_name} - Syncing Discussions..."
-            # Sync Discussions
-            disc_path = "/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/"
-            forums = get_discussions(course_id) || []
-            sync_discussions(course_id, forums) if forums.any?
-            archive_cache(disc_path) if forums.any?
-            
-            sleep 0.1
-            
-            @sync_status[:current_task] = "#{short_name} - Syncing Grades..."
-            # Sync Grades
-            grades_path = "/d2l/api/le/#{@api_version}/#{course_id}/grades/values/myGradeValues/"
-            grades_raw = get_grades(course_id)
-            sync_grades(course_id, grades_raw) if grades_raw.is_a?(Array)
-            archive_cache(grades_path) if grades_raw.is_a?(Array)
-
-            current_step += 1
-            @sync_status[:progress] = ((current_step.to_f / total_steps) * 100).to_i
-
-            # Publish course-wide update event
-            Brilliant::EventBus.publish(:course_overview_updated, { course_id: course_id })
-            Brilliant::EventBus.publish(:assignments_updated, { course_id: course_id })
-            Brilliant::EventBus.publish(:grades_updated, { course_id: course_id })
-          end
-          
           # Notify user about skipped items (manual overrides protected)
           if skipped_items.any?
             create_system_notification({
@@ -226,6 +275,11 @@ class BrilliantClient
 
   def sync_grades(course_id, grades_raw)
     @grade_service.sync(course_id, grades_raw)
+    
+    # Special handling for PSY-220 which has hidden/ungraded items in the API
+    if course_id.to_s == '446900'
+      @psy220_scraper.sync(course_id)
+    end
   end
 
   def get_global_alerts(since: nil)
@@ -289,33 +343,126 @@ class BrilliantClient
 
   def get_content_notifications(courses, since: nil)
     all_updates = []
-    courses.take(20).each do |c|
+    
+    # Ensure Time.zone is available for parsing
+    Time.zone ||= 'UTC'
+
+    # Use a slightly earlier 'since' to account for D2L indexing lag and second-level precision issues
+    adjusted_since = if since
+      (Time.zone.parse(since) - 2.minutes).iso8601 rescue since
+    else
+      # Fallback to last 7 days if no since provided (instead of 24h) to ensure we catch recent but not immediate updates
+      (Time.current - 7.days).iso8601
+    end
+
+    courses.each do |c|
       next if c.nil? || c['OrgUnit'].nil?
       course_id = c['OrgUnit']['Id']
       path = "/d2l/api/le/#{@api_version}/#{course_id}/content/updates"
-      path += "?since=#{URI.encode_www_form_component(since)}" if since
-      data = do_get(path)
-      next unless data
-      items = ensure_array(data)
-      items.each do |item|
-        all_updates << {
-          id: "content_#{course_id}_#{item['Identifier'] || item['Id']}",
-          type: 'Content',
-          title: "Content Updated: #{item['Title']}",
-          body: "New or updated content in #{c['OrgUnit']['Name']}: #{item['Title']}",
-          date: item['LastModifiedDate'] || item['CreatedDate'] || Time.current.iso8601,
-          last_modified: item['LastModifiedDate'],
-          created_at: item['CreatedDate'],
-          course_id: course_id,
-          course_name: c['OrgUnit']['Name'],
-          urgency: 1,
-          is_personal: false,
-          url: "/course/#{course_id}"
-        }
+      path += "?since=#{URI.encode_www_form_component(adjusted_since)}" if adjusted_since
+      
+      puts "[Sync] Checking content updates for #{c['OrgUnit']['Name']} since #{adjusted_since}..."
+      data = do_get(path, force_refresh: true)
+      
+      # Process API items
+      api_items = ensure_array(data)
+      puts "[Sync] Found #{api_items.size} content updates for #{c['OrgUnit']['Name']} via API" if api_items.any?
+      
+      # Track seen IDs to avoid duplicates between API and DB
+      seen_ids = Set.new
+      
+      api_items.each do |item|
+        item_id = (item['ContentObjectIdentifier'] || item['Identifier'] || item['Id'] || item['TopicId']).to_s
+        seen_ids << item_id if item_id.present?
+        
+        title = item['Title']
+        if (title.nil? || title.empty?) && !item_id.empty?
+          db_item = ContentItem.joins(:content_module).find_by(brightspace_id: item_id, content_modules: { course_id: course_id.to_s })
+          db_item ||= ContentItem.find_by(brightspace_id: item_id)
+          db_mod = ContentModule.find_by(brightspace_id: item_id, course_id: course_id.to_s) if db_item.nil?
+          title = (db_item || db_mod)&.title
+        end
+        
+        all_updates << build_content_notification(c, item_id, title, item['LastModifiedDate'] || item['CreatedDate'])
       end
+      
+      # 2. Fallback/Augment: Check local DB for things recently updated
+      # This is crucial because TOC sync (sync_course_content) just ran and populated the DB.
+      # The /content/updates API can sometimes lag or miss items.
+      begin
+        # Use a tighter window for DB fallback if this is a first sync to avoid flooding
+        db_since = since ? (Time.zone.parse(since) - 2.minutes) : (Time.current - 12.hours)
+        
+        # Check ContentItems
+        ContentItem.joins(:content_module)
+                    .where(content_modules: { course_id: course_id.to_s })
+                    .where("content_items.updated_at > ?", db_since)
+                    .find_each do |db_item|
+          next if seen_ids.include?(db_item.brightspace_id.to_s)
+          
+          puts "[Sync] Found content item update for #{c['OrgUnit']['Name']} via DB: #{db_item.title}"
+          all_updates << build_content_notification(c, db_item.brightspace_id, db_item.title, db_item.updated_at)
+          seen_ids << db_item.brightspace_id.to_s
+        end
+
+        # Check ContentModules
+        ContentModule.where(course_id: course_id.to_s)
+                      .where("updated_at > ?", db_since)
+                      .find_each do |db_mod|
+          next if seen_ids.include?(db_mod.brightspace_id.to_s)
+          
+          puts "[Sync] Found content module update for #{c['OrgUnit']['Name']} via DB: #{db_mod.title}"
+          all_updates << build_content_notification(c, db_mod.brightspace_id, db_mod.title, db_mod.updated_at)
+          seen_ids << db_mod.brightspace_id.to_s
+        end
+      rescue => e
+        puts "[Sync] Local DB fallback failed for #{c['OrgUnit']['Name']}: #{e.message}"
+      end
+
       archive_cache(path)
     end
     all_updates
+  end
+
+  def authenticated?
+    # Must have either a token or a non-empty cookie string
+    return true if !@token.nil?
+    return false if @cookie_string.nil? || @cookie_string.strip.empty?
+    
+    # Basic validation: Brightspace session cookies usually contain 'd2lSessionVal'
+    # or at least a few key-value pairs.
+    @cookie_string.include?('=') && @cookie_string.length > 20
+  end
+
+  # --- End Public API ---
+
+  def build_content_notification(course_data, item_id, title, date)
+    course_id = course_data['OrgUnit']['Id']
+    display_title = title.present? ? title : "New Content Item"
+    course_code = extract_course_code(course_data['OrgUnit']['Name'])
+    
+    final_title = if course_code && !display_title.include?(course_code)
+      "#{course_code}: #{display_title}"
+    else
+      display_title
+    end
+
+    # Use the date provided, or fallback to now
+    parsed_date = date.is_a?(String) ? (Time.zone.parse(date) rescue Time.current) : (date || Time.current)
+
+    {
+      id: "content_#{course_id}_#{item_id.present? ? item_id : SecureRandom.hex(4)}",
+      type: 'Content',
+      title: "Content Updated: #{final_title}",
+      body: "New or updated content in #{course_data['OrgUnit']['Name']}: #{display_title}",
+      date: parsed_date,
+      last_modified: (date if date.is_a?(String) && date.include?('T')),
+      course_id: course_id,
+      course_name: course_data['OrgUnit']['Name'],
+      urgency: 1,
+      is_personal: false,
+      url: "/course/#{course_id}"
+    }
   end
 
   def extract_semester_from_name(full_name)
@@ -331,6 +478,13 @@ class BrilliantClient
     nil
   end
 
+  def extract_course_code(full_name)
+    return nil unless full_name
+    # Matches patterns like "SWO 370", "PSY-220", "MAT101"
+    match = full_name.match(/([A-Z]{2,4}\s*[-]?\s*\d{3,4})/i)
+    match[1].strip if match
+  end
+
   def load_cookies_from_file(path = nil)
     path ||= 'cookies.txt'
     return unless File.exist?(path)
@@ -341,10 +495,6 @@ class BrilliantClient
     else
       @cookie_string = content.sub(/^Cookie:\s*/i, '')
     end
-  end
-
-  def authenticated?
-    !@token.nil? || !@cookie_string.nil?
   end
 
   def auth_url
@@ -415,8 +565,8 @@ class BrilliantClient
     end
   end
 
-  def get_toc(org_unit_id)
-    data = do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/content/toc")
+  def get_toc(org_unit_id, force_refresh: false)
+    data = do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/content/toc", force_refresh: force_refresh)
     if data.is_a?(Array)
       { 'Modules' => data }
     elsif data.is_a?(Hash) && data['Modules']
@@ -426,16 +576,16 @@ class BrilliantClient
     end
   end
 
-  def get_assignments(org_unit_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/")
+  def get_assignments(org_unit_id, force_refresh: false)
+    get_all_pages("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/", force_refresh: force_refresh)
   end
 
-  def get_quizzes(org_unit_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/quizzes/")
+  def get_quizzes(org_unit_id, force_refresh: false)
+    get_all_pages("/d2l/api/le/#{@api_version}/#{org_unit_id}/quizzes/", force_refresh: force_refresh)
   end
 
-  def get_assignment(org_unit_id, assignment_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/#{assignment_id}")
+  def get_assignment(org_unit_id, assignment_id, force_refresh: false)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/#{assignment_id}", force_refresh: force_refresh)
   end
 
   def get_assignment_feedback(org_unit_id, assignment_id)
@@ -451,11 +601,48 @@ class BrilliantClient
   end
 
   def get_grades(org_unit_id, force_refresh: false)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/grades/values/myGradeValues/", force_refresh: force_refresh)
+    get_all_pages("/d2l/api/le/#{@api_version}/#{org_unit_id}/grades/values/myGradeValues/", force_refresh: force_refresh)
   end
 
-  def get_discussions(org_unit_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/")
+  def get_grade_definitions(org_unit_id, force_refresh: false)
+    get_all_pages("/d2l/api/le/#{@api_version}/#{org_unit_id}/grades/", force_refresh: force_refresh)
+  end
+
+  def get_all_pages(path, force_refresh: false)
+    all_items = []
+    current_path = path
+    
+    loop do
+      data = do_get(current_path, force_refresh: force_refresh)
+      break unless data
+      
+      items = ensure_array(data)
+      all_items.concat(items)
+      
+      # Handle PagingInfo
+      # D2L uses PagingInfo { HasMoreItems: true, Bookmark: "..." }
+      paging = data.is_a?(Hash) ? data['PagingInfo'] : nil
+      if paging && paging['HasMoreItems'] && paging['Bookmark']
+        # Add bookmark to query string
+        uri = URI.parse(path)
+        params = URI.decode_www_form(uri.query || "") << ["bookmark", paging['Bookmark']]
+        uri.query = URI.encode_www_form(params)
+        current_path = uri.to_s
+        # Force fresh fetch for subsequent pages if the first one was fresh
+        force_refresh = true if force_refresh
+      else
+        break
+      end
+      
+      # Safety break to avoid infinite loops
+      break if all_items.size > 2000
+    end
+    
+    all_items
+  end
+
+  def get_discussions(org_unit_id, force_refresh: false)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/discussions/forums/", force_refresh: force_refresh)
   end
 
   def get_discussion_forum(org_unit_id, forum_id)
@@ -745,6 +932,7 @@ class BrilliantClient
         request['Cookie'] = @cookie_string
       end
       request['Accept'] = 'application/json'
+      request['User-Agent'] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = true
@@ -760,6 +948,7 @@ class BrilliantClient
         write_cache(path, data)
         data
       elsif ['401', '403'].include?(response.code)
+        puts "[API Error] #{response.code} for #{path}: #{response.body[0..200]}"
         handle_auth_failure(response.code, path)
         read_cache(path)
       else
@@ -774,16 +963,12 @@ class BrilliantClient
   end
 
   def handle_auth_failure(code, path = nil)
-    # If it's a 401, it's definitely an authentication issue
-    if code == '401'
-      @degraded_mode = true
-      @auth_notification_sent = true
-      Brilliant::EventBus.publish(:authentication_failure, { code: code, host: @host })
-      return
-    end
-
-    # For 403s, verify if the session is truly dead using the "whoami" probe
+    puts "[Auth] Authentication failure (Code: #{code}) for path: #{path}"
+    
+    # Verify if the session is truly dead using the "whoami" probe
+    # This avoids entering degraded mode due to transient errors or restricted resource access
     safe_path = "/d2l/api/lp/#{@api_version}/users/whoami"
+    
     if path == safe_path
       @degraded_mode = true
       @auth_notification_sent = true
@@ -801,13 +986,19 @@ class BrilliantClient
         request['Cookie'] = @cookie_string
       end
 
-      probe_res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 5) { |http| http.request(request) }
+      # Use a very short timeout for the probe
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true
+      http.read_timeout = 5
+      http.open_timeout = 5
+      
+      probe_res = http.request(request)
       if probe_res.code.start_with?('2')
-        puts "[Auth] 403 suppressed for #{path} - Session still valid via whoami probe."
+        puts "[Auth] #{code} suppressed for #{path} - Session still valid via whoami probe."
         return
       end
     rescue => e
-      puts "[Auth] Probe failed during 403 handling: #{e.message}"
+      puts "[Auth] Probe failed during #{code} handling: #{e.message}"
     end
 
     @degraded_mode = true

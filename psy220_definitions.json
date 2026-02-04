@@ -1,0 +1,232 @@
+[
+    {
+      "MaxPoints": 20,
+      "CanExceedMaxPoints": false,
+      "IsBonus": false,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2960149,
+      "Name": "Introducing Me!",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960137,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 10,
+      "AssociatedTool": {
+        "ToolId": 3000,
+        "ToolItemId": 508755
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 25,
+      "CanExceedMaxPoints": false,
+      "IsBonus": false,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2968944,
+      "Name": "Ch 3 Discussion on Longevity",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960137,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 10,
+      "AssociatedTool": {
+        "ToolId": 3000,
+        "ToolItemId": 510344
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 100,
+      "CanExceedMaxPoints": true,
+      "IsBonus": false,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2960109,
+      "Name": "Ch 2 Quiz",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960140,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 10,
+      "AssociatedTool": {
+        "ToolId": 390000,
+        "ToolItemId": 1177543
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 250,
+      "CanExceedMaxPoints": true,
+      "IsBonus": false,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2968948,
+      "Name": "Ch3 Quiz",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960140,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 10,
+      "AssociatedTool": {
+        "ToolId": 390000,
+        "ToolItemId": 1183082
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 10,
+      "CanExceedMaxPoints": true,
+      "IsBonus": false,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2960051,
+      "Name": "Connect Orientation Videos",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960141,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 5.333333333,
+      "AssociatedTool": {
+        "ToolId": 390000,
+        "ToolItemId": 1177523
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 10,
+      "CanExceedMaxPoints": true,
+      "IsBonus": false,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2960052,
+      "Name": "SmartBook 2.0 Overview",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960141,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 5.333333333,
+      "AssociatedTool": {
+        "ToolId": 390000,
+        "ToolItemId": 1177524
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 100,
+      "CanExceedMaxPoints": true,
+      "IsBonus": false,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2968947,
+      "Name": "Ch3 Activity Growth Pattern",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960141,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 5.333333333,
+      "AssociatedTool": {
+        "ToolId": 390000,
+        "ToolItemId": 1183081
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 100,
+      "CanExceedMaxPoints": true,
+      "IsBonus": true,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2960050,
+      "Name": "Chapter 1",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960143,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 0.5,
+      "AssociatedTool": {
+        "ToolId": 390000,
+        "ToolItemId": 1177522
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 100,
+      "CanExceedMaxPoints": true,
+      "IsBonus": true,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2960108,
+      "Name": "Chapter 2: Biological Beginnings",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960143,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 0.5,
+      "AssociatedTool": {
+        "ToolId": 390000,
+        "ToolItemId": 1177542
+      },
+      "IsHidden": false
+    },
+    {
+      "MaxPoints": 100,
+      "CanExceedMaxPoints": true,
+      "IsBonus": true,
+      "ExcludeFromFinalGradeCalculation": false,
+      "GradeSchemeId": null,
+      "GradeSchemeUrl": "/d2l/api/le/1.40/446900/grades/schemes/0",
+      "Id": 2968946,
+      "Name": "Ch 3 SMART BOOK",
+      "ShortName": "",
+      "GradeType": "Numeric",
+      "CategoryId": 2960143,
+      "Description": {
+        "Text": "",
+        "Html": ""
+      },
+      "Weight": 0.5,
+      "AssociatedTool": {
+        "ToolId": 390000,
+        "ToolItemId": 1183080
+      },
+      "IsHidden": false
+    }
+  ]

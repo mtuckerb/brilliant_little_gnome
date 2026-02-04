@@ -211,4 +211,46 @@ class AssignmentController < BaseController
     flash[:success] = "Added #{added_count} task(s) to assignments"
     redirect "/course/#{params[:id]}/assignments"
   end
+
+  post '/course/:id/announcements/:announcement_id/create_task' do
+    course_id = params[:id]
+    announcement_id = params[:announcement_id]
+    
+    # Try to find the notification to get details
+    notification = Notification.find_by(course_id: course_id, external_id: announcement_id)
+    
+    title = params[:title] || (notification ? notification.title : "New Task from Announcement")
+    description = notification ? "From announcement: #{notification.title}\n\n#{notification.body}" : "Created from announcement #{announcement_id}"
+    
+    brightspace_id = "syn_#{SecureRandom.hex(8)}"
+    
+    # Calculate default due date (end of week)
+    course = Course.find_by(org_unit_id: course_id)
+    parsed_date = nil
+    if course
+      parsed_date = course.end_of_week_date(Time.current)
+    else
+      # Default to 7 days from now
+      parsed_date = 7.days.from_now.end_of_day
+    end
+
+    Assignment.create!(
+      course_id: course_id,
+      brightspace_id: brightspace_id,
+      name: title,
+      description: description,
+      due_date: parsed_date,
+      synthetic: true,
+      manually_edited: true,
+      manually_edited_at: Time.current
+    )
+
+    if request.xhr?
+      content_type :json
+      { status: 'ok', brightspace_id: brightspace_id }.to_json
+    else
+      flash[:success] = "Created task from announcement"
+      redirect "/course/#{course_id}/assignments/#{brightspace_id}"
+    end
+  end
 end

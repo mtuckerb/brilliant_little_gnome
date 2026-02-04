@@ -14,6 +14,30 @@ module Brilliant
         with_connection do
           ActiveRecord::Base.transaction do
             begin
+              # Detect new content items for notification (only if we already had some items, to avoid first-sync flood)
+              existing_ids = ContentItem.joins(:content_module).where(content_modules: { course_id: @course_id }).pluck(:brightspace_id).map(&:to_s)
+              
+              if existing_ids.any? && @all_items_to_upsert.any?
+                new_items = @all_items_to_upsert.select { |item| !existing_ids.include?(item[:brightspace_id].to_s) && !item[:is_hidden] }
+                if new_items.any?
+                  course = Course.find_by(org_unit_id: @course_id)
+                  new_items.each do |item|
+                    client.upsert_notification({
+                      id: "content_#{@course_id}_#{item[:brightspace_id]}",
+                      type: 'Content',
+                      title: "New Content: #{item[:title]}",
+                      body: "A new item has been added to #{course&.name || 'the course'}: #{item[:title]}",
+                      date: Time.current,
+                      course_id: @course_id,
+                      course_name: course&.name,
+                      urgency: 1,
+                      is_personal: false,
+                      url: "/course/#{@course_id}"
+                    })
+                  end
+                end
+              end
+
               ContentModule.upsert_all(@all_modules_to_upsert, unique_by: :index_content_modules_on_course_and_bs_id) if @all_modules_to_upsert.any?
               ContentItem.upsert_all(@all_items_to_upsert, unique_by: :index_content_items_on_module_and_bs_id) if @all_items_to_upsert.any?
             rescue => e

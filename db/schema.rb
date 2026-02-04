@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_02_13_000000) do
+ActiveRecord::Schema[7.2].define(version: 2026_02_17_000000) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
@@ -101,6 +101,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_02_13_000000) do
     t.integer "end_of_week_day", default: 0
     t.string "user_id"
     t.text "overview_raw"
+    t.string "status", default: "active"
+    t.datetime "dropped_at", precision: nil
+    t.integer "sort_order", default: 0
     t.index ["org_unit_id"], name: "index_courses_on_org_unit_id"
     t.index ["user_id"], name: "index_courses_on_user_id"
   end
@@ -195,6 +198,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_02_13_000000) do
     t.datetime "due_date", precision: nil
     t.boolean "is_extra_credit", default: false
     t.string "user_id"
+    t.boolean "manually_marked_ungraded", default: false
     t.index ["brightspace_id"], name: "index_grades_on_brightspace_id"
     t.index ["course_id", "brightspace_id"], name: "index_grades_on_course_id_and_brightspace_id", unique: true
     t.index ["course_id"], name: "index_grades_on_course_id"

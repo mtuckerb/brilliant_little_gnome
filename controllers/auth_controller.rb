@@ -10,6 +10,7 @@ class AuthController < BaseController
     host = params[:host].strip
     cookies = params[:cookies].strip
     $client.save_connection_config(host, cookies)
+    $client.degraded_mode = false # Explicitly reset before testing
     whoami = $client.get_who_am_i
     if whoami && whoami['Identifier']
       redirect '/dashboard'
@@ -19,11 +20,31 @@ class AuthController < BaseController
     end
   end
 
-  get '/login' do
-    if ENV['BS_CLIENT_ID'] && ENV['BS_CLIENT_SECRET']
-      redirect $client.auth_url
+  get '/auth/magic' do
+    @host = params[:host] || $client.host || "courses.maine.edu"
+    erb :browser_login_prompt
+  end
+
+  post '/auth/magic' do
+    host = params[:host] || $client.host || "courses.maine.edu"
+    # Use the existing helper to capture cookies via a non-headless browser
+    cookies = BrilliantAuthHelper.fetch_cookies(host)
+    if cookies
+      $client.save_connection_config(host, cookies)
+      
+      # Verify the session before redirecting to ensure we don't end up in a degraded mode loop
+      $client.degraded_mode = false
+      whoami = $client.get_who_am_i
+      if whoami && whoami['Identifier']
+        flash[:success] = "Successfully authenticated!"
+        redirect '/dashboard'
+      else
+        @error = "Login captured cookies, but they failed to authenticate with the API. Please try again."
+        erb :setup
+      end
     else
-      redirect '/setup'
+      @error = "Magic Login failed or timed out."
+      erb :setup
     end
   end
 

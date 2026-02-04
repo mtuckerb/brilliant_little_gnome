@@ -21,8 +21,14 @@
   async function loadCourse() {
     const root = document.getElementById('course-root');
     try {
+      console.log(`[JS] Fetching summary for course: ${COURSE_ID}`);
       const response = await fetch(`/api/v1/courses/${COURSE_ID}/summary`);
-      if (!response.ok) throw new Error("Failed to fetch");
+      console.log(`[JS] Response status: ${response.status}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error(`[JS] Fetch failed:`, errorData);
+        throw new Error("Failed to fetch");
+      }
       const data = await response.json();
       renderCourse(data);
     } catch (err) {
@@ -57,6 +63,10 @@
                       Download 
                   </a>
                 ` : ''}
+                <button class="button is-small is-light" onclick="refreshCourse()" id="refresh-course-btn">
+                    <span class="icon is-small mr-1"><i class="fas fa-sync"></i></span>
+                    Refresh
+                </button>
                 <a href="/course/${COURSE_ID}/download_all" class="button is-primary is-small">
                     <span class="icon is-small mr-1"><i class="fas fa-archive"></i></span>
                     Download Everything (Zip)
@@ -331,6 +341,28 @@
 </div>
 
 <script>
+  async function refreshCourse() {
+    const btn = document.getElementById('refresh-course-btn');
+    btn.classList.add('is-loading');
+    try {
+      const response = await fetch(`/course/${COURSE_ID}/refresh`, { 
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      if (response.ok) {
+        // Reloading the whole course data
+        await loadCourse();
+      } else {
+        alert("Refresh failed");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Refresh error");
+    } finally {
+      btn.classList.remove('is-loading');
+    }
+  }
+
   async function showAssignmentDetail(id) {
     const modal = document.getElementById('detailModal');
     const content = document.getElementById('detailModalContent');

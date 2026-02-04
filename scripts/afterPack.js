@@ -28,6 +28,14 @@ exports.default = async function(context) {
 
   const appName = packager.appInfo.productFilename;
   const appPath = path.join(appOutDir, `${appName}.app`);
+
+  console.log(`  • afterPack       cleaning extended attributes from ${appPath}`);
+  try {
+    execSync(`xattr -cr "${appPath}"`);
+  } catch (e) {
+    console.warn(`  • afterPack       warning: failed to clean xattrs: ${e.message}`);
+  }
+
   const resourcesPath = path.join(appPath, 'Contents', 'Resources');
   const entitlementsPath = path.join(context.packager.info.projectDir, 'build', 'entitlements.mac.plist');
 

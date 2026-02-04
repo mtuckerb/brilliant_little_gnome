@@ -160,10 +160,14 @@ ipcMain.on('start-login', (event, host) => {
     const isHome = url.includes("/d2l/home") || url.includes("/d2l/lp/homepage");
     
     // 2. Success by Cookie presence (Preferred)
-    const cookies = await session.defaultSession.cookies.get({ domain: host });
+    // Filter by domain but be broad to catch subdomain/main domain variants
+    const domainMatch = host.includes('.') ? host.substring(host.indexOf('.')) : host;
+    const cookies = await session.defaultSession.cookies.get({ domain: domainMatch });
+    
     const hasSession = cookies.some(c => c.name === 'd2lSessionVal');
 
     if (isHome || hasSession) {
+      console.log(`[Electron] Login successful on ${url}. Capturing ${cookies.length} cookies.`);
       const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
       mainWindow.webContents.send('login-complete', { host, cookies: cookieString });
       

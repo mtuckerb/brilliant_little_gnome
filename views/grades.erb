@@ -155,15 +155,18 @@
   }
 
   function renderGradeRow(g) {
-    const isGraded = g.numerator !== null;
+    const isGraded = g.numerator !== null && !g.manually_marked_ungraded;
     return `
       <tr class="${isGraded ? '' : 'has-background-white-ter has-text-grey-light'}">
         <td>
           ${g.name_html}
-          ${!isGraded ? '<span class="tag is-small is-light ml-2">Ungraded</span>' : ''}
+          ${g.manually_marked_ungraded ? '<span class="tag is-small is-warning is-light ml-2">Manually Ungraded</span>' : (!isGraded ? '<span class="tag is-small is-light ml-2">Ungraded</span>' : '')}
           ${g.is_extra_credit ? '<span class="tag is-small is-warning ml-2">Extra Credit</span>' : ''}
           <div class="is-pulled-right">
-            <button class="button is-ghost is-small p-0 h-auto" onclick="toggleExtraCredit(${g.id})">
+            <button class="button is-ghost is-small p-0 h-auto mr-2" onclick="toggleUngraded(${g.id})" title="Toggle Ungraded Status">
+              <i class="fas fa-eye-slash ${g.manually_marked_ungraded ? 'has-text-warning' : 'has-text-grey-lighter'}"></i>
+            </button>
+            <button class="button is-ghost is-small p-0 h-auto" onclick="toggleExtraCredit(${g.id})" title="Toggle Extra Credit">
               <i class="fas fa-star ${g.is_extra_credit ? 'has-text-warning' : 'has-text-grey-lighter'}"></i>
             </button>
           </div>
@@ -173,17 +176,17 @@
         </td>
         <td class="has-text-centered is-size-7">${g.rel_weight}%</td>
         <td class="has-text-centered is-size-7" style="font-family: monospace;">
-          ${g.numerator !== null ? g.numerator : '-'} / ${g.denominator || '-'}
+          ${isGraded ? g.numerator : '-'} / ${g.denominator || '-'}
         </td>
         <td class="has-text-right">
-          ${g.perc !== null ? `<span class="tag ${getGradeColor(g.perc)} is-light" style="font-weight: bold;">${g.perc}%</span>` : '-'}
+          ${isGraded && g.perc !== null ? `<span class="tag ${getGradeColor(g.perc)} is-light" style="font-weight: bold;">${g.perc}%</span>` : '-'}
         </td>
       </tr>
     `;
   }
 
   function initGradesChart(grades) {
-    const graded = grades.filter(g => g.numerator !== null).sort((a,b) => new Date(a.last_modified) - new Date(b.last_modified));
+    const graded = grades.filter(g => g.numerator !== null && !g.manually_marked_ungraded).sort((a,b) => new Date(a.last_modified) - new Date(b.last_modified));
     if (graded.length < 2) return;
 
     document.getElementById('grade-chart-container').classList.remove('is-hidden');
@@ -233,6 +236,12 @@
     .then(data => { if (data.status === 'ok') loadGrades(); });
   }
 
+  function toggleUngraded(gradeId) {
+    fetch(`/course/${COURSE_ID}/grades/${gradeId}/toggle_ungraded`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    .then(res => res.json())
+    .then(data => { if (data.status === 'ok') loadGrades(); });
+  }
+
   function getGradeColor(score) {
     if (score === null) return 'is-light';
     if (score >= 90) return 'is-primary';
@@ -266,7 +275,7 @@
     document.getElementById('drop-course-modal').classList.remove('is-active');
   }
 
-  async function confirmDrop() {
+  async function confirmDrop(event) {
     const status = document.getElementById('drop-status-select').value;
     const btn = event.currentTarget;
     btn.classList.add('is-loading');
@@ -280,10 +289,12 @@
       const data = await response.json();
       if (data.status === 'ok') {
         window.location.href = '/dashboard'; // Go back to dashboard as course is now hidden from GPA/active
+      } else {
+        alert("Failed to update course status: " + (data.error || "Unknown error"));
       }
     } catch (err) {
       console.error(err);
-      alert("Failed to update course status.");
+      alert("Failed to update course status. Check server logs.");
     } finally {
       btn.classList.remove('is-loading');
     }
@@ -314,7 +325,7 @@
       </div>
     </section>
     <footer class="modal-card-foot">
-      <button class="button is-danger" onclick="confirmDrop()">Confirm Drop</button>
+      <button class="button is-danger" onclick="confirmDrop(event)">Confirm Drop</button>
       <button class="button" onclick="closeDropModal()">Cancel</button>
     </footer>
   </div>

@@ -1,7 +1,7 @@
 module Brilliant
   class DashboardService
     def self.get_summary_data(user_prefs)
-      courses = Course.all.order(is_pinned: :desc, last_accessed_at: :desc)
+      courses = Course.all.order(is_pinned: :desc, sort_order: :asc, last_accessed_at: :desc)
       all_semesters = courses.map(&:semester).compact.uniq.sort_by { |s| semester_weight(s) }
       latest_semester = all_semesters.last
       overview_semester = user_prefs.default_semester || latest_semester

@@ -6,7 +6,12 @@ module Brilliant
         @course_model_cache = Course.all.index_by(&:org_unit_id)
         
         last_sync_key = "last_notification_sync_at"
-        last_sync_time = full_sync ? nil : UserPreference.get(last_sync_key)
+        last_sync_time = nil
+        begin
+          last_sync_time = full_sync ? nil : ::UserPreference.get(last_sync_key)
+        rescue => e
+          puts "[Sync::NotificationService] Error getting last sync time: #{e.message}"
+        end
 
         # Track all changes detected during this sync session to publish a single aggregate event
         @session_changes = []
@@ -20,9 +25,9 @@ module Brilliant
         feed_items = client.get_unified_feed(courses, since: last_sync_time, force_refresh: true)
         @session_changes += upsert_notification_batch(feed_items, publish_event_flag: false)
 
-        # 3. Course Specific Sync (News, Overviews)
-        # Increase coverage to 30 courses to ensure we don't miss notifications from active but non-pinned courses
-        courses_to_sync = limit ? courses.take(limit) : (full_sync ? courses : courses.take(30))
+        # 3. Course Specific Sync (News, Overviews, Content Updates)
+        # Increase coverage to 60 courses to ensure we don't miss notifications from active but non-pinned courses
+        courses_to_sync = limit ? courses.take(limit) : (full_sync ? courses : courses.take(60))
         sync_course_specific_notifications(courses_to_sync, full_sync, last_sync_time)
 
         # 4. Global Alerts (Efficiency)
@@ -34,7 +39,7 @@ module Brilliant
         client.sync_upcoming_assignment_notifications(courses)
         
         unless client.degraded_mode
-          UserPreference.set(last_sync_key, Time.current.utc.iso8601)
+          ::UserPreference.set(last_sync_key, Time.current.utc.iso8601) rescue nil
         end
 
         # Now that we've finished the batch, publish a single summary if there were many changes,
@@ -61,7 +66,7 @@ module Brilliant
         existing_notifications = Notification.where(external_id: requested_external_ids).index_by(&:external_id)
         
         # Determine current user identity for upsert consistency (upsert_all skips callbacks)
-        current_uid = UserPreference.current&.brightspace_uid
+        current_uid = ::UserPreference.current&.brightspace_uid rescue nil
 
         notifications_to_upsert = items.map do |data|
           external_id = data[:id].to_s
@@ -103,17 +108,19 @@ module Brilliant
             if existing.nil?
               changes_detected << n
             else
-              # Only reset unread status if it's a significant time jump (e.g. instructor reposted or updated)
-              # Also detect body/title changes to trigger notifications/toasts
+              # Detect any significant change to trigger a refresh/event
               content_changed = n[:body] != existing.body || n[:title] != existing.title
-              date_jumped = n[:date] > (existing.date + 1.hour) rescue false
-              date_tweaked = n[:date] > (existing.date + 1.minute) rescue false
               
-              if content_changed || date_tweaked
-                # ONLY force unread if the update is substantial (more than 1 hour newer)
-                if date_jumped
-                  n[:is_read] = false
-                end
+              # Date changes (more than 1 minute difference in either direction)
+              date_diff = (n[:date].to_i - existing.date.to_i).abs rescue 0
+              date_changed = date_diff > 60
+              
+              # Force reset unread if content changed significantly
+              if content_changed || (date_diff > 3600) # 1 hour jump
+                n[:is_read] = false
+              end
+
+              if content_changed || date_changed
                 changes_detected << n
               end
             end
@@ -197,15 +204,16 @@ module Brilliant
             items = client.ensure_array(news_data)
             
             news_notifications = items.map do |item|
-              body = item.dig('Summary', 'Text') || item.dig('Body', 'Text')
+              # Use the full RichTextInput object (Hash) so that html_to_markdown can handle it
+              body_obj = item['Summary'] || item['Body']
               # Only skip if BOTH title and body are missing, which shouldn't happen
-              next if item['Title'].to_s.empty? && body.to_s.empty?
+              next if item['Title'].to_s.empty? && (body_obj.nil? || body_obj.to_s.empty?)
 
               {
                 id: "news_#{course_id}_#{item['Id']}",
                 type: 'News',
                 title: item['Title'],
-                body: body,
+                body: body_obj,
                 date: item['LastModifiedDate'] || item['StartDate'] || item['CreatedDate'],
                 last_modified: item['LastModifiedDate'],
                 start_date: item['StartDate'],
@@ -220,6 +228,11 @@ module Brilliant
             end.compact
             
             results = upsert_notification_batch(news_notifications, publish_event_flag: false)
+            @session_changes += results if @session_changes
+
+            # Content updates for the course
+            content_updates = client.get_content_notifications([c], since: last_sync_time)
+            results = upsert_notification_batch(content_updates, publish_event_flag: false)
             @session_changes += results if @session_changes
 
             # Overview Sync
@@ -249,11 +262,6 @@ module Brilliant
             # Continue to next course
           end
         end
-
-        # Content updates for the batch
-        content_updates = client.get_content_notifications(courses, since: last_sync_time)
-        results = upsert_notification_batch(content_updates, publish_event_flag: false)
-        @session_changes += results if @session_changes
       end
     end
   end

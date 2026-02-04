@@ -240,11 +240,12 @@
         const findMatches = (posts) => {
           let found = [];
           posts.forEach(p => {
-            const bodyMatch = (p.Message?.Html || p.Message?.Text || "").toLowerCase().includes(currentSearchQuery);
+            const bodyHtml = (p.Body?.Html || p.Message?.Html || "").toLowerCase();
+            const bodyText = (p.Body?.Text || p.Message?.Text || "").toLowerCase();
             const postAuthorMatch = (p.Author?.DisplayName || p.PostingUserDisplayName || "").toLowerCase().includes(currentSearchQuery);
             const postSubjectMatch = (p.Subject || "").toLowerCase().includes(currentSearchQuery);
             
-            if (bodyMatch || postAuthorMatch || postSubjectMatch) {
+            if (bodyHtml.includes(currentSearchQuery) || bodyText.includes(currentSearchQuery) || postAuthorMatch || postSubjectMatch) {
               found.push(p.PostId);
             }
             if (p.Replies) found = found.concat(findMatches(p.Replies));
@@ -331,7 +332,7 @@
           <div class="post-header is-flex is-align-items-center is-justify-content-space-between">
             <div class="is-flex is-align-items-center">
               <div class="image is-24x24 mr-2">
-                <img class="is-rounded" src="https://ui-avatars.com/api/?name=${encodeURIComponent(author)}&background=${isInstructor ? '739AC3' : 'ddd'}&color=fff" alt="Avatar">
+                <img class="is-rounded" src="https://ui-avatars.com/api/?name=${author ? encodeURIComponent(author) : 'A'}&background=${isInstructor ? '739AC3' : 'ddd'}&color=fff" alt="Avatar">
               </div>
               <div class="is-size-7">
                 <span class="has-text-weight-bold">${highlightText(author, currentSearchQuery)}</span>
@@ -341,7 +342,7 @@
             <div class="post-date">${new Date(post.DatePosted).toLocaleString()}</div>
           </div>
           <div class="post-body content">
-             ${highlightText(post.Message ? (post.Message.Html || post.Message.Text) : '', currentSearchQuery)}
+             ${highlightText(post.Body ? (post.Body.Html || post.Body.Text) : (post.Message ? (post.Message.Html || post.Message.Text) : ''), currentSearchQuery)}
           </div>
         </div>
         ${post.Replies && post.Replies.length > 0 ? `

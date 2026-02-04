@@ -9,14 +9,17 @@ class BaseController < Sinatra::Base
   set :views, File.expand_path('../../views', __FILE__)
   set :public_folder, File.expand_path('../../public', __FILE__)
   
-  enable :sessions
-  use Rack::Flash, :sweep => true
+  # Configuration shared across all controllers
+  set :session_secret, ENV['SESSION_SECRET'] || 'brilliant_app_session_persistent_secret_12345'
+  
+  # Disable aggressive session hijacking protection which can cause issues in browsers
+  set :protection, :except => [:session_hijacking, :remote_token]
 
   helpers CourseHelpers
 
   helpers do
     def configured?
-      $client.authenticated?
+      $client.authenticated? && !$client.degraded_mode
     end
 
     def flash
@@ -102,10 +105,16 @@ class BaseController < Sinatra::Base
     def get_dashboard_summary_data(overview_semester = nil)
       data = Brilliant::DashboardService.get_summary_data(@user_prefs)
       
-      # If an override semester was provided, we re-calculate or just filter
-      # In the current implementation, we'll let the service handle the default
-      # and if someone specifically asks for another semester we could pass it.
-      # For now, to maintain legacy signature:
+      # Fix for courses that haven't started (0% grade)
+      # Ensure data is consistent even if the service returned raw numbers
+      if data && data[:semester_grades]
+        data[:semester_grades].each do |sg|
+          if sg[:stats] && sg[:stats][:item_count] == 0
+            sg[:stats][:score] = nil
+          end
+        end
+      end
+
       data
     end
 
@@ -115,14 +124,37 @@ class BaseController < Sinatra::Base
   end
 
   before do
+    # ULTIMATE DEBUG
+    puts "[BASE before] path_info: #{request.path_info}, env['PATH_INFO']: #{env['PATH_INFO']}, params: #{params.inspect}"
+    
     @user_prefs ||= UserPreference.current
     Time.zone = @user_prefs.time_zone || "UTC"
     @iana_timezone = Time.zone.tzinfo.name
 
+    # Improved Course Context resolution for middleware
+    # 1. Check for explicit params (if already matched by the current controller)
+    @course_id = params[:id] || params[:course_id]
+    
+    # 2. Extract from URL using Regex on PATH_INFO (reliable for all middleware layers)
+    if @course_id.to_s.empty?
+      full_path = env['PATH_INFO'] || request.path_info
+      # Match patterns like /course/12345 or /api/v1/courses/12345
+      if full_path =~ %r{/courses?/(\d+)}
+        @course_id = $1
+      end
+    end
+
+    if @course_id.present?
+      @course_id = @course_id.to_s.gsub(/[^0-9]/, '') if @course_id.to_s.match?(/^\d+$/)
+      @course ||= Course.find_by(org_unit_id: @course_id.to_s)
+      @course_name = @course&.name || "Course #{@course_id}"
+    end
+
     # Config Check
-    return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/login', '/docs', '/sync/status'].include?(request.path_info) || 
+    return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/auth/magic', '/login', '/callback', '/docs', '/sync/status'].include?(request.path_info) || 
               request.path_info.start_with?('/public') || 
               request.path_info.start_with?('/api/') || 
+              request.path_info.start_with?('/auth/') ||
               request.path_info.start_with?('/docs/')
     
     redirect '/setup' if !configured?
@@ -134,18 +166,6 @@ class BaseController < Sinatra::Base
     end
   end
   
-  not_found do
-    @error_title = "404 - Not Found"
-    @error_message = "The page you are looking for does not exist."
-    erb :error
-  end
-
-  error do
-    @error = env['sinatra.error']
-    @error_title = "500 - Server Error"
-    @error_message = "An unexpected error occurred."
-    puts "[Brilliant Error] #{@error.message}"
-    puts @error.backtrace.first(10).join("\n")
-    erb :error
-  end
+  # Removed not_found and error blocks to prevent middleware interference
+  # These should be defined in the main app class
 end

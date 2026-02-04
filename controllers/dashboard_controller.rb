@@ -98,26 +98,41 @@ class DashboardController < BaseController
   end
 
   post '/notifications/mark_all_read' do
-    unread_notifications = Notification.where(is_read: false).select(:external_id, :course_id)
-    Notification.update_all(is_read: true)
+    query = Notification.where(is_read: false)
+    query = query.where(course_id: params[:course_id]) if params[:course_id].present?
+    query = query.where(semester: params[:semester]) if params[:semester].present?
+    query = query.where(urgency: params[:urgency]) if params[:urgency].present?
+    query = query.where(notification_type: params[:type]) if params[:type].present?
+    query = query.where(is_personal: true) if params[:personal_only] == 'true'
+
+    unread_notifications = query.select(:id, :external_id, :course_id).to_a
+    Notification.where(id: unread_notifications.map(&:id)).update_all(is_read: true)
 
     Thread.new do
-      unread_notifications.each do |n|
-        ext_id = n.external_id
-        begin
-          if ext_id.start_with?("news_")
-            parts = ext_id.split('_')
-            $client.dismiss_news_item(parts[1], parts[2]) if parts.size >= 3
-          elsif ext_id.match?(/^\d+$/)
-            $client.mark_notification_read(ext_id)
+      ActiveRecord::Base.connection_pool.with_connection do
+        unread_notifications.each do |n|
+          ext_id = n.external_id
+          begin
+            if ext_id.start_with?("news_")
+              parts = ext_id.split('_')
+              $client.dismiss_news_item(parts[1], parts[2]) if parts.size >= 3
+            elsif ext_id.match?(/^\d+$/)
+              $client.mark_notification_read(ext_id)
+            end
+          rescue => e
+            puts "[Brilliant] Bulk background sync error: #{e.message}"
           end
-        rescue => e
-          puts "[Brilliant] Bulk background sync error: #{e.message}"
+          sleep 0.1
         end
-        sleep 0.1
       end
     end
-    redirect '/notifications'
+
+    if request.xhr?
+      content_type :json
+      { status: 'ok', count: unread_notifications.size }.to_json
+    else
+      redirect '/notifications'
+    end
   end
 
   post '/notifications/clear' do
@@ -219,7 +234,7 @@ class DashboardController < BaseController
   get '/archive' do
     redirect '/' unless configured?
     @active_tab = 'archive'
-    @courses = Course.all.order(is_pinned: :desc, last_accessed_at: :desc)
+    @courses = Course.all.order(is_pinned: :desc, sort_order: :asc, last_accessed_at: :desc)
     @all_semesters = Course.where.not(semester: [nil, ""]).pluck(:semester).uniq.sort
     erb :archive
   end

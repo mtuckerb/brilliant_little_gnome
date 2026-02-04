@@ -34,13 +34,7 @@ module Api
       # Course Discovery
       get '/api/v1/courses' do
         $client.sync_all_courses_proactively
-        Course.all.order(is_pinned: :desc, last_accessed_at: :desc).to_json
-      end
-
-      get '/api/v1/courses/:id' do
-        course = Course.find_by(org_unit_id: params[:id])
-        halt 404, { error: "Course not found" }.to_json unless course
-        course.to_json
+        Course.all.order(is_pinned: :desc, sort_order: :asc, last_accessed_at: :desc).to_json
       end
 
       get '/api/v1/courses/:id/summary' do
@@ -50,8 +44,35 @@ module Api
         info = extract_course_info(course.name || "", course&.org_unit_id)
         toc = build_toc_tree(params[:id])
 
-        # Always trigger background check for latest Brightspace info
-        Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_course_content(params[:id], $client.get_toc(params[:id])) } }
+        # Proactively background sync the most important parts of the course
+        # This ensures that even if the periodic sync hasn't run, visiting the course
+        # refreshes the data.
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            begin
+              course_id = params[:id]
+              
+              # Sync TOC
+              latest_toc = $client.get_toc(course_id, force_refresh: true)
+              $client.sync_course_content(course_id, latest_toc) if latest_toc
+              
+              # Sync Grades
+              grades_raw = $client.get_grades(course_id, force_refresh: true)
+              $client.sync_grades(course_id, grades_raw) if grades_raw
+              
+              # Sync Assignments
+              assignments = $client.get_assignments(course_id, force_refresh: true)
+              $client.sync_assignments(course_id, assignments) if assignments
+              
+              # Publish update events
+              Brilliant::EventBus.publish(:course_overview_updated, { course_id: course_id })
+              Brilliant::EventBus.publish(:grades_updated, { course_id: course_id })
+              Brilliant::EventBus.publish(:assignments_updated, { course_id: course_id })
+            rescue => e
+              puts "[API] Background proactive sync failed for #{params[:id]}: #{e.message}"
+            end
+          end
+        end
 
         upcoming = Assignment.where(course_id: params[:id], completed: false)
                              .where("due_date > ? AND due_date <= ?", Time.current, Time.current + 7.days)
@@ -100,6 +121,12 @@ module Api
           grade_stats: calculate_grade_stats(params[:id]),
           toc: toc
         }.to_json
+      end
+
+      get '/api/v1/courses/:id' do
+        course = Course.find_by(org_unit_id: params[:id])
+        halt 404, { error: "Course not found" }.to_json unless course
+        course.to_json
       end
 
       get '/api/v1/courses/:id/assignments/summary' do
@@ -219,9 +246,11 @@ module Api
           threads_with_posts = threads_groups.map do |thread_id, posts|
             root_post = posts.find { |p| p['ParentPostId'].nil? || p['ParentPostId'].to_s == "0" || p['ParentPostId'].to_s == "" } || posts.min_by { |p| p['DatePosted'] || "9999" }
 
-            root_author_id = root_post.dig('Author', 'Identifier') || root_post['UserId']
+            root_author_id = root_post.dig('Author', 'Identifier') || root_post['UserId'] || root_post['PosterId']
             user_is_author = current_bs_user_id.present? && root_author_id.to_s == current_bs_user_id.to_s
-            user_participated = posts.any? { |p| (p.dig('Author', 'Identifier') || p['UserId']).to_s == current_bs_user_id.to_s }
+            
+            # IMPROVED: Flag participation if any post in the thread is from the user
+            user_participated = posts.any? { |p| (p.dig('Author', 'Identifier') || p['UserId'] || p['PosterId']).to_s == current_bs_user_id.to_s }
 
             thread = {
               'ThreadId' => thread_id,
@@ -375,13 +404,19 @@ module Api
         end
 
         grades = Grade.where(course_id: course_id).order(Arel.sql("due_date ASC NULLS LAST"), name: :asc).map do |g|
-          perc = (g.numerator && g.denominator && g.denominator > 0) ? ((g.numerator / g.denominator.to_f) * 100).round(1) : nil
-          rel_weight = 0 # Placeholder if weight logic is needed
+          numerator = g.effective_numerator
+          denominator = g.effective_denominator
+          perc = (numerator && denominator && denominator > 0) ? ((numerator / denominator.to_f) * 100).round(1) : nil
+          rel_weight = g.weight || 0
 
           g.as_json.merge({
             name_html: render_markdown_inline(g.name),
+            numerator: numerator,
+            denominator: denominator,
             perc: perc,
-            rel_weight: rel_weight
+            completed: !perc.nil?,
+            rel_weight: rel_weight,
+            manually_marked_ungraded: g.manually_marked_ungraded
           })
         end
 
@@ -448,7 +483,7 @@ module Api
           # Force the pill_style to use the custom_color from the actual course handle if available
           pill_style = info[:pill_style]
           if course && course.custom_color.present?
-            pill_style = course_pill_style(course.name, info[:semester], course.org_unit_id)
+            pill_style = CourseHelpers.course_pill_style(course.name, info[:semester], course.org_unit_id)
           end
 
           n.as_json.merge({
@@ -493,7 +528,7 @@ module Api
                stats: sg[:stats]
              }
           },
-          courses: Course.all.order(is_pinned: :desc, last_accessed_at: :desc).limit(100).map { |c|
+          courses: Course.all.order(is_pinned: :desc, sort_order: :asc, last_accessed_at: :desc).limit(100).map { |c|
              info = extract_course_info(c.name || "", c.org_unit_id)
              {
                org_unit_id: c.org_unit_id,
@@ -530,7 +565,7 @@ module Api
             # Use custom color if available
             pill_style = info[:pill_style]
             if course && course.respond_to?(:custom_color) && course.custom_color.present?
-              pill_style = course_pill_style(course.name, info[:semester], course&.org_unit_id)
+              pill_style = CourseHelpers.course_pill_style(course.name, info[:semester], course&.org_unit_id)
             end
 
             n.as_json.merge(
@@ -564,30 +599,27 @@ module Api
       end
 
       get '/api/v1/search' do
-        query = params[:q].to_s.downcase
-        results = []
-
-        # Courses
-        Course.where("lower(name) LIKE ? OR lower(code) LIKE ?", "%#{query}%", "%#{query}%").limit(5).each do |c|
-          results << { type: 'course', title: c.name, url: "/course/#{c.org_unit_id}", subtitle: c.code }
+        query = params[:q].to_s.strip
+        if query.empty?
+          { results: [] }.to_json
+        else
+          { results: global_search(query) }.to_json
         end
+      end
 
-        # Assignments
-        Assignment.includes(:course).where("lower(assignments.name) LIKE ?", "%#{query}%").limit(10).each do |a|
-          results << { type: 'assignment', title: a.name, url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}", subtitle: a.course&.name }
+      post '/api/v1/courses/reorder' do
+        validate_api_access!
+        data = JSON.parse(request.body.read)
+        ids = data['ids'] # Array of org_unit_ids
+        
+        if ids && ids.is_a?(Array)
+          ids.each_with_index do |org_unit_id, index|
+            Course.where(org_unit_id: org_unit_id.to_s).update_all(sort_order: index)
+          end
+          { status: 'ok' }.to_json
+        else
+          halt 400, { error: "Missing ids array" }.to_json
         end
-
-        # Content Items
-        ContentItem.where("lower(title) LIKE ?", "%#{query}%").limit(10).each do |i|
-          results << { type: 'content', title: i.title, url: "/course/#{i.content_module&.course_id}/module/#{i.module_id}", subtitle: "Module: #{i.content_module&.title}" }
-        end
-
-        # Notifications
-        Notification.where("lower(title) LIKE ? OR lower(body) LIKE ?", "%#{query}%", "%#{query}%").limit(10).each do |n|
-          results << { type: 'notification', title: n.title, url: "/notifications/#{n.id}/view", subtitle: n.course_name }
-        end
-
-        { results: results }.to_json
       end
 
       # Live updates via Server-Sent Events
@@ -702,6 +734,7 @@ module Api
             pill_style: info[:pill_style], name: g.name, name_html: render_markdown_inline(g.name),
             date: date_key,
             time: g.due_date, time_display: g.due_date.in_time_zone(tz_name).strftime("%I:%M %p"),
+            completed: !g.effective_numerator.nil?,
             url: "/course/#{g.course_id}/grades"
           }
         end

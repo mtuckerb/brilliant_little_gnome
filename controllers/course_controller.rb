@@ -6,11 +6,6 @@ class CourseController < BaseController
 
   before '/course/:id*' do
     redirect '/' unless configured?
-    @course_id = params[:id].to_s
-    
-    # Memoize @course for the request
-    @course ||= Course.find_by(org_unit_id: @course_id)
-    @course_name = @course&.name || 'Course ' + @course_id
     
     # Check if we need to rebuild TOC (e.g. not in cache or expired after 10 mins)
     now = Time.now
@@ -139,6 +134,40 @@ class CourseController < BaseController
     erb :announcements
   end
 
+  post '/course/:id/announcements/:announcement_id/create_task' do
+    course_id = params[:id]
+    announcement_id = params[:announcement_id]
+    title = params[:title] || "Task from Announcement"
+    
+    # Check if already exists by name in this course
+    existing = Assignment.find_by(course_id: course_id, name: title)
+    if existing
+      flash[:info] = "A task with this name already exists"
+      redirect back
+    end
+
+    # Generate unique ID
+    brightspace_id = "syn_#{SecureRandom.hex(8)}"
+    
+    # Default to course end of week
+    course = Course.find_by(org_unit_id: course_id)
+    due_date = course.respond_to?(:end_of_week_date) ? course.end_of_week_date(Time.current) : Time.current.end_of_week
+
+    Assignment.create!(
+      course_id: course_id,
+      brightspace_id: brightspace_id,
+      name: title,
+      description: "Synthetic task created from announcement: #{announcement_id}",
+      due_date: due_date,
+      synthetic: true,
+      manually_edited: true,
+      manually_edited_at: Time.current
+    )
+
+    flash[:success] = "Task created: #{title}"
+    redirect "/course/#{course_id}/assignments"
+  end
+
   get '/course/:id/module/:module_id' do
     @module_id = params[:module_id]
     @active_tab = 'module_' + @module_id
@@ -192,6 +221,17 @@ class CourseController < BaseController
     end
   end
 
+  post '/course/:id/grades/:grade_id/toggle_ungraded' do
+    grade = Grade.find_by(id: params[:grade_id], course_id: params[:id])
+    grade.update(manually_marked_ungraded: !grade.manually_marked_ungraded) if grade
+    if request.xhr?
+      content_type :json
+      { status: 'ok', manually_marked_ungraded: grade.manually_marked_ungraded }.to_json
+    else
+      redirect back
+    end
+  end
+
   post '/course/:id/assignments/bulk_optional' do
     ids = params[:ids]
     optional_value = params[:optional] == 'true'
@@ -210,12 +250,71 @@ class CourseController < BaseController
     end
   end
 
+  post '/course/:id/refresh' do
+    begin
+      course_id = params[:id]
+      
+      # Sync Overview
+      latest_overview = $client.get_overview(course_id, force_refresh: true)
+      if latest_overview && @course
+        @course.update(overview_raw: latest_overview.to_json)
+      end
+
+      # Sync TOC
+      latest_toc = $client.get_toc(course_id, force_refresh: true)
+      $client.sync_course_content(course_id, latest_toc) if latest_toc
+      
+      # Sync Grades
+      grades_raw = $client.get_grades(course_id, force_refresh: true)
+      $client.sync_grades(course_id, grades_raw) if grades_raw
+      
+      # Sync Assignments
+      assignments = $client.get_assignments(course_id, force_refresh: true)
+      $client.sync_assignments(course_id, assignments) if assignments
+
+      # Clear local TOC cache
+      @@toc_cache.delete(course_id)
+      @@toc_cache_expiry.delete(course_id)
+
+      # Publish updates
+      Brilliant::EventBus.publish(:course_overview_updated, { course_id: course_id })
+      Brilliant::EventBus.publish(:grades_updated, { course_id: course_id })
+      Brilliant::EventBus.publish(:assignments_updated, { course_id: course_id })
+
+      if request.xhr?
+        content_type :json
+        { status: 'ok' }.to_json
+      else
+        flash[:success] = "Course refreshed successfully"
+        redirect back
+      end
+    rescue => e
+      puts "[CourseController] Refresh failed: #{e.message}"
+      if request.xhr?
+        status 500
+        content_type :json
+        { status: 'error', message: e.message }.to_json
+      else
+        flash[:error] = "Refresh failed: #{e.message}"
+        redirect back
+      end
+    end
+  end
+
   post '/course/:id/drop' do
     status = params[:status]
     halt 400, "Invalid status" unless ['withdrawn', 'early_withdrawal', 'dropped_fail', 'active'].include?(status)
     
     if @course
-      @course.update(status: status, dropped_at: (status == 'active' ? nil : Time.current))
+      begin
+        @course.update(status: status, dropped_at: (status == 'active' ? nil : Time.current))
+      rescue ActiveModel::UnknownAttributeError => e
+        # If column was just added, model might need reset
+        Course.reset_column_information
+        @course = Course.find_by(org_unit_id: @course_id)
+        @course.update(status: status, dropped_at: (status == 'active' ? nil : Time.current))
+      end
+
       if request.xhr?
         content_type :json
         { status: 'ok', course_status: @course.status }.to_json

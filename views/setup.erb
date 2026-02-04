@@ -75,8 +75,8 @@
     if (window.electron) {
       window.electron.startLogin(host);
     } else {
-      // Fallback for non-electron debug
-      window.location.href = `/auth/login?host=${host}`;
+      // Use the new Magic Login route for web browsers
+      window.location.href = `/auth/magic?host=${encodeURIComponent(host)}`;
     }
   }
 

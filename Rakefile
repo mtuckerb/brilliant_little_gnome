@@ -66,3 +66,19 @@ namespace :platforms do
   end
 end
 
+desc "Sync all course data proactively"
+task :sync do
+  require './app'
+  puts "Starting sync..."
+  $client.sync_all_courses_proactively
+  
+  # Wait for background thread
+  loop do
+    status = $client.sync_status
+    puts "[#{Time.now.strftime('%H:%M:%S')}] #{status[:status].upcase}: #{status[:current_task]} (#{status[:progress]}%)"
+    break if ['completed', 'error'].include?(status[:status])
+    sleep 5
+  end
+  puts "Sync finished."
+end
+

@@ -21,10 +21,20 @@ class Course < ActiveRecord::Base
   end
 
   def dropped?
-    status == 'dropped' || status == 'withdrawn' || status == 'early_withdrawal'
+    ['withdrawn', 'early_withdrawal'].include?(status)
   end
 
   def fail_on_drop?
     status == 'dropped_fail'
+  end
+
+  def as_json(options = {})
+    data = super(options)
+    if last_accessed_at
+      data['last_accessed_at'] = last_accessed_at.in_time_zone.iso8601
+    end
+    data['status'] = status
+    data['is_dropped'] = dropped?
+    data
   end
 end
