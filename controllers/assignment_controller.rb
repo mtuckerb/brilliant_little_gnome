@@ -213,6 +213,16 @@ class AssignmentController < BaseController
   end
 
   post '/course/:id/announcements/:announcement_id/create_task' do
+    create_task_from_announcement
+  end
+
+  get '/course/:id/announcements/:announcement_id/create_task' do
+    create_task_from_announcement
+  end
+
+  private
+
+  def create_task_from_announcement
     course_id = params[:id]
     announcement_id = params[:announcement_id]
     

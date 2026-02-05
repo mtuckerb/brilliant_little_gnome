@@ -288,6 +288,17 @@
               <h5 class="title is-6 mb-1">
                 <a href="/notifications/${n.id}/view" class="has-text-dark">${n.display_title || n.title}</a>
               </h5>
+              ${n.notification_type === 'News' && n.course_id ? `
+                <div class="mt-2">
+                  <form action="/course/${n.course_id}/announcements/${n.external_id}/create_task" method="POST" style="display:inline;">
+                    <input type="hidden" name="title" value="${n.display_title || n.title}">
+                    <button type="submit" class="button is-small is-primary is-light py-0 px-2" style="height: 1.5rem;" title="Create synthetic task from this announcement">
+                      <span class="icon is-small"><i class="fas fa-plus icon-is-extra-small"></i></span>
+                      <span style="font-size: 0.7rem; font-weight: bold;">ADD TASK</span>
+                    </button>
+                  </form>
+                </div>
+              ` : ''}
             </div>
           </div>
         </div>

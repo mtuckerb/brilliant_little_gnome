@@ -326,8 +326,8 @@ module Api
           end
         end
 
-        # Limit to most recent 50 to prevent CPU hang during Markdown/FixLinks processing
-        announcements = Notification.where(course_id: course_id, notification_type: 'News').order(date: :desc).limit(50).map do |n|
+        # Include both News and Content updates in the announcements feed
+        announcements = Notification.where(course_id: course_id, notification_type: ['News', 'Content']).order(date: :desc).limit(50).map do |n|
           n.as_json.merge({
             formatted_date: format_date(n.date, "%b %d"),
             full_date: format_date(n.date),
@@ -453,13 +453,17 @@ module Api
           end
         end
 
-        query = Notification.all
-        query = query.where(course_id: params[:course_id]) if params[:course_id].present?
-        query = query.where(semester: params[:semester]) if params[:semester].present?
-        query = query.where(urgency: params[:urgency]) if params[:urgency].present?
-        query = query.where(notification_type: params[:type]) if params[:type].present?
-        query = query.where(is_personal: true) if params[:personal_only] == 'true'
-        query = query.where(is_read: false) unless params[:show_read] == 'true'
+        # Subquery to deduplicate by course_id and title, picking the latest for each
+        dedup_query = Notification.select("MAX(id) as id")
+        dedup_query = dedup_query.where(course_id: params[:course_id]) if params[:course_id].present?
+        dedup_query = dedup_query.where(semester: params[:semester]) if params[:semester].present?
+        dedup_query = dedup_query.where(urgency: params[:urgency]) if params[:urgency].present?
+        dedup_query = dedup_query.where(notification_type: params[:type]) if params[:type].present?
+        dedup_query = dedup_query.where(is_personal: true) if params[:personal_only] == 'true'
+        dedup_query = dedup_query.where(is_read: false) unless params[:show_read] == 'true'
+        dedup_query = dedup_query.group(:course_id, :title)
+
+        query = Notification.where(id: dedup_query)
 
         total = query.count
         sort_by = params[:sort] || 'date'

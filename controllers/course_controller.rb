@@ -127,45 +127,17 @@ class CourseController < BaseController
   get '/course/:id/announcements' do
     @active_tab = 'announcements'
     @breadcrumb_trail = [{ title: 'Announcements', url: "/course/#{@course_id}/announcements" }]
-    @announcements = Notification.where(course_id: @course_id, notification_type: 'News').order(date: :desc)
+    
+    # Deduplicate by course and title to show only the latest content update or news item
+    dedup_ids = Notification.where(course_id: @course_id, notification_type: ['News', 'Content'])
+                             .group(:course_id, :title)
+                             .select("MAX(id)")
+    
+    @announcements = Notification.where(id: dedup_ids).order(date: :desc)
     if @announcements.empty?
       Thread.new { ActiveRecord::Base.connection_pool.with_connection { $client.sync_notifications($client.get_enrollments, $client.get_who_am_i) } }
     end
     erb :announcements
-  end
-
-  post '/course/:id/announcements/:announcement_id/create_task' do
-    course_id = params[:id]
-    announcement_id = params[:announcement_id]
-    title = params[:title] || "Task from Announcement"
-    
-    # Check if already exists by name in this course
-    existing = Assignment.find_by(course_id: course_id, name: title)
-    if existing
-      flash[:info] = "A task with this name already exists"
-      redirect back
-    end
-
-    # Generate unique ID
-    brightspace_id = "syn_#{SecureRandom.hex(8)}"
-    
-    # Default to course end of week
-    course = Course.find_by(org_unit_id: course_id)
-    due_date = course.respond_to?(:end_of_week_date) ? course.end_of_week_date(Time.current) : Time.current.end_of_week
-
-    Assignment.create!(
-      course_id: course_id,
-      brightspace_id: brightspace_id,
-      name: title,
-      description: "Synthetic task created from announcement: #{announcement_id}",
-      due_date: due_date,
-      synthetic: true,
-      manually_edited: true,
-      manually_edited_at: Time.current
-    )
-
-    flash[:success] = "Task created: #{title}"
-    redirect "/course/#{course_id}/assignments"
   end
 
   get '/course/:id/module/:module_id' do
