@@ -39,9 +39,9 @@ class Grade < ActiveRecord::Base
     # If it's a percentage, assume 100
     return 100.0 if displayed_grade.include?('%')
     
-    # Try parsing "18 / 20"
+    # Try parsing "18 / 20" - capture group 3 is the denominator
     match = displayed_grade.match(/(\d+(\.\d+)?)\s*\/\s*(\d+(\.\d+)?)/)
-    return match[4].to_f if match
+    return match[3].to_f if match
     
     nil
   end
@@ -70,8 +70,10 @@ class Grade < ActiveRecord::Base
     end
 
     # Determine if we should use weights or points
-    # If any item has a weight > 0, we'll try weighted calculation
-    use_weights = graded_items.any? { |g| (g.weight || 0) > 0 }
+    # Only use weighted calculation if NON-extra-credit items have meaningful weights
+    # If only extra-credit items have weights, fall back to points-based
+    non_extra_credit_graded = graded_items.reject(&:is_extra_credit)
+    use_weights = non_extra_credit_graded.any? { |g| (g.weight || 0) > 0 }
 
     # Items that have actual data (including manually ungraded)
     data_items = grades.select { |g| (g.numerator || g.effective_numerator) && (g.effective_denominator || 0) > 0 }

@@ -33,112 +33,114 @@ class DownloadJob
 
   def start
     Thread.new do
-      begin
-        @status = :downloading
-        
-        # We keep the UUID in the disk filename to avoid collisions in temp storage,
-        # but we'll use @download_filename when serving it to the user.
-        @zip_path = File.join(Dir.tmpdir, "Brilliant_#{@course_id}_#{@id}.zip")
+      ActiveRecord::Base.connection_pool.with_connection do
+        begin
+          @status = :downloading
+          
+          # We keep the UUID in the disk filename to avoid collisions in temp storage,
+          # but we'll use @download_filename when serving it to the user.
+          @zip_path = File.join(Dir.tmpdir, "Brilliant_#{@course_id}_#{@id}.zip")
 
-        Zip::File.open(@zip_path, Zip::File::CREATE) do |zipfile|
-          @files.each do |f|
-            file_body = nil
-            detected_extension = nil
-            
-            begin
-              if f[:content]
-                file_body = f[:content]
-              elsif f[:path]
-                resp = @client.download_file(f[:path])
-                if resp && resp.code == '200'
-                  file_body = resp.body
-                  
-                  # Try to guess extension from Content-Type if possible
-                  ct = resp['Content-Type']
-                  if ct
-                    if ct.include?('word') || ct.include?('officedocument.word')
-                      detected_extension = ".docx"
-                    elsif ct.include?('pdf')
-                      detected_extension = ".pdf"
-                    elsif ct.include?('excel') || ct.include?('officedocument.spreadsheet')
-                      detected_extension = ".xlsx"
-                    elsif ct.include?('powerpoint') || ct.include?('officedocument.presentation')
-                      detected_extension = ".pptx"
-                    elsif ct.include?('zip')
-                      detected_extension = ".zip"
-                    elsif ct.include?('text/plain')
-                      detected_extension = ".txt"
-                    elsif ct.include?('text/html')
-                      detected_extension = ".html"
-                    elsif ct.include?('image/jpeg')
-                      detected_extension = ".jpg"
-                    elsif ct.include?('image/png')
-                      detected_extension = ".png"
+          Zip::File.open(@zip_path, Zip::File::CREATE) do |zipfile|
+            @files.each do |f|
+              file_body = nil
+              detected_extension = nil
+              
+              begin
+                if f[:content]
+                  file_body = f[:content]
+                elsif f[:path]
+                  resp = @client.download_file(f[:path])
+                  if resp && resp.code == '200'
+                    file_body = resp.body
+                    
+                    # Try to guess extension from Content-Type if possible
+                    ct = resp['Content-Type']
+                    if ct
+                      if ct.include?('word') || ct.include?('officedocument.word')
+                        detected_extension = ".docx"
+                      elsif ct.include?('pdf')
+                        detected_extension = ".pdf"
+                      elsif ct.include?('excel') || ct.include?('officedocument.spreadsheet')
+                        detected_extension = ".xlsx"
+                      elsif ct.include?('powerpoint') || ct.include?('officedocument.presentation')
+                        detected_extension = ".pptx"
+                      elsif ct.include?('zip')
+                        detected_extension = ".zip"
+                      elsif ct.include?('text/plain')
+                        detected_extension = ".txt"
+                      elsif ct.include?('text/html')
+                        detected_extension = ".html"
+                      elsif ct.include?('image/jpeg')
+                        detected_extension = ".jpg"
+                      elsif ct.include?('image/png')
+                        detected_extension = ".png"
+                      end
                     end
+                  else
+                    @failed_files << { title: f[:title], error: "HTTP #{resp&.code || 'No Response'}" }
                   end
-                else
-                  @failed_files << { title: f[:title], error: "HTTP #{resp&.code || 'No Response'}" }
-                end
-              end
-
-              if file_body
-                safe_name = f[:title].gsub(/[^0-9A-Za-z.\- ]/, '_')
-                
-                # If we have a detected extension and the current name doesn't have one, or has the wrong one (like .pdf for word)
-                if detected_extension
-                  current_ext = File.extname(safe_name).downcase
-                  if current_ext.empty?
-                    safe_name += detected_extension
-                  elsif current_ext == ".pdf" && detected_extension != ".pdf"
-                    # Special case: user requested .pdf but it's actually something else (common in our overview logic)
-                    safe_name = File.basename(safe_name, current_ext) + detected_extension
-                  end
-                else
-                  # Fallback to .pdf only if no extension at all
-                  safe_name += ".pdf" unless safe_name.include?('.') || f[:content]
                 end
 
-                # Construct path within zip using the folder metadata
-                zip_entry_path = if f[:folder]
-                                   "#{f[:folder]}/#{safe_name}"
-                                 else
-                                   safe_name
-                                 end
+                if file_body
+                  safe_name = f[:title].gsub(/[^0-9A-Za-z.\- ]/, '_')
+                  
+                  # If we have a detected extension and the current name doesn't have one, or has the wrong one (like .pdf for word)
+                  if detected_extension
+                    current_ext = File.extname(safe_name).downcase
+                    if current_ext.empty?
+                      safe_name += detected_extension
+                    elsif current_ext == ".pdf" && detected_extension != ".pdf"
+                      # Special case: user requested .pdf but it's actually something else (common in our overview logic)
+                      safe_name = File.basename(safe_name, current_ext) + detected_extension
+                    end
+                  else
+                    # Fallback to .pdf only if no extension at all
+                    safe_name += ".pdf" unless safe_name.include?('.') || f[:content]
+                  end
 
-                # Handle duplicate names in zip
-                counter = 1
-                unique_path = zip_entry_path
-                while zipfile.find_entry(unique_path)
-                  ext = File.extname(safe_name)
-                  base = File.basename(safe_name, ext)
-                  new_filename = "#{base}_#{counter}#{ext}"
-                  unique_path = if f[:folder]
-                                     "#{f[:folder]}/#{new_filename}"
+                  # Construct path within zip using the folder metadata
+                  zip_entry_path = if f[:folder]
+                                     "#{f[:folder]}/#{safe_name}"
                                    else
-                                     new_filename
+                                     safe_name
                                    end
-                  counter += 1
-                end
 
-                zipfile.get_output_stream(unique_path) { |os| os.write file_body }
+                  # Handle duplicate names in zip
+                  counter = 1
+                  unique_path = zip_entry_path
+                  while zipfile.find_entry(unique_path)
+                    ext = File.extname(safe_name)
+                    base = File.basename(safe_name, ext)
+                    new_filename = "#{base}_#{counter}#{ext}"
+                    unique_path = if f[:folder]
+                                       "#{f[:folder]}/#{new_filename}"
+                                     else
+                                       new_filename
+                                     end
+                    counter += 1
+                  end
+
+                  zipfile.get_output_stream(unique_path) { |os| os.write file_body }
+                end
+              rescue => e
+                @failed_files << { title: f[:title], error: e.message }
+                puts "File download failed in Job #{@id}: #{f[:title]} - #{e.message}"
+              ensure
+                @completed_files += 1
+                sleep(0.3) # Respectful rate limit
               end
-            rescue => e
-              @failed_files << { title: f[:title], error: e.message }
-              puts "File download failed in Job #{@id}: #{f[:title]} - #{e.message}"
-            ensure
-              @completed_files += 1
-              sleep(0.3) # Respectful rate limit
             end
           end
-        end
 
-        @status = @failed_files.size == @total_files ? :failed : :completed
-        @error = "All files failed to download." if @status == :failed
-      rescue => e
-        @status = :failed
-        @error = e.message
-        puts "Job #{@id} failed: #{e.message}"
-        puts e.backtrace
+          @status = @failed_files.size == @total_files ? :failed : :completed
+          @error = "All files failed to download." if @status == :failed
+        rescue => e
+          @status = :failed
+          @error = e.message
+          puts "Job #{@id} failed: #{e.message}"
+          puts e.backtrace
+        end
       end
     end
   end

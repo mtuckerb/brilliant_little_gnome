@@ -317,15 +317,16 @@
     }
 
     function startAppLogin() {
+      const defaultHost = "courses.maine.edu";
       // Prioritize Electron relay for relogin to ensure cookie capture works
       if (window.electron && window.electron.startLogin) {
         fetch('/api/v1/status')
           .then(r => r.json())
           .then(data => {
-            window.electron.startLogin(data.host || location.hostname);
+            window.electron.startLogin(data.host || defaultHost);
           })
           .catch(() => {
-            window.electron.startLogin(location.hostname);
+            window.electron.startLogin(defaultHost);
           });
       } else {
         // For browser users, try the Magic Login flow first, then fallback to Setup
@@ -335,7 +336,7 @@
             if (data.oauth_enabled) {
               window.location.href = '/login';
             } else {
-              window.location.href = `/auth/magic?host=${encodeURIComponent(data.host || location.hostname)}`;
+              window.location.href = `/auth/magic?host=${encodeURIComponent(data.host || defaultHost)}`;
             }
           })
           .catch(() => {

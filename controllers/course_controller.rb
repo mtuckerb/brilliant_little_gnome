@@ -153,6 +153,35 @@ class CourseController < BaseController
     erb :module_detail
   end
 
+  get '/course/:id/module/:module_id/download_all' do
+    mod = find_module(@toc['Modules'], params[:module_id])
+    if mod.nil?
+      return "Module not found."
+    end
+
+    safe_title = mod['Title'].gsub(/[^0-9a-z]/i, '_')
+    files = collect_all_files(@course_id, mod, safe_title)
+    
+    if files.empty?
+      return "No downloadable files found in this module."
+    end
+
+    filename = "Brilliant-#{@course_id}-#{safe_title}-#{Time.current.strftime('%Y%m%d')}.zip"
+    job = DownloadJob.create(@course_id, files, $client, download_filename: filename)
+    redirect "/job/#{job.id}"
+  end
+
+  get '/course/:id/download_all' do
+    files = collect_everything(@course_id, $client, @toc)
+    if files.empty?
+      return "No downloadable files found in this course."
+    end
+
+    filename = "Brilliant-#{@course_id}-#{Time.current.strftime('%Y%m%d')}.zip"
+    job = DownloadJob.create(@course_id, files, $client, download_filename: filename)
+    redirect "/job/#{job.id}"
+  end
+
   get '/course/:id/search' do
     @query = params[:q]
     @active_tab = 'search'

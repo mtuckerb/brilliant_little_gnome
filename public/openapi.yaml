@@ -1,0 +1,531 @@
+openapi: 3.0.0
+info:
+  title: Brilliant Little Gnome API
+  version: 1.0.0
+  description: Comprehensive API documentation for the Brilliant Little Gnome project - a modern Canvas LMS client
+servers:
+  - url: /api/v1
+    description: API v1
+paths:
+  /auth/cookies:
+    post:
+      summary: Re-authenticate from Electron client
+      description: Sets authentication cookies from the Electron app
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - host
+                - cookies
+              properties:
+                host:
+                  type: string
+                  description: Brightspace host URL
+                cookies:
+                  type: string
+                  description: Authentication cookie string
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '400':
+          description: Bad request - missing parameters or invalid JSON
+  
+  /courses:
+    get:
+      summary: List all courses
+      description: Returns all enrolled courses with metadata
+      responses:
+        '200':
+          description: List of courses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+  
+  /courses/{id}:
+    get:
+      summary: Get course details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Course org unit ID
+      responses:
+        '200':
+          description: Course details
+        '404':
+          description: Course not found
+  
+  /courses/{id}/summary:
+    get:
+      summary: Get comprehensive course summary
+      description: Returns course info, overview, syllabus, upcoming assignments, grade stats, and TOC
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Comprehensive course summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  course:
+                    type: object
+                  overview:
+                    type: object
+                  syllabus_info:
+                    type: array
+                  upcoming_assignments:
+                    type: array
+                  grade_stats:
+                    type: object
+                  toc:
+                    type: object
+        '404':
+          description: Course not found
+  
+  /courses/{id}/assignments/summary:
+    get:
+      summary: Get assignments summary
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: show_completed
+          in: query
+          schema:
+            type: boolean
+          description: Include completed assignments
+      responses:
+        '200':
+          description: Assignments list
+  
+  /courses/{id}/discussions:
+    get:
+      summary: Get discussion topics for a course
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Discussion topics list
+  
+  /courses/{id}/discussions/{forum_id}/topics:
+    get:
+      summary: Get topics in a discussion forum
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: forum_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: force_refresh
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Forum topics
+  
+  /courses/{id}/discussions/{forum_id}/topics/{topic_id}:
+    get:
+      summary: Get discussion topic with posts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: forum_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: topic_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: force_refresh
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Topic with threaded posts
+  
+  /courses/{id}/announcements:
+    get:
+      summary: Get course announcements
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Course announcements
+  
+  /courses/{id}/modules/{module_id}:
+    get:
+      summary: Get module details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: module_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Module details with tasks
+        '404':
+          description: Module not found
+  
+  /courses/{id}/search:
+    get:
+      summary: Search course content
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query
+      responses:
+        '200':
+          description: Search results
+  
+  /courses/{id}/grades/summary:
+    get:
+      summary: Get grades summary
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Grades and statistics
+  
+  /courses/reorder:
+    post:
+      summary: Reorder courses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: integer
+      responses:
+        '200':
+          description: Reorder successful
+        '400':
+          description: Missing ids array
+  
+  /assignments:
+    post:
+      summary: Create a custom assignment
+      description: Create a free-form assignment and attach it to a course
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - course_id
+                - name
+              properties:
+                course_id:
+                  type: integer
+                  description: Course org unit ID
+                name:
+                  type: string
+                  description: Assignment name
+                due_date:
+                  type: string
+                  format: date
+                  description: Due date (YYYY-MM-DD)
+                due_time:
+                  type: string
+                  description: Due time (HH:MM)
+                external_url:
+                  type: string
+                  description: Optional external URL
+                description:
+                  type: string
+                  description: Optional notes/description
+      responses:
+        '200':
+          description: Assignment created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  id:
+                    type: integer
+                  brightspace_id:
+                    type: string
+        '400':
+          description: Missing required parameters
+  
+  /notifications:
+    get:
+      summary: Get global notifications feed
+      description: Returns paginated notifications with filtering options
+      parameters:
+        - name: course_id
+          in: query
+          schema:
+            type: integer
+        - name: semester
+          in: query
+          schema:
+            type: string
+        - name: urgency
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: personal_only
+          in: query
+          schema:
+            type: boolean
+        - name: show_read
+          in: query
+          schema:
+            type: boolean
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [date, urgency]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 25
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: sync
+          in: query
+          schema:
+            type: boolean
+          description: Force sync notifications
+      responses:
+        '200':
+          description: Notifications list with pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+                  notifications:
+                    type: array
+  
+  /dashboard/summary:
+    get:
+      summary: Get dashboard summary
+      description: Returns GPA, courses, assignments, and recent updates
+      parameters:
+        - name: overview_semester
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dashboard data
+  
+  /preferences:
+    get:
+      summary: Get user preferences
+      responses:
+        '200':
+          description: User preferences object
+  
+  /token:
+    get:
+      summary: Get JWT token
+      responses:
+        '200':
+          description: JWT token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+  
+  /status:
+    get:
+      summary: Get system status
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated:
+                    type: boolean
+                  degraded_mode:
+                    type: boolean
+                  host:
+                    type: string
+                  sync_status:
+                    type: object
+                  oauth_enabled:
+                    type: boolean
+  
+  /search:
+    get:
+      summary: Global search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search results
+  
+  /events:
+    get:
+      summary: Server-Sent Events stream
+      description: Real-time event updates via SSE
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  
+  /calendar:
+    get:
+      summary: Get calendar view
+      parameters:
+        - name: view
+          in: query
+          schema:
+            type: string
+            enum: [week, month]
+            default: week
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: show_completed
+          in: query
+          schema:
+            type: boolean
+        - name: weeks_before
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: weeks_after
+          in: query
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: Calendar data with items by date
+  
+  /item_details:
+    get:
+      summary: Get item details
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [assignment, topic, grade]
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: course_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Item details HTML
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  html:
+                    type: string

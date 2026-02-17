@@ -3,6 +3,7 @@ require 'fileutils'
 require 'uri'
 require 'cgi'
 require 'securerandom'
+require 'zip'
 
 # Handle --headless flag before Sinatra/Bundler parses ARGV
 $headless_mode = ARGV.delete('--headless')
@@ -106,6 +107,8 @@ class BrilliantApp < BaseController
   use SyncController
   use McpController
   use Api::V1::ApiController
+
+  get('/docs') { erb :docs }
 
   # PID Management
   if ENV['BRILLIANT_DATA_DIR']

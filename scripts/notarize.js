@@ -17,7 +17,18 @@ module.exports = async function notarizing(context) {
   const teamId = process.env.APPLE_TEAM_ID;
 
   if (!appleId || !appleIdPassword || !teamId) {
-    console.warn('  • notarizing      skipped: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, or APPLE_TEAM_ID not found');
+    const missing = [
+      !appleId && 'APPLE_ID',
+      !appleIdPassword && 'APPLE_APP_SPECIFIC_PASSWORD',
+      !teamId && 'APPLE_TEAM_ID',
+    ].filter(Boolean).join(', ');
+
+    // In CI, fail loudly so we never ship an un-notarized build
+    if (process.env.CI) {
+      throw new Error(`Notarization credentials missing: ${missing}. Check GitHub Secrets.`);
+    }
+
+    console.warn(`  • notarizing      skipped (local build): ${missing} not found`);
     return;
   }
 

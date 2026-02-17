@@ -70,7 +70,14 @@
 <script>
   function startAppLogin() {
     const hostInput = document.querySelector('input[name="host"]');
-    const host = (hostInput && hostInput.value) ? hostInput.value : document.getElementById('login-host-source').value;
+    let host = (hostInput && hostInput.value) ? hostInput.value.trim() : document.getElementById('login-host-source').value;
+    
+    // Safety check: Don't allow localhost/127.0.0.1 as the Brightspace host
+    if (host === '127.0.0.1' || host === 'localhost' || host.startsWith('127.0.0.1:')) {
+      alert("Error: '" + host + "' appears to be your local machine, not a Brightspace host. Please enter the domain where you access your courses (e.g., courses.maine.edu).");
+      if (hostInput) hostInput.focus();
+      return;
+    }
     
     if (window.electron) {
       window.electron.startLogin(host);

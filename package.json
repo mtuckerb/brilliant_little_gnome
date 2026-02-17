@@ -18,9 +18,10 @@
     },
     "afterPack": "scripts/afterPack.js",
     "afterSign": "scripts/notarize.js",
+    "afterAllArtifactBuild": "scripts/notarize-dmg.js",
     "mac": {
       "hardenedRuntime": true,
-      "gatekeeperAssess": true,
+      "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "icon": "build/icon.png",

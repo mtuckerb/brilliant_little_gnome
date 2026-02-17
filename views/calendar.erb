@@ -14,6 +14,15 @@
       </div>
       <div class="level-right">
         <div class="mr-4">
+          <button onclick="openAddAssignmentModal()" class="button is-small is-primary is-light">
+            <span class="icon is-small mr-1">
+              <i class="fas fa-plus"></i>
+            </span>
+            <span>Add Assignment</span>
+          </button>
+        </div>
+
+        <div class="mr-4">
           <button id="toggle-completed-btn" onclick="toggleCompletedFilter()" class="button is-small is-white">
             <span class="icon is-small mr-1">
               <i class="fas fa-eye-slash" id="completed-icon"></i>
@@ -70,6 +79,7 @@
 </div>
 
 <%= erb :'partials/edit_assignment_modal' %>
+<%= erb :'partials/add_assignment_modal' %>
 
 <!-- Fallback simple date modal for Non-assignment items (Grades etc) if needed -->
 <div class="modal" id="simple-date-modal">
@@ -398,9 +408,16 @@
     const courseId = wrapper.dataset.courseId;
     
     if (type === 'assignment') {
-      // Use the robust assignment edit modal
-      fetch(`/course/${courseId}/assignments/${itemId}`, { headers: {'Accept': 'application/json'}})
-        .then(r => r.json())
+      fetch(`/course/${courseId}/assignments/${itemId}`, { 
+        headers: {
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+          return r.json();
+        })
         .then(assignment => {
            const dt = assignment.DueDate ? new Date(assignment.DueDate) : null;
            const tz = getTZParts(dt);
@@ -414,6 +431,10 @@
              externalUrl: assignment.ExternalUrl || '',
              description: assignment.Instructions?.Text || assignment.Description || ''
            });
+        })
+        .catch(err => {
+          console.error('Failed to load assignment for editing:', err);
+          alert('Could not load assignment details. Please try again.');
         });
     } else {
       // Fallback for non-assignments (like Grades)

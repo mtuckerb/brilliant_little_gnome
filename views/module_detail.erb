@@ -135,8 +135,8 @@
                     <td><span class="tag is-primary is-light">${task.type}</span></td>
                     <td>
                       ${task.external_url ? `
-                        <a href="${task.external_url.startsWith('/') ? 'https://' + window.location.host + task.external_url : task.external_url}" target="_blank">${task.name}</a>
-                      ` : task.name}
+                        <a href="${task.external_url.startsWith('/') ? 'https://' + window.location.host + task.external_url : task.external_url}" target="_blank">${task.name_html || task.name}</a>
+                      ` : (task.name_html || task.name)}
                     </td>
                     <td>
                       <input type="date" name="task_dates_${idx}" 

@@ -124,10 +124,45 @@ function createWindow() {
   });
 }
 
-ipcMain.on('start-login', (event, host) => {
+ipcMain.on('start-login', async (event, host) => {
+  // Clear ALL cookies from Brightspace and common SSO providers to ensure a clean login
+  // This prevents stale sessions from causing "Invalid Username/Password" errors
+  const domainsToClear = [host];
+  if (host.includes('.')) {
+    const parentDomain = host.substring(host.indexOf('.'));
+    domainsToClear.push(parentDomain);
+  }
+  // Also clear common SSO provider domains that might have stale auth state
+  const ssoDomains = ['idp.maine.edu', 'accounts.google.com', 'login.microsoftonline.com'];
+  domainsToClear.push(...ssoDomains);
+  
+  try {
+    let clearedCount = 0;
+    for (const domain of domainsToClear) {
+      try {
+        const cookies = await session.defaultSession.cookies.get({ domain: domain });
+        for (const cookie of cookies) {
+          const protocol = cookie.secure ? 'https' : 'http';
+          const cookieDomain = cookie.domain.startsWith('.') ? cookie.domain.substring(1) : cookie.domain;
+          const url = `${protocol}://${cookieDomain}${cookie.path}`;
+          await session.defaultSession.cookies.remove(url, cookie.name);
+          clearedCount++;
+        }
+      } catch (domainErr) {
+        // Some domains may not have cookies, that's fine
+      }
+    }
+    if (clearedCount > 0) {
+      console.log(`[Electron] Cleared ${clearedCount} cookies from ${domainsToClear.length} domains`);
+    }
+  } catch (err) {
+    console.error(`[Electron] Error clearing cookies: ${err.message}`);
+  }
+
   const loginWindow = new BrowserWindow({
     width: 800,
     height: 900,
+    show: false, // Don't show until it starts loading to avoid white window
     title: "Brilliant | Sign In to " + host,
     webPreferences: {
       nodeIntegration: false,
@@ -136,15 +171,46 @@ ipcMain.on('start-login', (event, host) => {
     }
   });
 
+  loginWindow.center();
+
   // Set a standard browser User Agent to help with 1Password/Password Manager detection
   const standardUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
   loginWindow.webContents.setUserAgent(standardUA);
 
-  loginWindow.loadURL(`https://${host}/d2l/login`);
-
+  // Clear storage only on the initial Brightspace page load, not on SSO pages
+  // (SSO providers like Google/Azure AD use sessionStorage for CSRF state)
+  let storageCleared = false;
   loginWindow.webContents.on('dom-ready', () => {
-    const script = "window.alert = function(){}; window.confirm = function(){return true;}; window.prompt = function(){return null;};";
-    loginWindow.webContents.executeJavaScript(script);
+    if (!storageCleared) {
+      storageCleared = true;
+      loginWindow.webContents.executeJavaScript(`
+        try { localStorage.clear(); } catch(e) {}
+        try { sessionStorage.clear(); } catch(e) {}
+      `).catch(() => {});
+    }
+  });
+
+  // Navigate to /d2l/home which redirects through SSO/Google OAuth naturally.
+  // Avoid login.d2l — it fires "Invalid Username/Password" alerts on stale/cleared sessions.
+  loginWindow.loadURL(`https://${host}/d2l/home`).catch(err => {
+    console.error(`[Electron] Failed to load login URL: ${err.message}`);
+    loginWindow.loadURL(`https://${host}/d2l/login`).catch(err2 => {
+      console.error(`[Electron] Fallback URL also failed: ${err2.message}`);
+    });
+  });
+
+  loginWindow.once('ready-to-show', () => {
+    loginWindow.show();
+  });
+
+  loginWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error(`[Electron] Login window failed to load: ${errorDescription} (${errorCode})`);
+    // -3 = aborted (normal during OAuth redirects), -102 = connection refused
+    if (errorCode !== -3 && errorCode !== -102) {
+       loginWindow.loadURL(`https://${host}/d2l/login`).catch(err => {
+         console.error(`[Electron] Fallback URL also failed: ${err.message}`);
+       });
+    }
   });
 
   loginWindow.webContents.on('did-navigate', (event, url) => {
@@ -156,19 +222,33 @@ ipcMain.on('start-login', (event, host) => {
   });
 
   async function checkLoginSuccess(url) {
-    // 1. Success by URL pattern
-    const isHome = url.includes("/d2l/home") || url.includes("/d2l/lp/homepage");
+    // Check for the secure session cookie across host and parent domain
+    // (cookies may be set on either scope)
+    const domainsToCheck = [host];
+    if (host.includes('.')) {
+      const parentDomain = host.substring(host.indexOf('.'));
+      domainsToCheck.push(parentDomain);
+    }
     
-    // 2. Success by Cookie presence (Preferred)
-    // Filter by domain but be broad to catch subdomain/main domain variants
-    const domainMatch = host.includes('.') ? host.substring(host.indexOf('.')) : host;
-    const cookies = await session.defaultSession.cookies.get({ domain: domainMatch });
+    let allCookies = [];
+    for (const domain of domainsToCheck) {
+      const domainCookies = await session.defaultSession.cookies.get({ domain: domain });
+      allCookies = allCookies.concat(domainCookies);
+    }
     
-    const hasSession = cookies.some(c => c.name === 'd2lSessionVal');
+    const uniqueCookies = allCookies.filter((cookie, index, self) => 
+      index === self.findIndex(c => c.name === cookie.name && c.domain === cookie.domain)
+    );
+    
+    const hasSession = uniqueCookies.some(c => c.name === 'd2lSecureSessionVal');
 
-    if (isHome || hasSession) {
-      console.log(`[Electron] Login successful on ${url}. Capturing ${cookies.length} cookies.`);
-      const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    // Only consider login complete when we have the session cookie.
+    // URL check alone is insufficient — /d2l/home is our initial load URL,
+    // and Brightspace will redirect away to SSO if not authenticated.
+    // We need the cookie to confirm auth actually completed.
+    if (hasSession) {
+      console.log(`[Electron] Login successful (cookie found) on ${url}. Capturing ${uniqueCookies.length} unique cookies.`);
+      const cookieString = uniqueCookies.map(c => `${c.name}=${c.value}`).join('; ');
       mainWindow.webContents.send('login-complete', { host, cookies: cookieString });
       
       setTimeout(() => {

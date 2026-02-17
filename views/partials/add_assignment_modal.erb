@@ -1,0 +1,162 @@
+<div id="addAssignmentModal" class="modal">
+  <div class="modal-background" onclick="closeAddAssignmentModal()"></div>
+  <div class="modal-card">
+    <header class="modal-card-head">
+      <p class="modal-card-title">Add Custom Assignment</p>
+      <button class="delete" aria-label="close" onclick="closeAddAssignmentModal()"></button>
+    </header>
+    <section class="modal-card-body">
+      <form id="addAssignmentForm">
+        <div class="field">
+          <label class="label">Course</label>
+          <div class="control">
+            <div class="select is-fullwidth">
+              <select name="course_id" id="add-assignment-course-id" required>
+                <option value="">Select a course...</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label">Assignment Name</label>
+          <div class="control">
+            <input class="input" type="text" name="name" id="add-assignment-name" placeholder="e.g., Study for Midterm" required>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label">Due Date & Time</label>
+          <div class="is-flex" style="gap: 10px;">
+            <div class="control" style="flex: 1;">
+              <input class="input" type="date" name="due_date" id="add-assignment-due-date">
+            </div>
+            <div class="control" style="flex: 1;">
+              <input class="input" type="time" name="due_time" id="add-assignment-due-time">
+            </div>
+          </div>
+          <p class="help">Time Zone: <%= @user_prefs&.time_zone || "UTC" %></p>
+        </div>
+
+        <div class="field">
+          <label class="label">External URL (Optional)</label>
+          <div class="control">
+            <input class="input" type="text" name="external_url" id="add-assignment-external-url" placeholder="https://...">
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label">Description / Notes</label>
+          <div class="control">
+            <textarea class="textarea" name="description" id="add-assignment-description" rows="3"></textarea>
+          </div>
+        </div>
+
+        <div id="add-assignment-error" class="notification is-danger is-light is-hidden mt-3 p-2 is-size-7"></div>
+      </form>
+    </section>
+    <footer class="modal-card-foot">
+      <button type="button" class="button is-primary" id="add-assignment-btn" onclick="saveNewAssignment()">Add Assignment</button>
+      <button type="button" class="button" onclick="closeAddAssignmentModal()">Cancel</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+let coursesLoaded = false;
+
+async function openAddAssignmentModal() {
+  const modal = document.getElementById('addAssignmentModal');
+  const courseSelect = document.getElementById('add-assignment-course-id');
+  
+  if (!coursesLoaded) {
+    try {
+      const response = await fetch('/api/v1/courses');
+      const courses = await response.json();
+      courses.forEach(course => {
+        const option = document.createElement('option');
+        option.value = course.org_unit_id;
+        option.textContent = course.name;
+        courseSelect.appendChild(option);
+      });
+      coursesLoaded = true;
+    } catch (err) {
+      console.error("Failed to load courses:", err);
+    }
+  }
+
+  // Set default date to today if nothing selected
+  if (!document.getElementById('add-assignment-due-date').value) {
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('add-assignment-due-date').value = today;
+    document.getElementById('add-assignment-due-time').value = '23:59';
+  }
+
+  modal.classList.add('is-active');
+  document.documentElement.classList.add('is-clipped');
+}
+
+function closeAddAssignmentModal() {
+  const modal = document.getElementById('addAssignmentModal');
+  modal.classList.remove('is-active');
+  document.documentElement.classList.remove('is-clipped');
+  document.getElementById('add-assignment-error').classList.add('is-hidden');
+}
+
+async function saveNewAssignment() {
+  const form = document.getElementById('addAssignmentForm');
+  const btn = document.getElementById('add-assignment-btn');
+  const errorDiv = document.getElementById('add-assignment-error');
+  
+  const courseId = document.getElementById('add-assignment-course-id').value;
+  const name = document.getElementById('add-assignment-name').value;
+  
+  if (!courseId || !name) {
+    errorDiv.innerText = "Course and Name are required.";
+    errorDiv.classList.remove('is-hidden');
+    return;
+  }
+
+  const payload = {
+    course_id: courseId,
+    name: name,
+    due_date: document.getElementById('add-assignment-due-date').value,
+    due_time: document.getElementById('add-assignment-due-time').value,
+    external_url: document.getElementById('add-assignment-external-url').value,
+    description: document.getElementById('add-assignment-description').value
+  };
+
+  btn.classList.add('is-loading');
+  errorDiv.classList.add('is-hidden');
+
+  try {
+    const response = await fetch('/api/v1/assignments', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest' 
+      },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (data.status === 'ok') {
+      closeAddAssignmentModal();
+      form.reset();
+      if (typeof loadCalendar === 'function') {
+        loadCalendar();
+      } else {
+        location.reload();
+      }
+    } else {
+      errorDiv.innerText = data.error || "Failed to add assignment.";
+      errorDiv.classList.remove('is-hidden');
+    }
+  } catch (err) {
+    console.error(err);
+    errorDiv.innerText = "An error occurred.";
+    errorDiv.classList.remove('is-hidden');
+  } finally {
+    btn.classList.remove('is-loading');
+  }
+}
+</script>

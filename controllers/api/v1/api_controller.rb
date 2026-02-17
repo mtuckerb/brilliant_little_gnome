@@ -37,6 +37,41 @@ module Api
         Course.all.order(is_pinned: :desc, sort_order: :asc, last_accessed_at: :desc).to_json
       end
 
+      post '/api/v1/assignments' do
+        data = JSON.parse(request.body.read) rescue {}
+        
+        if data['course_id'].blank? || data['name'].blank?
+          halt 400, { error: 'course_id and name are required' }.to_json
+        end
+
+        brightspace_id = "syn_#{SecureRandom.hex(8)}"
+        
+        parsed_date = nil
+        if data['due_date'].present?
+          Time.use_zone(@user_prefs.time_zone || "UTC") do
+            if data['due_time'].present?
+              parsed_date = Time.zone.parse("#{data['due_date']} #{data['due_time']}")
+            else
+              parsed_date = Time.zone.parse(data['due_date']).end_of_day
+            end
+          end
+        end
+
+        assignment = Assignment.create!(
+          course_id: data['course_id'],
+          brightspace_id: brightspace_id,
+          name: data['name'],
+          description: data['description'],
+          due_date: parsed_date,
+          external_url: data['external_url'],
+          synthetic: true,
+          manually_edited: true,
+          manually_edited_at: Time.current
+        )
+
+        { status: 'ok', id: assignment.id, brightspace_id: brightspace_id }.to_json
+      end
+
       get '/api/v1/courses/:id/summary' do
         course = Course.find_by(org_unit_id: params[:id])
         halt 404, { error: "Course not found" }.to_json unless course
@@ -358,6 +393,7 @@ module Api
 
         # Sync tasks
         tasks = synthesize_tasks(module_obj, course.name)
+        tasks.each { |t| t[:name_html] = render_markdown_inline(t[:name]) }
 
         # Enrich module topics with description_html
         module_obj['description_html'] = render_content(module_obj['Description'])
@@ -791,6 +827,44 @@ module Api
           html = "<div class='mb-3'><h6 class='is-size-7 has-text-weight-bold mb-2'><i class='fas fa-comment-dots mr-1 has-text-success'></i> Gradebook Comments</h6><div class='box is-light p-3' style='box-shadow: none; border: 1px solid #efefef;'>#{render_content(grade.comments)}</div></div>" if grade && grade.comments.present?
         end
         { html: html }.to_json
+      end
+
+      post '/api/v1/assignments' do
+        data = JSON.parse(request.body.read) rescue {}
+        course_id = data['course_id']
+        name = data['name']
+        
+        halt 400, { status: 'error', error: "Course and Name are required" }.to_json unless course_id && name
+
+        # Generate unique ID
+        brightspace_id = "syn_#{SecureRandom.hex(8)}"
+        
+        parsed_date = nil
+        if data['due_date'].present?
+          tz_name = @user_prefs&.time_zone || "UTC"
+          Time.use_zone(tz_name) do
+            parsed_date = data['due_time'].present? ? Time.zone.parse("#{data['due_date']} #{data['due_time']}") : Time.zone.parse(data['due_date']).end_of_day
+          end
+        end
+
+        begin
+          assignment = Assignment.create!(
+            course_id: course_id,
+            brightspace_id: brightspace_id,
+            name: name,
+            description: data['description'],
+            due_date: parsed_date,
+            external_url: data['external_url'],
+            synthetic: true,
+            manually_edited: true,
+            manually_edited_at: Time.current,
+            user_id: @user_prefs&.user_id # Ensure ownership
+          )
+          { status: 'ok', id: assignment.id, brightspace_id: brightspace_id }.to_json
+        rescue => e
+          status 422
+          { status: 'error', error: e.message }.to_json
+        end
       end
     end
   end
