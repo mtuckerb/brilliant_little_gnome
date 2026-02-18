@@ -8,7 +8,7 @@ module.exports = async function notarizing(context) {
   }
 
   const appName = context.packager.appInfo.productFilename;
-  const appId = context.packager.appInfo.info.build.appId;
+  const appId = context.packager.appInfo.id || context.packager.config.appId || 'com.brilliant.app';
 
   console.log(`  • notarizing      appId=${appId} appName=${appName}`);
 
