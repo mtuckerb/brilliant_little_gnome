@@ -304,12 +304,31 @@ function startRubyApp() {
   }
 
   // Detect Ruby version directory in vendor/bundle/ruby/
+  // Must match the portable Ruby's actual version (e.g., 3.4.0), not stale leftovers
   let rubyVersionDir = usePortable ? '3.4.0' : '3.1.0'; // Best guess fallbacks
   const vendorRubyRoot = path.join(resourceDir, 'vendor', 'bundle', 'ruby');
   if (fs.existsSync(vendorRubyRoot)) {
-    const versions = fs.readdirSync(vendorRubyRoot).filter(f => fs.statSync(path.join(vendorRubyRoot, f)).isDirectory());
+    const versions = fs.readdirSync(vendorRubyRoot)
+      .filter(f => fs.statSync(path.join(vendorRubyRoot, f)).isDirectory())
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); // Descending: prefer latest
     if (versions.length > 0) {
-      rubyVersionDir = versions[0];
+      // If using portable Ruby, match against its actual gems directory
+      if (usePortable) {
+        const portableGemsRoot = path.join(portableRubyBase, 'lib', 'ruby', 'gems');
+        if (fs.existsSync(portableGemsRoot)) {
+          const portableVersions = fs.readdirSync(portableGemsRoot).filter(f => fs.statSync(path.join(portableGemsRoot, f)).isDirectory());
+          const match = versions.find(v => portableVersions.includes(v));
+          if (match) {
+            rubyVersionDir = match;
+          } else {
+            rubyVersionDir = versions[0]; // Fall back to latest vendor version
+          }
+        } else {
+          rubyVersionDir = versions[0];
+        }
+      } else {
+        rubyVersionDir = versions[0];
+      }
       console.log(`[Electron] Detected Ruby version directory: ${rubyVersionDir}`);
     }
   }
@@ -317,15 +336,36 @@ function startRubyApp() {
   const vendorGems = path.join(resourceDir, 'vendor', 'bundle', 'ruby', rubyVersionDir);
   const internalGems = path.join(portableRubyBase, 'lib', 'ruby', 'gems', rubyVersionDir);
 
-  // Find Bundler path
-  let bundlerPath = "";
+  // Find Bundler path and Ruby stdlib path for RUBYLIB
+  let rubyLibPaths = [];
   if (usePortable) {
+    // Add Ruby stdlib path so packaged builds can find rubygems.rb even if
+    // the binary's compiled-in paths don't match the actual install location
+    const stdlibPath = path.join(portableRubyBase, 'lib', 'ruby', rubyVersionDir);
+    if (fs.existsSync(stdlibPath)) {
+      rubyLibPaths.push(stdlibPath);
+      // Also add the architecture-specific subdirectory
+      const archDirs = fs.readdirSync(stdlibPath).filter(f => {
+        const fullPath = path.join(stdlibPath, f);
+        return fs.statSync(fullPath).isDirectory() && (f.includes('darwin') || f.includes('mingw'));
+      });
+      for (const archDir of archDirs) {
+        rubyLibPaths.push(path.join(stdlibPath, archDir));
+      }
+    }
+
+    // Add site_ruby paths
+    const siteRubyPath = path.join(portableRubyBase, 'lib', 'ruby', 'site_ruby', rubyVersionDir);
+    if (fs.existsSync(siteRubyPath)) {
+      rubyLibPaths.push(siteRubyPath);
+    }
+
     const internalGemsGems = path.join(internalGems, 'gems');
     if (fs.existsSync(internalGemsGems)) {
       const dirs = fs.readdirSync(internalGemsGems);
       const bundlerDir = dirs.find(d => d.startsWith('bundler-'));
       if (bundlerDir) {
-        bundlerPath = path.join(internalGemsGems, bundlerDir, 'lib');
+        rubyLibPaths.push(path.join(internalGemsGems, bundlerDir, 'lib'));
       }
     }
   }
@@ -359,7 +399,7 @@ function startRubyApp() {
     BUNDLE_PATH: path.join(resourceDir, 'vendor', 'bundle'),
     GEM_PATH: usePortable ? `${vendorGems}${pathSeparator}${internalGems}` : vendorGems,
     GEM_HOME: vendorGems,
-    RUBYLIB: bundlerPath,
+    RUBYLIB: rubyLibPaths.join(pathSeparator),
     BRILLIANT_DATA_DIR: userDataPath,
     BRILLIANT_ENV: 'electron',
     BOOTSNAP_CACHE_DIR: cacheDir,

@@ -52,12 +52,31 @@ codesign --remove-signature "$RUBY_BIN" 2>/dev/null || true
 otool -L "$RUBY_BIN" | grep "libruby" | awk '{print $1}' | while read -r old_path; do
   if [[ "$old_path" != "@rpath"* ]]; then
     echo "  Changing $old_path to @rpath/libruby.3.4.dylib"
-    install_name_tool -change "$old_path" "@rpath/libruby.3.4.dylib" "$RUBY_BIN" 2>/dev/null || true
+    if ! install_name_tool -change "$old_path" "@rpath/libruby.3.4.dylib" "$RUBY_BIN"; then
+      echo "  WARNING: install_name_tool -change failed for $old_path"
+    fi
+  fi
+done
+
+# Fix any other absolute paths (e.g., libgmp from Homebrew/CI)
+otool -L "$RUBY_BIN" | grep -E "/opt/homebrew|/Users/runner" | awk '{print $1}' | while read -r old_path; do
+  if [[ "$old_path" != "@"* ]]; then
+    dep_name=$(basename "$old_path")
+    echo "  Changing $old_path to @rpath/$dep_name"
+    install_name_tool -change "$old_path" "@rpath/$dep_name" "$RUBY_BIN" || echo "  WARNING: failed to relink $dep_name"
   fi
 done
 
 install_name_tool -add_rpath "@executable_path/../lib" "$RUBY_BIN" 2>/dev/null || true
 install_name_tool -add_rpath "@loader_path/../../lib" "$RUBY_BIN" 2>/dev/null || true
+
+# Verify the relinking worked
+echo "Verifying Ruby binary linkage:"
+otool -L "$RUBY_BIN" | grep -v "/usr/lib\|/System\|@"
+if otool -L "$RUBY_BIN" | grep -q "/Users/runner"; then
+  echo "ERROR: Ruby binary still has CI runner paths! Relinking failed."
+  exit 1
+fi
 
 # 4. Bundle Homebrew dependencies
 echo "Bundling native system dependencies..."
