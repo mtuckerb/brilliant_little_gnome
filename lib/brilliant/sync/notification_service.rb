@@ -72,10 +72,12 @@ module Brilliant
           external_id = data[:id].to_s
           existing = existing_notifications[external_id]
 
-          # Select the most recent date available to ensure updates move to the top
-          dates = [data[:date], data[:last_modified], data[:created_at], data[:start_date]].compact
-          parsed_dates = dates.map { |d| (Time.zone.parse(d.to_s) rescue nil) }.compact
-          best_date = parsed_dates.max
+          # Priority-based date selection: start_date → last_modified → date → created_at (first-wins, not max)
+          candidate_fields = [data[:start_date], data[:last_modified], data[:date], data[:created_at]]
+          best_date = candidate_fields
+            .map { |d| d.present? ? (Time.zone.parse(d.to_s) rescue nil) : nil }
+            .compact
+            .first
 
           # FALLBACK: Use existing date if API returns none. If brand new, use Time.current.
           final_date = best_date || (existing ? existing.date : Time.current)
@@ -112,11 +114,11 @@ module Brilliant
               content_changed = n[:body] != existing.body || n[:title] != existing.title
               
               # Date changes (more than 1 minute difference in either direction)
-              date_diff = (n[:date].to_i - existing.date.to_i).abs rescue 0
+              date_diff = (n[:date].to_i - existing.date.to_i) rescue 0
               date_changed = date_diff > 60
               
-              # Force reset unread if content changed significantly
-              if content_changed || (date_diff > 3600) # 1 hour jump
+              # Force reset unread if content changed significantly or date jumps forward > 1 hour
+              if content_changed || (date_diff > 3600) # 1 hour jump (forward only)
                 n[:is_read] = false
               end
 
@@ -214,9 +216,8 @@ module Brilliant
                 type: 'News',
                 title: item['Title'],
                 body: body_obj,
-                date: item['LastModifiedDate'] || item['StartDate'] || item['CreatedDate'],
+                date: item['StartDate'] || item['LastModifiedDate'] || item['CreatedDate'],
                 last_modified: item['LastModifiedDate'],
-                start_date: item['StartDate'],
                 created_at: item['CreatedDate'],
                 course_id: course_id,
                 course_name: c['OrgUnit']['Name'],
