@@ -26,8 +26,16 @@ module Brilliant
         @session_changes += upsert_notification_batch(feed_items, publish_event_flag: false)
 
         # 3. Course Specific Sync (News, Overviews, Content Updates)
-        # Increase coverage to 60 courses to ensure we don't miss notifications from active but non-pinned courses
-        courses_to_sync = limit ? courses.take(limit) : (full_sync ? courses : courses.take(60))
+        # Filter out frozen courses BEFORE applying the take(60) cap
+        active_courses = courses.reject do |c|
+          org_unit_id = c.is_a?(Hash) ? c.dig('OrgUnit', 'Id')&.to_s : c.org_unit_id.to_s
+          is_frozen = Course.find_by(org_unit_id: org_unit_id)&.is_frozen? rescue false
+          if is_frozen
+            puts "[Sync::NotificationService] Skipping frozen course #{org_unit_id}"
+          end
+          is_frozen
+        end
+        courses_to_sync = limit ? active_courses.take(limit) : (full_sync ? active_courses : active_courses.take(60))
         sync_course_specific_notifications(courses_to_sync, full_sync, last_sync_time)
 
         # 4. Global Alerts (Efficiency)
@@ -197,6 +205,12 @@ module Brilliant
         courses.each do |c|
           begin
             course_id = c['OrgUnit']['Id']
+            # Skip frozen courses
+            course_record = @course_model_cache[course_id.to_s]
+            if course_record&.is_frozen?
+              puts "[Sync::NotificationService] Skipping frozen course #{course_id} in sync_course_specific_notifications"
+              next
+            end
             news_path = "/d2l/api/le/1.40/#{course_id}/news/"
             
             cache_rec = ApiCache.active.find_by(path: news_path)

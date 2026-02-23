@@ -160,6 +160,16 @@ class BrilliantClient
           courses.each do |c|
             begin
               course_id = c['OrgUnit']['Id']
+               course_id_str = course_id.to_s
+               # Skip frozen courses
+               begin
+                 if Course.find_by(org_unit_id: course_id_str)&.is_frozen?
+                   puts "[Sync] Skipping frozen course #{course_id_str}"
+                   next
+                 end
+               rescue
+                 # If Course lookup fails, continue with sync
+               end
               course_name = c['OrgUnit']['Name']
               puts "[Sync] Processing Course: #{course_name} (ID: #{course_id})"
               
@@ -316,6 +326,11 @@ class BrilliantClient
         next if a.nil?
         begin
           course_obj = Course.find_by(org_unit_id: a.course_id.to_s)
+           # Skip assignments from frozen courses
+           if course_obj&.is_frozen?
+             puts "[Sync] Skipping upcoming assignment #{a.id} from frozen course #{a.course_id}"
+             next
+           end
           course_name = course_obj&.name || "Unknown Course"
           type_label = a.assignment_type == 'quiz' ? 'Quiz' : 'Assignment'
           url = a.assignment_type == 'quiz' ? "/course/#{a.course_id}/quizzes/#{a.brightspace_id.sub('quiz_', '')}" : "/course/#{a.course_id}/assignments/#{a.brightspace_id}"
@@ -358,6 +373,16 @@ class BrilliantClient
     courses.each do |c|
       next if c.nil? || c['OrgUnit'].nil?
       course_id = c['OrgUnit']['Id']
+       course_id_str = course_id.to_s
+       # Skip frozen courses
+       begin
+         if Course.find_by(org_unit_id: course_id_str)&.is_frozen?
+           puts "[Sync] Skipping content updates for frozen course #{course_id_str}"
+           next
+         end
+       rescue
+         # If Course lookup fails, continue with sync
+       end
       path = "/d2l/api/le/#{@api_version}/#{course_id}/content/updates"
       path += "?since=#{URI.encode_www_form_component(adjusted_since)}" if adjusted_since
       
