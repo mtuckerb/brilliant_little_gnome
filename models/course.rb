@@ -28,6 +28,10 @@ class Course < ActiveRecord::Base
     status == 'dropped_fail'
   end
 
+  def is_frozen?
+    is_frozen == true
+  end
+
   def as_json(options = {})
     data = super(options)
     if last_accessed_at
