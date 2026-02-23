@@ -39,7 +39,7 @@
       <div class="level is-mobile mb-0">
         <div class="level-left">
           <h1 class="title is-2 has-text-white" style="text-shadow: 0 2px 10px rgba(0,0,0,0.8); line-height: 1.1;">
-            <%= @course_name %>
+            <%= @course_name %> <span id="freeze-badge" style="<%= @course.is_frozen ? '' : 'display:none;' %>">❄️</span>
           </h1>
         </div>
       </div>

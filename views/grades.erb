@@ -78,6 +78,10 @@
                   <div class="dropdown-content">
                     <a class="dropdown-item has-text-danger" onclick="openDropModal()">
                       <i class="fas fa-user-minus mr-2"></i> Drop Course
+                    <a class="dropdown-item" onclick="toggleFreeze()">
+                      <span id="freeze-dropdown-icon"><%= @course&.is_frozen ? '🔥' : '❄️' %></span>
+                      <span id="freeze-dropdown-label"><%= @course&.is_frozen ? ' Unfreeze Course' : ' Freeze Course' %></span>
+                    </a>
                     </a>
                   </div>
                 </div>
@@ -264,6 +268,35 @@
       loadGrades();
     }
   });
+
+  // --- Frozen Course Logic ---
+
+  let courseIsFrozen = <%= @course&.is_frozen ? 'true' : 'false' %>;
+
+  async function toggleFreeze() {
+    document.getElementById('course-actions-dropdown').classList.remove('is-active');
+    const newFrozen = !courseIsFrozen;
+    try {
+      const response = await fetch(`/course/${COURSE_ID}/freeze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+        body: `frozen=${newFrozen}`
+      });
+      const data = await response.json();
+      if (data.status === 'ok') {
+        courseIsFrozen = data.is_frozen;
+        const badge = document.getElementById('freeze-badge');
+        if (badge) badge.style.display = courseIsFrozen ? '' : 'none';
+        document.getElementById('freeze-dropdown-icon').textContent = courseIsFrozen ? '🔥' : '❄️';
+        document.getElementById('freeze-dropdown-label').textContent = courseIsFrozen ? ' Unfreeze Course' : ' Freeze Course';
+      } else {
+        alert('Failed to update freeze status: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update freeze status. Check server logs.');
+    }
+  }
 
   // --- Dropped Course Logic ---
 

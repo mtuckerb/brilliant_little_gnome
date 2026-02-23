@@ -327,4 +327,28 @@ class CourseController < BaseController
       halt 404, "Course not found"
     end
   end
+
+  post '/course/:id/freeze' do
+    frozen = params[:frozen].to_s == 'true'
+    
+    if @course
+      begin
+        @course.update(is_frozen: frozen)
+      rescue ActiveModel::UnknownAttributeError => e
+        # If column was just added, model might need reset
+        Course.reset_column_information
+        @course = Course.find_by(org_unit_id: @course_id)
+        @course.update(is_frozen: frozen)
+      end
+
+      if request.xhr?
+        content_type :json
+        { status: 'ok', is_frozen: @course.is_frozen? }.to_json
+      else
+        redirect back
+      end
+    else
+      halt 404, "Course not found"
+    end
+  end
 end
