@@ -135,7 +135,7 @@
                     <td><span class="tag is-primary is-light">${task.type}</span></td>
                     <td>
                       ${task.external_url ? `
-                        <a href="${task.external_url.startsWith('/') ? 'https://' + window.location.host + task.external_url : task.external_url}" target="_blank">${task.name_html || task.name}</a>
+                        <a href="${task.external_url.startsWith('/') ? 'https://' + BRIGHTSPACE_HOST + task.external_url : task.external_url}" target="_blank">${task.name_html || task.name}</a>
                       ` : (task.name_html || task.name)}
                     </td>
                     <td>
@@ -179,7 +179,7 @@
                   </span>
                   <span class="has-text-weight-medium">
                     ${topic.Url ? `
-                      <a href="${topic.Url.startsWith('/') ? 'https://' + window.location.host + topic.Url : topic.Url}" target="_blank">${topic.Title}</a>
+                      <a href="${topic.Url.startsWith('/') ? 'https://' + BRIGHTSPACE_HOST + topic.Url : topic.Url}" target="_blank">${topic.Title}</a>
                     ` : topic.Title}
                   </span>
                 </div>
@@ -239,7 +239,7 @@
            ${mod.Topics.map(t => `
              <div class="mb-2 is-size-7">
                <i class="fas ${t.Type === 1 ? 'fa-file' : (t.Type === 3 ? 'fa-link' : 'fa-circle')} mr-2 has-text-grey-light"></i>
-               <a href="${t.Url.startsWith('/') ? 'https://' + window.location.host + t.Url : t.Url}" target="_blank">${t.Title}</a>
+               <a href="${t.Url.startsWith('/') ? 'https://' + BRIGHTSPACE_HOST + t.Url : t.Url}" target="_blank">${t.Title}</a>
              </div>
            `).join('')}
            ${mod.Modules.map(m => renderCollapsibleModule(m)).join('')}

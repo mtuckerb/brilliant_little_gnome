@@ -178,6 +178,10 @@
       </script>
     <% end %>
 
+    <script>
+      const BRIGHTSPACE_HOST = '<%= $client&.host || "courses.maine.edu" %>';
+    </script>
+
     <%= yield %>
   </div>
 
