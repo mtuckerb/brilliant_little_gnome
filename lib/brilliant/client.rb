@@ -411,17 +411,20 @@ class BrilliantClient
         all_updates << build_content_notification(c, item_id, title, item['LastModifiedDate'] || item['CreatedDate'])
       end
       
-      # 2. Fallback/Augment: Check local DB for things recently updated
+      # 2. Fallback/Augment: Check local DB for recently created records.
       # This is crucial because TOC sync (sync_course_content) just ran and populated the DB.
       # The /content/updates API can sometimes lag or miss items.
       begin
-        # Use a tighter window for DB fallback if this is a first sync to avoid flooding
-        db_since = since ? (Time.zone.parse(since) - 2.minutes) : (Time.current - 12.hours)
+        # Skip local DB fallback on initial sync (no `since`) to avoid first-run floods.
+        next unless since
+
+        # Use a slightly widened lookback to absorb API/indexing lag.
+        db_since = (Time.zone.parse(since) - 2.minutes) rescue (Time.current - 12.hours)
         
         # Check ContentItems
         ContentItem.joins(:content_module)
                     .where(content_modules: { course_id: course_id.to_s })
-                    .where("content_items.updated_at > ?", db_since)
+                    .where("content_items.created_at > ?", db_since)
                     .find_each do |db_item|
           next if seen_ids.include?(db_item.brightspace_id.to_s)
           
@@ -432,7 +435,7 @@ class BrilliantClient
 
         # Check ContentModules
         ContentModule.where(course_id: course_id.to_s)
-                      .where("updated_at > ?", db_since)
+                      .where("created_at > ?", db_since)
                       .find_each do |db_mod|
           next if seen_ids.include?(db_mod.brightspace_id.to_s)
           
@@ -825,13 +828,44 @@ class BrilliantClient
   def portal_url_for(type, options = {})
     course_id = options[:course_id]
     id = options[:id]
-    base_url = "https://#{@host}/d2l"
+    base_url = "https://#{brightspace_link_host}/d2l"
     case type
     when :course_home then "#{base_url}/home/#{course_id}"
     when :assignment then "#{base_url}/common/dialogs/quickLink/quickLink.d2l?ou=#{course_id}&type=dropbox&id=#{id}"
     when :quiz then "#{base_url}/common/dialogs/quickLink/quickLink.d2l?ou=#{course_id}&type=quiz&id=#{id}"
     else "#{base_url}/home/#{course_id}"
     end
+  end
+
+  def brightspace_link_host
+    preferred = sanitize_host(UserPreference.current&.brightspace_host)
+    return preferred if preferred && !local_or_private_host?(preferred)
+
+    candidate = sanitize_host(@host)
+    return candidate if candidate && !local_or_private_host?(candidate)
+
+    "courses.maine.edu"
+  rescue
+    "courses.maine.edu"
+  end
+
+  def sanitize_host(host)
+    return nil if host.nil? || host.to_s.strip.empty?
+    host.to_s.strip.gsub(%r{\Ahttps?://}i, "").split("/").first
+  end
+
+  def local_or_private_host?(host)
+    bare = host.to_s.downcase.split(":").first
+    return true if bare == "localhost" || bare.end_with?(".local")
+    return false unless bare.match?(/\A\d{1,3}(?:\.\d{1,3}){3}\z/)
+
+    octets = bare.split(".").map(&:to_i)
+    return true if octets[0] == 10
+    return true if octets[0] == 127
+    return true if octets[0] == 192 && octets[1] == 168
+    return true if octets[0] == 172 && (16..31).cover?(octets[1])
+
+    false
   end
 
   def ensure_array(data)

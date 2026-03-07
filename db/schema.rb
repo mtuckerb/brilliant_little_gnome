@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_02_17_000000) do
+ActiveRecord::Schema[7.2].define(version: 2026_03_01_141000) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
@@ -104,6 +104,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_02_17_000000) do
     t.string "status", default: "active"
     t.datetime "dropped_at", precision: nil
     t.integer "sort_order", default: 0
+    t.integer "is_frozen", default: 0, null: false
     t.index ["org_unit_id"], name: "index_courses_on_org_unit_id"
     t.index ["user_id"], name: "index_courses_on_user_id"
   end

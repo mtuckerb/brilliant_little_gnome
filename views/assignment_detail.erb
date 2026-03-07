@@ -40,11 +40,11 @@
               <% end %>
             </div>
 
-            <% 
+            <%
                portal_url = if @assignment['Synthetic'] && (ext_url = @assignment['ExternalUrl'])
-                              ext_url.start_with?('/') ? "https://#{$client.host}#{ext_url}" : ext_url
+                              normalize_brightspace_url(ext_url)
                             else
-                              $client.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id})
+                              $client&.portal_url_for(:assignment, {course_id: @course_id, id: @assignment_id})
                             end
             %>
             <a href="<%= portal_url %>" class="button is-small is-link is-light" target="_blank">
@@ -278,11 +278,8 @@
                           <i class="fas fa-link mr-2 has-text-grey"></i>
                           <strong><%= link['LinkName'] %></strong>
                         </span>
-                        <% 
-                           link_url = link['Href']
-                           if link_url && link_url.start_with?("/")
-                             link_url = "https://#{$client.host}#{link_url}"
-                           end
+                        <%
+                           link_url = normalize_brightspace_url(link['Href'])
                         %>
                         <a href="<%= link_url %>" class="button is-small is-primary is-light" target="_blank">
                           <span class="icon is-small"><i class="fas fa-arrow-right"></i></span>

@@ -38,11 +38,8 @@
                 </span>
                 <span class="has-text-weight-medium">
                   <% if topic['Url'] %>
-                    <% 
-                      full_url = topic['Url']
-                      if full_url.start_with?("/") 
-                        full_url = "https://#{$client.host}#{full_url}"
-                      end
+                    <%
+                      full_url = normalize_brightspace_url(topic['Url'])
                     %>
                     <a href="<%= full_url %>" target="_blank"><%= topic['Title'] %></a>
                   <% else %>

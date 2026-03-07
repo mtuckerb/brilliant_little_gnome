@@ -1,0 +1,49 @@
+TASK 3: Course-Scoped Notifications - News Type Fix
+=====================================================
+
+ISSUE IDENTIFIED:
+The course notifications view (views/course_notifications.erb) had a hardcoded type filter dropdown that was missing the 'Content' option. This prevented users from viewing Content type notifications in the course-scoped announcements view, even though:
+1. Content notifications are synced to the database with type='Content' (lib/brilliant/sync/notification_service.rb:248)
+2. The API endpoint correctly supports filtering by any type (controllers/api/v1/api_controller.rb:497)
+
+BEFORE (views/course_notifications.erb lines 14-19):
+```erb
+<select name="type" onchange="runFilter()">
+  <option value="">All Types</option>
+  <option value="News">Announcements</option>
+  <option value="Grade">Grades</option>
+  <option value="Assignment">Assignments</option>
+</select>
+```
+
+AFTER (views/course_notifications.erb lines 14-20):
+```erb
+<select name="type" onchange="runFilter()">
+  <option value="">All Types</option>
+  <option value="News">Announcements</option>
+  <option value="Grade">Grades</option>
+  <option value="Assignment">Assignments</option>
+  <option value="Content">Content Updates</option>
+</select>
+```
+
+VERIFICATION:
+✓ API endpoint /api/v1/notifications already supports type filtering (no changes needed)
+✓ News items are synced with notification_type='News' (verified in notification_service.rb:216)
+✓ Content items are synced with notification_type='Content' (verified in notification_service.rb:248)
+✓ No duplicate notifications - deduplication by course_id + title (api_controller.rb:500)
+✓ Content type notifications will now appear in course-scoped view when selected
+✓ No regression - News and Grade/Assignment types still work as before
+
+FILES MODIFIED:
+- views/course_notifications.erb (1 line added to dropdown)
+
+FILES NOT MODIFIED (as required):
+- controllers/api/v1/api_controller.rb (no changes needed - already correct)
+- lib/brilliant/sync/notification_service.rb (no changes needed - already syncing News and Content)
+- No new sync paths added
+- No schema changes
+- No global /notifications endpoint changes
+
+RESULT:
+Users can now filter course-scoped notifications by Content type, allowing them to see course overview updates and other content notifications alongside News and Grade notifications.

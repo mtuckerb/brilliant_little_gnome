@@ -1,6 +1,8 @@
 require_relative 'base_controller'
 
 class AssignmentController < BaseController
+  helpers CourseHelpers
+
   before '/course/:id/assignments/:assignment_id*' do
     @course_id = params[:id]
     @assignment_id = params[:assignment_id]

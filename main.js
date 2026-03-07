@@ -425,7 +425,9 @@ function startRubyApp() {
     console.error("Failed to open log file:", err);
   }
 
-  const rubyArgs = ['app.rb', ...process.argv.slice(2)];
+  // Do not forward Electron/Chromium CLI flags into Sinatra.
+  // Flags like "--port" can be interpreted by Sinatra and crash boot.
+  const rubyArgs = ['app.rb'];
 
   rubyApp = spawn(rubyBinary, rubyArgs, {
     cwd: baseDir,

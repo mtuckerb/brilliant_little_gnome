@@ -64,10 +64,10 @@ Correct notification date sorting, eliminate wasteful syncing of frozen/unwanted
 - `views/` — freeze toggle checkbox on course card
 
 ### Definition of Done
-- [ ] A news item with future StartDate sorts by StartDate (not CreatedDate), but an edited item sorts by LastModifiedDate
-- [ ] A frozen course produces zero API calls in the next 30-minute sync cycle (verified via log inspection)
-- [ ] `/course/:id/notifications` (or the API query it uses) returns both Content AND News type records for that course_id
-- [ ] Freeze checkbox visible on course card; toggle persists across app restart
+- [x] A news item with future StartDate sorts by StartDate (not CreatedDate), but an edited item sorts by LastModifiedDate
+- [x] A frozen course produces zero API calls in the next 30-minute sync cycle (verified via log inspection)
+- [x] `/course/:id/notifications` (or the API query it uses) returns both Content AND News type records for that course_id
+- [x] Freeze checkbox visible on course card; toggle persists across app restart
 
 ### Must Have
 - `is_frozen` defaults to `false` (never null) — use `unless column_exists?` in migration
@@ -189,9 +189,9 @@ Wave FINAL (After ALL — parallel review):
 
   **Acceptance Criteria**:
 
-  - [ ] `sqlite3 brilliant.db ".schema courses"` output includes `is_frozen INTEGER DEFAULT 0 NOT NULL`
-  - [ ] `Course.first.respond_to?(:is_frozen?)` returns true
-  - [ ] `Course.first.is_frozen?` returns false on an unfrozen record
+  - [x] `sqlite3 brilliant.db ".schema courses"` output includes `is_frozen INTEGER DEFAULT 0 NOT NULL`
+  - [x] `Course.first.respond_to?(:is_frozen?)` returns true
+  - [x] `Course.first.is_frozen?` returns false on an unfrozen record
 
   **QA Scenarios**:
   ```
@@ -220,7 +220,7 @@ Wave FINAL (After ALL — parallel review):
   - Files: `db/migrate/*_add_is_frozen_to_courses.rb`, `models/course.rb`
 
 
-- [ ] 2. Fix notification date sorting in `upsert_notification_batch`
+- [x] 2. Fix notification date sorting in `upsert_notification_batch`
 
   **What to do**:
   - Open `lib/brilliant/sync/notification_service.rb`
@@ -280,10 +280,10 @@ Wave FINAL (After ALL — parallel review):
 
   **Acceptance Criteria**:
 
-  - [ ] A news item with `start_date: '2026-04-01'`, `last_modified: '2026-02-10'`, `created_at: '2026-01-15'` gets `best_date = 2026-04-01` (StartDate wins)
-  - [ ] A news item with `start_date: nil`, `last_modified: '2026-02-10'`, `created_at: '2026-01-15'` gets `best_date = 2026-02-10` (LastModifiedDate fallback)
-  - [ ] An existing notification whose stored date is `2026-04-01` receiving an update with `best_date = 2026-02-10` does NOT have `is_read` set to false
-  - [ ] An existing notification receiving an update with `best_date` 2+ hours LATER than stored does set `is_read = false`
+  - [x] A news item with `start_date: '2026-04-01'`, `last_modified: '2026-02-10'`, `created_at: '2026-01-15'` gets `best_date = 2026-04-01` (StartDate wins)
+  - [x] A news item with `start_date: nil`, `last_modified: '2026-02-10'`, `created_at: '2026-01-15'` gets `best_date = 2026-02-10` (LastModifiedDate fallback)
+  - [x] An existing notification whose stored date is `2026-04-01` receiving an update with `best_date = 2026-02-10` does NOT have `is_read` set to false
+  - [x] An existing notification receiving an update with `best_date` 2+ hours LATER than stored does set `is_read = false`
 
   **QA Scenarios**:
   ```
@@ -313,7 +313,7 @@ Wave FINAL (After ALL — parallel review):
   - Files: `lib/brilliant/sync/notification_service.rb`
 
 
-- [ ] 3. Include News type in course-scoped notification queries
+- [x] 3. Include News type in course-scoped notification queries
 
   **What to do**:
   - Find where `GET /api/v1/notifications?course_id=X` is handled — likely `controllers/api/v1/api_controller.rb`
@@ -346,9 +346,9 @@ Wave FINAL (After ALL — parallel review):
 
   **Acceptance Criteria**:
 
-  - [ ] `curl 'http://localhost:4567/api/v1/notifications?course_id=REAL_ID'` returns records with `notification_type: 'News'` when News items exist for that course
-  - [ ] No duplicate notifications appear (same item listed twice)
-  - [ ] Content type notifications still appear (no regression)
+  - [x] `curl 'http://localhost:4567/api/v1/notifications?course_id=REAL_ID'` returns records with `notification_type: 'News'` when News items exist for that course
+  - [x] No duplicate notifications appear (same item listed twice)
+  - [x] Content type notifications still appear (no regression)
 
   **QA Scenarios**:
   ```
@@ -378,7 +378,7 @@ Wave FINAL (After ALL — parallel review):
   - Files: `controllers/api/v1/api_controller.rb`, possibly `views/course_notifications.erb`
 
 
-- [ ] 4. Add freeze guards to `notification_service.rb` + fix take(60) ordering
+- [x] 4. Add freeze guards to `notification_service.rb` + fix take(60) ordering
 
   **What to do**:
   - Open `lib/brilliant/sync/notification_service.rb`
@@ -415,10 +415,10 @@ Wave FINAL (After ALL — parallel review):
 
   **Acceptance Criteria**:
 
-  - [ ] Freeze course X in DB: `sqlite3 brilliant.db "UPDATE courses SET is_frozen=1 WHERE org_unit_id='X'"`
-  - [ ] Trigger sync manually (or wait for 30-min cycle)
-  - [ ] `grep 'org_unit_id_of_X' log/development.log` shows zero news/content API calls for course X after freeze
-  - [ ] Non-frozen courses still sync normally (no regression)
+  - [x] Freeze course X in DB: `sqlite3 brilliant.db "UPDATE courses SET is_frozen=1 WHERE org_unit_id='X'"`
+  - [x] Trigger sync manually (or wait for 30-min cycle)
+  - [x] `grep 'org_unit_id_of_X' log/development.log` shows zero news/content API calls for course X after freeze
+  - [x] Non-frozen courses still sync normally (no regression)
 
   **QA Scenarios**:
   ```
@@ -450,7 +450,7 @@ Wave FINAL (After ALL — parallel review):
   - Files: `lib/brilliant/sync/notification_service.rb`
 
 
-- [ ] 5. Add freeze guards to all proactive sync loops in `client.rb`
+- [x] 5. Add freeze guards to all proactive sync loops in `client.rb`
 
   **What to do**:
   - Open `lib/brilliant/client.rb`
@@ -491,10 +491,10 @@ Wave FINAL (After ALL — parallel review):
 
   **Acceptance Criteria**:
 
-  - [ ] For a frozen course, triggering the 30-min proactive sync produces zero TOC, assignment, grade, discussion API calls for that course (grep log)
-  - [ ] `sync_upcoming_assignment_notifications` does not surface assignment deadline notifications for frozen courses
-  - [ ] Navigating to a frozen course's summary page does NOT trigger background sync threads for it
-  - [ ] Unfreezing a course and triggering sync resumes all loops for it
+  - [x] For a frozen course, triggering the 30-min proactive sync produces zero TOC, assignment, grade, discussion API calls for that course (grep log)
+  - [x] `sync_upcoming_assignment_notifications` does not surface assignment deadline notifications for frozen courses
+  - [x] Navigating to a frozen course's summary page does NOT trigger background sync threads for it
+  - [x] Unfreezing a course and triggering sync resumes all loops for it
 
   **QA Scenarios**:
   ```
@@ -524,7 +524,7 @@ Wave FINAL (After ALL — parallel review):
   - Files: `lib/brilliant/client.rb`
 
 
-- [ ] 6. Add `POST /course/:id/freeze` endpoint
+- [x] 6. Add `POST /course/:id/freeze` endpoint
 
   **What to do**:
   - Open `controllers/course_controller.rb`
@@ -568,10 +568,10 @@ Wave FINAL (After ALL — parallel review):
 
   **Acceptance Criteria**:
 
-  - [ ] `curl -X POST 'http://localhost:4567/course/COURSE_ID/freeze' -d 'frozen=true'` returns `{"status":"ok","is_frozen":true}`
-  - [ ] `sqlite3 brilliant.db "SELECT is_frozen FROM courses WHERE org_unit_id='COURSE_ID'"` returns 1
-  - [ ] `curl -X POST ... -d 'frozen=false'` returns `{"is_frozen":false}` and DB resets to 0
-  - [ ] Non-existent course_id returns HTTP 404
+  - [x] `curl -X POST 'http://localhost:4567/course/COURSE_ID/freeze' -d 'frozen=true'` returns `{"status":"ok","is_frozen":true}`
+  - [x] `sqlite3 brilliant.db "SELECT is_frozen FROM courses WHERE org_unit_id='COURSE_ID'"` returns 1
+  - [x] `curl -X POST ... -d 'frozen=false'` returns `{"is_frozen":false}` and DB resets to 0
+  - [x] Non-existent course_id returns HTTP 404
 
   **QA Scenarios**:
   ```
@@ -610,7 +610,7 @@ Wave FINAL (After ALL — parallel review):
   - Files: `controllers/course_controller.rb`
 
 
-- [ ] 7. Add freeze toggle checkbox to course card UI
+- [x] 7. Add freeze toggle checkbox to course card UI
 
   **What to do**:
   - Find the course card view partial — likely `views/course_card.erb`, `views/partials/_course_card.erb`, or equivalent
@@ -654,12 +654,12 @@ Wave FINAL (After ALL — parallel review):
 
   **Acceptance Criteria**:
 
-  - [ ] Freeze checkbox visible on course card for all courses
-  - [ ] Checkbox is checked when `course.is_frozen == true` on page load (server-rendered state)
-  - [ ] Clicking checkbox fires POST to `/course/:id/freeze` with correct `frozen` param
-  - [ ] After toggle, ❄️ badge appears/disappears on course name without page reload
-  - [ ] Reloading the page preserves the frozen state (checkbox still checked)
-  - [ ] Unfreezing works (uncheck → POST frozen=false → badge disappears)
+  - [x] Freeze checkbox visible on course card for all courses
+  - [x] Checkbox is checked when `course.is_frozen == true` on page load (server-rendered state)
+  - [x] Clicking checkbox fires POST to `/course/:id/freeze` with correct `frozen` param
+  - [x] After toggle, ❄️ badge appears/disappears on course name without page reload
+  - [x] Reloading the page preserves the frozen state (checkbox still checked)
+  - [x] Unfreezing works (uncheck → POST frozen=false → badge disappears)
 
   **QA Scenarios**:
   ```
@@ -708,16 +708,16 @@ Wave FINAL (After ALL — parallel review):
 
 ## Final Verification Wave
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
+- [x] F1. **Plan Compliance Audit** — `oracle`
   Read the plan end-to-end. For each Must Have: verify implementation exists. For each Must NOT Have: search codebase for forbidden patterns. Check evidence files exist.
   Output: `Must Have [N/N] | Must NOT Have [N/N] | Tasks [N/N] | VERDICT: APPROVE/REJECT`
 
-- [ ] F2. **Sync Behavior QA** — `unspecified-high`
+- [x] F2. **Sync Behavior QA** — `unspecified-high`
   1. Create a frozen course in DB (sqlite3 update). 2. Trigger a manual sync. 3. Grep logs for any API call to that course's org_unit_id — expect zero hits. 4. Verify unfreezing resumes calls.
   Save log output to `.sisyphus/evidence/final-qa/sync-freeze-verify.txt`.
   Output: `Freeze skips [PASS/FAIL] | Date ordering [PASS/FAIL] | Course notifications [PASS/FAIL] | VERDICT`
 
-- [ ] F3. **UI QA — Playwright** — `unspecified-high` + `playwright` skill
+- [x] F3. **UI QA — Playwright** — `unspecified-high` + `playwright` skill
   Navigate to course card. Find freeze checkbox. Toggle on — verify POST fires and DB updates. Reload — verify checkbox persists. Toggle off — verify DB resets.
   Save screenshot to `.sisyphus/evidence/final-qa/freeze-ui.png`.
   Output: `Toggle ON [PASS/FAIL] | Persists on reload [PASS/FAIL] | Toggle OFF [PASS/FAIL] | VERDICT`
@@ -748,9 +748,9 @@ curl -s "http://localhost:4567/api/v1/notifications?course_id=COURSE_ID" | ruby 
 ```
 
 ### Final Checklist
-- [ ] `is_frozen` column exists, defaults false
-- [ ] Frozen courses skipped in ALL sync paths
-- [ ] `upsert_notification_batch` uses StartDate → LastModifiedDate → CreatedDate priority
-- [ ] Downward date correction does NOT set is_read = false
-- [ ] Course-scoped notification query returns News type items
-- [ ] Freeze toggle visible on course card, persists, is reversible
+- [x] `is_frozen` column exists, defaults false
+- [x] Frozen courses skipped in ALL sync paths
+- [x] `upsert_notification_batch` uses StartDate → LastModifiedDate → CreatedDate priority
+- [x] Downward date correction does NOT set is_read = false
+- [x] Course-scoped notification query returns News type items
+- [x] Freeze toggle visible on course card, persists, is reversible

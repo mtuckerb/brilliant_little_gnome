@@ -46,6 +46,51 @@ module CourseHelpers
     Brilliant::TextProcessor.fix_links(html, $client&.host)
   end
 
+  # Normalize a URL to point to Brightspace, not the local Brilliant server.
+  # Handles: relative paths (/d2l/...), full local URLs (http://10.1.0.31:4567/d2l/...), and correct URLs.
+  def normalize_brightspace_url(url)
+    return nil if url.nil? || url.to_s.strip.empty?
+    bs_host = brightspace_link_host
+    normalized = url.to_s.strip
+    # Replace any local/wrong host prefix in full URLs with the Brightspace host
+    normalized = normalized.sub(%r{\Ahttps?://(?!#{Regexp.escape(bs_host)})[\w.:-]+(?=/d2l|/content|/le/)}, "https://#{bs_host}")
+    # If it's a relative path, prepend the Brightspace host
+    normalized = "https://#{bs_host}#{normalized}" if normalized.start_with?('/')
+    normalized
+  end
+
+  def brightspace_link_host
+    preferred = @user_prefs&.brightspace_host.presence || UserPreference.current&.brightspace_host.presence
+    preferred = sanitize_host(preferred)
+    return preferred if preferred && !local_or_private_host?(preferred)
+
+    client_host = sanitize_host($client&.host)
+    return client_host if client_host && !local_or_private_host?(client_host)
+
+    'courses.maine.edu'
+  rescue
+    'courses.maine.edu'
+  end
+
+  def sanitize_host(host)
+    return nil if host.nil? || host.to_s.strip.empty?
+    host.to_s.strip.gsub(%r{\Ahttps?://}i, '').split('/').first
+  end
+
+  def local_or_private_host?(host)
+    bare = host.to_s.downcase.split(':').first
+    return true if bare == 'localhost' || bare.end_with?('.local')
+
+    return false unless bare.match?(/\A\d{1,3}(?:\.\d{1,3}){3}\z/)
+    octets = bare.split('.').map(&:to_i)
+    return true if octets[0] == 10
+    return true if octets[0] == 127
+    return true if octets[0] == 192 && octets[1] == 168
+    return true if octets[0] == 172 && (16..31).cover?(octets[1])
+
+    false
+  end
+
   def html_to_markdown(html)
     Brilliant::TextProcessor.html_to_markdown(html)
   end

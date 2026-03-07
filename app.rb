@@ -5,8 +5,10 @@ require 'cgi'
 require 'securerandom'
 require 'zip'
 
-# Handle --headless flag before Sinatra/Bundler parses ARGV
+# Handle and sanitize CLI args before Sinatra/Bundler parses ARGV.
+# Electron/Chromium flags (for example "--port") must not reach Sinatra.
 $headless_mode = ARGV.delete('--headless')
+ARGV.clear
 
 # Stream handling for sidecar stability
 def $stderr.write(data); super rescue nil; end
