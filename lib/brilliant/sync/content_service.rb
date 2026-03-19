@@ -8,6 +8,8 @@ module Brilliant
         @all_modules_to_upsert = []
         @all_items_to_upsert = []
         @course_id = course_id.to_s
+        @sync_now = Time.current
+        preload_existing_content!
         
         process_module_tree(nil, modules_data)
         
@@ -49,34 +51,39 @@ module Brilliant
 
       private
 
+      def preload_existing_content!
+        @existing_modules = ContentModule.where(course_id: @course_id).index_by { |m| m.brightspace_id.to_s }
+        @existing_items = ContentItem.joins(:content_module)
+                                     .where(content_modules: { course_id: @course_id })
+                                     .index_by { |i| "#{i.module_id}|#{i.brightspace_id}" }
+      end
+
       def process_module_tree(parent_id, modules_data)
         modules_data.each_with_index do |mod, index|
           m_id = mod['ModuleId'].to_s
-          @all_modules_to_upsert << {
+          module_attrs = {
             course_id: @course_id,
             brightspace_id: m_id,
             title: mod['Title'],
             description: html_to_markdown(mod['Description']),
             sort_order: index,
-            parent_id: parent_id,
-            updated_at: Time.current,
-            created_at: Time.current
+            parent_id: parent_id
           }
+          enqueue_module_upsert(module_attrs)
           
           (mod['Topics'] || []).each_with_index do |topic, t_index|
             t_id = (topic['Identifier'] || topic['TopicId'] || topic['Id']).to_s
-            @all_items_to_upsert << {
+            item_attrs = {
               module_id: m_id,
               brightspace_id: t_id,
               title: topic['Title'],
               item_type: (topic['TypeIdentifier'] || topic['Type']).to_s,
-              url: topic['Url'],
+              url: normalize_content_item_url(topic['Url']),
               is_hidden: topic['IsHidden'] || false,
               sort_order: t_index,
-              attachments: [topic].to_json,
-              updated_at: Time.current,
-              created_at: Time.current
+              attachments: [topic].to_json
             }
+            enqueue_item_upsert(item_attrs)
 
             if topic['Url'] && (topic['Url'].start_with?('/content/enforced/') || topic['Url'].include?('/viewContent/'))
               client.enqueue_attachment_task(@course_id, "content/topics/#{t_id}/file", t_id, topic['Title'])
@@ -85,6 +92,53 @@ module Brilliant
           
           process_module_tree(m_id, mod['Modules']) if mod['Modules']
         end
+      end
+
+      def enqueue_module_upsert(attrs)
+        existing = @existing_modules[attrs[:brightspace_id].to_s]
+        if existing
+          unchanged = existing.course_id.to_s == attrs[:course_id].to_s &&
+                      existing.title.to_s == attrs[:title].to_s &&
+                      existing.description.to_s == attrs[:description].to_s &&
+                      existing.sort_order.to_i == attrs[:sort_order].to_i &&
+                      existing.parent_id.to_s == attrs[:parent_id].to_s
+          return if unchanged
+        end
+
+        @all_modules_to_upsert << attrs.merge(
+          updated_at: @sync_now,
+          created_at: existing ? existing.created_at : @sync_now
+        )
+      end
+
+      def enqueue_item_upsert(attrs)
+        existing = @existing_items["#{attrs[:module_id]}|#{attrs[:brightspace_id]}"]
+        if existing
+          unchanged = existing.module_id.to_s == attrs[:module_id].to_s &&
+                      existing.brightspace_id.to_s == attrs[:brightspace_id].to_s &&
+                      existing.title.to_s == attrs[:title].to_s &&
+                      existing.item_type.to_s == attrs[:item_type].to_s &&
+                      existing.url.to_s == attrs[:url].to_s &&
+                      existing.is_hidden == attrs[:is_hidden] &&
+                      existing.sort_order.to_i == attrs[:sort_order].to_i &&
+                      existing.attachments.to_s == attrs[:attachments].to_s
+          return if unchanged
+        end
+
+        @all_items_to_upsert << attrs.merge(
+          updated_at: @sync_now,
+          created_at: existing ? existing.created_at : @sync_now
+        )
+      end
+
+      def normalize_content_item_url(url)
+        return nil if url.nil? || url.to_s.strip.empty?
+        value = url.to_s.strip
+        return value if value.match?(%r{\Ahttps?://}i)
+
+        host = client.host.to_s.strip
+        host = "courses.maine.edu" if host.empty?
+        value.start_with?("/") ? "https://#{host}#{value}" : "https://#{host}/#{value}"
       end
     end
   end

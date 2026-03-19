@@ -1,0 +1,98 @@
+{
+  "version": 2,
+  "providers": {
+    "google": {
+      "totalCost": 3.5691431,
+      "tokens": {
+        "input": 4703318,
+        "output": 24806,
+        "cache_read": 3548294,
+        "cache_write": 0
+      },
+      "models": {
+        "gemini-3-pro": {
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "messageCount": 2,
+          "lastUsed": "2026-02-06T21:39:13.131Z"
+        },
+        "gemini-3-pro-preview": {
+          "cost": 1.1410551999999998,
+          "tokens": {
+            "input": 418584,
+            "output": 7446,
+            "cache_read": 590516,
+            "cache_write": 0
+          },
+          "messageCount": 33,
+          "lastUsed": "2026-02-06T21:41:30.012Z"
+        },
+        "gemini-3-flash-preview": {
+          "cost": 2.4280879000000004,
+          "tokens": {
+            "input": 4284734,
+            "output": 17360,
+            "cache_read": 2957778,
+            "cache_write": 0
+          },
+          "messageCount": 176,
+          "lastUsed": "2026-02-06T21:53:21.698Z"
+        }
+      },
+      "messageCount": 211,
+      "firstSeen": "2026-02-06T21:39:12.140Z",
+      "lastSeen": "2026-02-06T21:53:21.698Z"
+    },
+    "anthropic": {
+      "totalCost": 13.509031500000008,
+      "tokens": {
+        "input": 430,
+        "output": 48098,
+        "cache_read": 1928780,
+        "cache_write": 3255370
+      },
+      "models": {
+        "claude-sonnet-4-5": {
+          "cost": 13.509031500000008,
+          "tokens": {
+            "input": 430,
+            "output": 48098,
+            "cache_read": 1928780,
+            "cache_write": 3255370
+          },
+          "messageCount": 96,
+          "lastUsed": "2026-02-06T22:04:20.398Z"
+        }
+      },
+      "messageCount": 96,
+      "firstSeen": "2026-02-06T21:53:21.732Z",
+      "lastSeen": "2026-02-06T22:04:20.398Z"
+    }
+  },
+  "sessions": {
+    "ses_3d035e59cffe572L6VwpfeQVBN": {
+      "sessionID": "ses_3d035e59cffe572L6VwpfeQVBN",
+      "cost": 17.078174600000004,
+      "tokens": {
+        "input": 4703748,
+        "output": 72904,
+        "cache_read": 5477074,
+        "cache_write": 3255370
+      },
+      "providerBreakdown": {
+        "google": 3.5691431,
+        "anthropic": 13.509031500000008
+      },
+      "startedAt": "2026-02-06T21:39:12.140Z",
+      "lastMessageAt": "2026-02-06T22:04:20.398Z"
+    }
+  },
+  "limits": {},
+  "totalSpend": 17.078174600000004,
+  "lastUpdated": "2026-02-06T22:04:20.398Z"
+}
