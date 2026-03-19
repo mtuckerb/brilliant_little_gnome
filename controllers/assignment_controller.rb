@@ -24,7 +24,24 @@ class AssignmentController < BaseController
     @feedback = $client.get_assignment_feedback(@course_id, @assignment_id) unless @assignment['Synthetic']
     @rubrics = $client.get_assignment_rubrics(@course_id, @assignment_id) unless @assignment['Synthetic']
     @submission_data = $client.get_assignment_submissions(@course_id, @assignment_id) unless @assignment['Synthetic']
-    
+    @submissions = @submission_data if @submission_data.is_a?(Array)
+
+    # Look up matching grade entry for this assignment (for gradebook comments / score fallback)
+    unless @assignment['Synthetic']
+      local_assignment = Assignment.find_by(brightspace_id: @assignment_id, course_id: @course_id)
+      grade = nil
+      grade = Grade.find_by(brightspace_id: local_assignment.grade_item_id, course_id: @course_id) if local_assignment&.grade_item_id
+      grade ||= Grade.where(course_id: @course_id).where("LOWER(name) = ?", @assignment['Name'].to_s.downcase).first if @assignment['Name']
+      if grade
+        @grade_entry = {
+          'DisplayedGrade' => grade.displayed_grade,
+          'PointsNumerator' => grade.numerator || grade.effective_numerator,
+          'PointsDenominator' => grade.denominator || grade.effective_denominator,
+          'Comments' => grade.comments.present? ? { 'Text' => grade.comments, 'Html' => grade.comments } : nil
+        }
+      end
+    end
+
     @breadcrumb_trail = [
       { title: 'Assignments', url: "/course/#{@course_id}/assignments" },
       { title: @assignment['Name'], url: "/course/#{@course_id}/assignments/#{@assignment_id}" }

@@ -809,7 +809,41 @@ module Api
               desc_text = rec.description if rec && rec.description.present?
             end
 
-            html = desc_text.present? ? "<div class='mb-3'><h6 class='is-size-7 has-text-weight-bold mb-2'><i class='fas fa-info-circle mr-1 has-text-primary'></i> Instructions</h6><div class='box is-light p-3' style='box-shadow: none; border: 1px solid #efefef;'>#{render_content(desc_text)}</div></div>" : "<p class='has-text-grey italic'>No description available.</p>"
+            html = desc_text.present? ? "<div class='mb-3'><h6 class='is-size-7 has-text-weight-bold mb-2'><i class='fas fa-info-circle mr-1 has-text-primary'></i> Instructions</h6><div class='box is-light p-3' style='box-shadow: none; border: 1px solid #efefef;'>#{render_content(desc_text)}</div></div>" : ""
+
+            # Include feedback from dropbox if available
+            begin
+              feedback = $client.get_assignment_feedback(course_id, item_id)
+              if feedback
+                fb_desc = feedback['Feedback']
+                fb_text = fb_desc.is_a?(Hash) ? (fb_desc['Html'] || fb_desc['Text'] || "") : fb_desc.to_s
+                if fb_text.strip.present?
+                  html += "<div class='mb-3'><h6 class='is-size-7 has-text-weight-bold mb-2'><i class='fas fa-comment-dots mr-1 has-text-success'></i> Feedback</h6><div class='box is-light p-3' style='box-shadow: none; border: 1px solid #efefef; border-left: 3px solid #48c774;'>#{render_content(fb_text)}</div></div>"
+                end
+              end
+            rescue => e
+              # Feedback not available — that's fine
+            end
+
+            # Include grade/score info if available
+            local_rec = Assignment.find_by(brightspace_id: item_id, course_id: course_id)
+            grade = nil
+            grade = Grade.find_by(brightspace_id: local_rec.grade_item_id, course_id: course_id) if local_rec&.grade_item_id
+            grade ||= Grade.where(course_id: course_id).where("LOWER(name) = ?", (assignment&.dig('Name') || "").downcase).first if assignment&.dig('Name')
+            if grade
+              score_html = ""
+              if grade.displayed_grade.present?
+                score_html += "<span class='tag is-warning is-light'><strong>Score: #{grade.displayed_grade}</strong></span> "
+              end
+              if grade.comments.present?
+                score_html += "<div class='mt-2'>#{render_content(grade.comments)}</div>"
+              end
+              if score_html.present?
+                html += "<div class='mb-3'><h6 class='is-size-7 has-text-weight-bold mb-2'><i class='fas fa-award mr-1 has-text-warning'></i> Grade</h6><div class='box is-light p-3' style='box-shadow: none; border: 1px solid #efefef; border-left: 3px solid #ffdd57;'>#{score_html}</div></div>"
+              end
+            end
+
+            html = "<p class='has-text-grey italic'>No details available.</p>" if html.strip.empty?
           end
         when 'topic'
           topic = $client.get_toc(course_id).then { |toc| find_topic(toc['Modules'], item_id) }

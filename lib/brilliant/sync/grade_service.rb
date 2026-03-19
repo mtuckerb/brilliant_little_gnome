@@ -73,6 +73,23 @@ module Brilliant
           # Determine weight
           weight = defn&.dig('Weight') || val&.dig('Weight') || val&.dig('WeightAchieved') || val&.dig('GradeValue', 'Weight')
 
+          # Extract comments/feedback from grade value
+          comments_obj = val&.dig('Comments') || val&.dig('GradeValue', 'Comments')
+          comments_text = if comments_obj.is_a?(Hash)
+                            comments_obj['Html'] || comments_obj['Text']
+                          elsif comments_obj.is_a?(String)
+                            comments_obj
+                          end
+          # Also check PrivateComments as a fallback
+          unless comments_text.present?
+            priv_comments = val&.dig('PrivateComments') || val&.dig('GradeValue', 'PrivateComments')
+            if priv_comments.is_a?(Hash)
+              comments_text = priv_comments['Html'] || priv_comments['Text']
+            elsif priv_comments.is_a?(String)
+              comments_text = priv_comments
+            end
+          end
+
           {
             course_id: course_id.to_s,
             brightspace_id: obj_id,
@@ -81,6 +98,7 @@ module Brilliant
             numerator: numerator,
             denominator: denominator,
             weight: weight,
+            comments: comments_text,
             is_extra_credit: defn&.dig('IsExtraCredit') || defn&.dig('IsBonus') || false,
             due_date: due_date,
             grade_object_type: defn&.dig('GradeType') || val&.dig('GradeObjectTypeName'),
