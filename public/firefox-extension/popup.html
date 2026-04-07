@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>Brilliant</h1>
+  <p class="subtitle">Brightspace Connector</p>
+
+  <div id="config">
+    <label for="server">Brilliant Server</label>
+    <input type="text" id="server" placeholder="http://10.1.0.75:4567">
+  </div>
+
+  <button id="send">Send Cookies to Brilliant</button>
+
+  <div id="status" class="hidden"></div>
+
+  <p class="hint">Log into <a href="https://courses.maine.edu" target="_blank">Brightspace</a> first, then click the button above.</p>
+  <p class="hint" style="text-align:right;color:#bbb;" id="version"></p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
