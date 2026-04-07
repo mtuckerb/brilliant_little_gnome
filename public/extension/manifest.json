@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "One-click authentication for Brilliant LMS companion app",
   "permissions": ["cookies", "storage"],
-  "host_permissions": ["https://courses.maine.edu/*"],
+  "host_permissions": ["https://courses.maine.edu/*", "http://10.1.0.75:4567/*"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Send Brightspace cookies to Brilliant"
