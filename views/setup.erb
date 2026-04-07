@@ -23,13 +23,24 @@
 
           <div class="notification is-success is-light">
             <h4 class="title is-5">Option 2: Browser Extension (Remote Users)</h4>
-            <p>If you're connecting to Brilliant from another computer, use the Chrome extension to send your Brightspace session cookies.</p>
-            <ol class="mt-3" style="margin-left: 1.2em; font-size: 0.9em;">
-              <li>Download the <a href="/extension" target="_blank"><strong>extension folder</strong></a> from the server</li>
-              <li>Open <code>chrome://extensions</code> and enable <strong>Developer Mode</strong></li>
-              <li>Click <strong>Load Unpacked</strong> and select the downloaded folder</li>
+            <p>If you're connecting to Brilliant from another computer, use a browser extension to send your Brightspace session cookies.</p>
+
+            <h6 class="mt-4 mb-2"><strong>Firefox</strong> (Recommended)</h6>
+            <ol style="margin-left: 1.2em; font-size: 0.9em;">
+              <li>Download the <a href="/firefox-extension" target="_blank"><strong>firefox-extension folder</strong></a></li>
+              <li>Open <code>about:debugging#/runtime/this-firefox</code></li>
+              <li>Click <strong>Load Temporary Add-on</strong> and select any file in the folder</li>
               <li>Log into <a href="https://courses.maine.edu" target="_blank">Brightspace</a>, then click the extension icon</li>
             </ol>
+
+            <h6 class="mt-4 mb-2"><strong>Chrome</strong></h6>
+            <ol style="margin-left: 1.2em; font-size: 0.9em;">
+              <li>Download the <a href="/extension" target="_blank"><strong>extension folder</strong></a></li>
+              <li>Open <code>chrome://extensions</code> and enable <strong>Developer Mode</strong></li>
+              <li>Click <strong>Load Unpacked</strong> and select the folder</li>
+              <li>Log into <a href="https://courses.maine.edu" target="_blank">Brightspace</a>, then click the extension icon</li>
+            </ol>
+            <p class="mt-2" style="font-size: 0.85em;"><em>Note: Chrome may block connections to local IPs. Use Firefox if you see connection errors.</em></p>
           </div>
 
           <div class="is-divider" data-content="OR"></div>
