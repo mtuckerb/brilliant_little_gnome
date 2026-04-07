@@ -3,12 +3,24 @@ require 'ferrum'
 module Brilliant
   module Sync
     class Psy220ScraperService < BaseService
+      SCRAPE_COOLDOWN = 86400 # 24 hours between scrapes
+
       def sync(course_id)
         return unless course_id.to_s == '446900'
-        
+
+        # Rate-limit: only scrape once per day
+        last_scrape = ::UserPreference.get('psy220_last_scrape') rescue nil
+        if last_scrape
+          elapsed = Time.current.to_i - Time.parse(last_scrape).to_i rescue SCRAPE_COOLDOWN + 1
+          if elapsed < SCRAPE_COOLDOWN
+            puts "[Psy220Scraper] Skipping — last scrape was #{(elapsed / 60.0).round} minutes ago (cooldown: 24h)"
+            return
+          end
+        end
+
         host = client.host
         cookie_string = client.cookie_string
-        
+
         puts "[Psy220Scraper] Starting scrape for PSY-220..."
         
         # Use a longer timeout for Ferrum
@@ -97,6 +109,7 @@ module Brilliant
             end
           end
 
+          ::UserPreference.set('psy220_last_scrape', Time.current.utc.iso8601) rescue nil
           puts "[Psy220Scraper] Sync complete."
           return true
 

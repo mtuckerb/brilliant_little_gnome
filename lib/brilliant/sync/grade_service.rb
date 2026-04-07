@@ -5,9 +5,7 @@ module Brilliant
         items = client.ensure_array(grade_values)
         
         # Fetch grade definitions to catch "ungraded" items and extra credit status
-        # We use force_refresh: true here because the proactive sync already fetched values,
-        # but we want to make sure definitions match the current state.
-        definitions_raw = client.get_grade_definitions(course_id, force_refresh: true)
+        definitions_raw = client.get_grade_definitions(course_id)
         definitions = client.ensure_array(definitions_raw)
         
         if definitions.empty? && items.any?

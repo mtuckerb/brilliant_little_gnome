@@ -143,6 +143,7 @@ class BrilliantClient
           full_sync = UserPreference.get('force_full_sync') == 'true'
           skipped_items = []
           
+          # Only force-refresh enrollments on explicit full sync request
           courses = get_enrollments(force_refresh: full_sync) || []
           puts "[Sync] Number of courses to process: #{courses.size}"
           user = get_who_am_i
@@ -167,44 +168,42 @@ class BrilliantClient
               short_name = course_name.length > 10 ? course_name[0...9] + "…" : course_name
 
               @sync_status[:current_task] = "#{short_name} - Syncing Core Content..."
-              
-              # Sync Core (Force refresh during proactive sync to ensure accuracy)
+
+              # Only force refresh on explicit full sync; otherwise let the 600s cache work
               toc_path = "/d2l/api/le/#{@api_version}/#{course_id}/content/toc"
-              toc = get_toc(course_id, force_refresh: true)
+              toc = get_toc(course_id, force_refresh: full_sync)
               puts "[Sync] TOC for #{course_id} fetched: #{toc.is_a?(Hash) ? toc.keys : toc.class}"
               sync_course_content(course_id, toc) if toc
               archive_cache(toc_path) if toc
-              
-              sleep 0.1
+
+              sleep 0.5
               @sync_status[:current_task] = "#{short_name} - Syncing Assignments..."
               assign_path = "/d2l/api/le/#{@api_version}/#{course_id}/dropbox/folders/"
-              assignments = get_assignments(course_id, force_refresh: true)
+              assignments = get_assignments(course_id, force_refresh: full_sync)
               puts "[Sync] Assignments for #{course_id} fetched: #{assignments.is_a?(Array) ? assignments.size : assignments.class}"
               skipped_items += sync_assignments(course_id, assignments) if assignments
               archive_cache(assign_path) if assignments
 
-              sleep 0.1
+              sleep 0.5
               @sync_status[:current_task] = "#{short_name} - Syncing Quizzes..."
               quiz_path = "/d2l/api/le/#{@api_version}/#{course_id}/quizzes/"
-              quizzes = get_quizzes(course_id, force_refresh: true)
+              quizzes = get_quizzes(course_id, force_refresh: full_sync)
               skipped_items += sync_quizzes(course_id, quizzes) if quizzes
               archive_cache(quiz_path) if quizzes
-              
-              sleep 0.1
-              
+
+              sleep 0.5
+
               @sync_status[:current_task] = "#{short_name} - Syncing Discussions..."
-              # Sync Discussions
               disc_path = "/d2l/api/le/#{@api_version}/#{course_id}/discussions/forums/"
-              forums = get_discussions(course_id, force_refresh: true) || []
+              forums = get_discussions(course_id, force_refresh: full_sync) || []
               sync_discussions(course_id, forums) if forums.any?
               archive_cache(disc_path) if forums.any?
-              
-              sleep 0.1
-              
+
+              sleep 0.5
+
               @sync_status[:current_task] = "#{short_name} - Syncing Grades..."
-              # Sync Grades
               grades_path = "/d2l/api/le/#{@api_version}/#{course_id}/grades/values/myGradeValues/"
-              grades_raw = get_grades(course_id, force_refresh: true)
+              grades_raw = get_grades(course_id, force_refresh: full_sync)
               sync_grades(course_id, grades_raw) if grades_raw.is_a?(Array)
               archive_cache(grades_path) if grades_raw.is_a?(Array)
 
