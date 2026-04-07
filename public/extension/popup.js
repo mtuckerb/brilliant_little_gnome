@@ -41,17 +41,18 @@ sendBtn.addEventListener("click", async () => {
     const cookieString = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
     const serverUrl = serverInput.value.trim().replace(/\/+$/, "");
 
-    const response = await fetch(`${serverUrl}/api/v1/auth/cookies`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ host: BRIGHTSPACE_DOMAIN, cookies: cookieString }),
+    // Send via service worker to avoid popup CSP restrictions
+    const result = await chrome.runtime.sendMessage({
+      action: "sendCookies",
+      serverUrl,
+      host: BRIGHTSPACE_DOMAIN,
+      cookies: cookieString,
     });
 
-    if (response.ok) {
+    if (result.success) {
       showStatus("Connected! You can close this popup.", "success");
     } else {
-      const body = await response.text();
-      showStatus(`Server error (${response.status}): ${body}`, "error");
+      showStatus(result.error, "error");
     }
   } catch (err) {
     showStatus(`Connection failed: ${err.message}`, "error");
