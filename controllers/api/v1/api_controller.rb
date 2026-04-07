@@ -12,17 +12,19 @@ module Api
         content_type :json unless request.path_info == '/api/v1/events'
       end
 
-      # CORS preflight for browser extension auth
+      # CORS preflight for browser extension auth (includes Private Network Access)
       options '/api/v1/auth/cookies' do
         headers 'Access-Control-Allow-Origin' => '*',
                 'Access-Control-Allow-Methods' => 'POST, OPTIONS',
-                'Access-Control-Allow-Headers' => 'Content-Type'
+                'Access-Control-Allow-Headers' => 'Content-Type',
+                'Access-Control-Allow-Private-Network' => 'true'
         204
       end
 
       # Re-authentication from Electron or browser extension
       post '/api/v1/auth/cookies' do
-        headers 'Access-Control-Allow-Origin' => '*'
+        headers 'Access-Control-Allow-Origin' => '*',
+                'Access-Control-Allow-Private-Network' => 'true'
         content_type :json
         begin
           data = JSON.parse(request.body.read)
