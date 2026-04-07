@@ -5,6 +5,10 @@ const STORAGE_KEY = "brilliant_server_url";
 const serverInput = document.getElementById("server");
 const sendBtn = document.getElementById("send");
 const statusEl = document.getElementById("status");
+const versionEl = document.getElementById("version");
+
+// Show version so we can confirm the right build is loaded
+if (versionEl) versionEl.textContent = "v1.1.0";
 
 // Load saved server URL
 chrome.storage.local.get(STORAGE_KEY, (result) => {
@@ -25,7 +29,7 @@ sendBtn.addEventListener("click", async () => {
     const cookies = await chrome.cookies.getAll({ domain: BRIGHTSPACE_DOMAIN });
 
     if (!cookies.length) {
-      showStatus("No Brightspace cookies found. Are you logged in?", "error");
+      showStatus("No Brightspace cookies found. Are you logged in at courses.maine.edu?", "error");
       return;
     }
 
@@ -41,21 +45,34 @@ sendBtn.addEventListener("click", async () => {
     const cookieString = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
     const serverUrl = serverInput.value.trim().replace(/\/+$/, "");
 
-    // Send via service worker to avoid popup CSP restrictions
-    const result = await chrome.runtime.sendMessage({
-      action: "sendCookies",
-      serverUrl,
-      host: BRIGHTSPACE_DOMAIN,
-      cookies: cookieString,
-    });
+    showStatus("Sending to Brilliant server...", "info");
 
-    if (result.success) {
-      showStatus("Connected! You can close this popup.", "success");
-    } else {
-      showStatus(result.error, "error");
-    }
+    // Send via service worker to avoid popup CSP restrictions
+    chrome.runtime.sendMessage(
+      {
+        action: "sendCookies",
+        serverUrl,
+        host: BRIGHTSPACE_DOMAIN,
+        cookies: cookieString,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          showStatus(`Extension error: ${chrome.runtime.lastError.message}`, "error");
+          return;
+        }
+        if (!response) {
+          showStatus("No response from background worker. Try reloading the extension.", "error");
+          return;
+        }
+        if (response.success) {
+          showStatus("Connected! You can close this popup.", "success");
+        } else {
+          showStatus(response.error, "error");
+        }
+      }
+    );
   } catch (err) {
-    showStatus(`Connection failed: ${err.message}`, "error");
+    showStatus(`Error: ${err.message}`, "error");
   } finally {
     sendBtn.disabled = false;
     sendBtn.textContent = "Send Cookies to Brilliant";

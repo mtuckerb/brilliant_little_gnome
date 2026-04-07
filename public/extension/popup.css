@@ -76,6 +76,11 @@ button:disabled {
   display: none;
 }
 
+#status.info {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
 .hint {
   margin-top: 12px;
   font-size: 11px;

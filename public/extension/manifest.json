@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Brilliant - Brightspace Connector",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "One-click authentication for Brilliant LMS companion app",
   "permissions": ["cookies", "storage"],
-  "host_permissions": ["https://courses.maine.edu/*", "http://10.1.0.75:4567/*"],
+  "host_permissions": ["https://courses.maine.edu/*", "http://10.1.0.75:4567/*", "http://10.1.0.75/*"],
   "background": {
     "service_worker": "background.js"
   },
