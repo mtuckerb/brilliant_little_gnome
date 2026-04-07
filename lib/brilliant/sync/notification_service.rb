@@ -20,9 +20,7 @@ module Brilliant
         sync_enrollments(courses)
 
         # 2. Sync Unified Feed
-        # Force refresh the unified feed to ensure we don't return stale cached data
-        # while waiting for the background worker.
-        feed_items = client.get_unified_feed(courses, since: last_sync_time, force_refresh: true)
+        feed_items = client.get_unified_feed(courses, since: last_sync_time, force_refresh: full_sync)
         @session_changes += upsert_notification_batch(feed_items, publish_event_flag: false)
 
         # 3. Course Specific Sync (News, Overviews, Content Updates)
