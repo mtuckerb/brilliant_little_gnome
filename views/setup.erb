@@ -21,7 +21,20 @@
 
           <div class="is-divider" data-content="OR"></div>
 
-          <h4 class="title is-5">Option 2: Manual Setup</h4>
+          <div class="notification is-success is-light">
+            <h4 class="title is-5">Option 2: Browser Extension (Remote Users)</h4>
+            <p>If you're connecting to Brilliant from another computer, use the Chrome extension to send your Brightspace session cookies.</p>
+            <ol class="mt-3" style="margin-left: 1.2em; font-size: 0.9em;">
+              <li>Download the <a href="/extension" target="_blank"><strong>extension folder</strong></a> from the server</li>
+              <li>Open <code>chrome://extensions</code> and enable <strong>Developer Mode</strong></li>
+              <li>Click <strong>Load Unpacked</strong> and select the downloaded folder</li>
+              <li>Log into <a href="https://courses.maine.edu" target="_blank">Brightspace</a>, then click the extension icon</li>
+            </ol>
+          </div>
+
+          <div class="is-divider" data-content="OR"></div>
+
+          <h4 class="title is-5">Option 3: Manual Setup</h4>
           <% if @error %>
             <div class="notification is-danger">
               <%= @error %>
