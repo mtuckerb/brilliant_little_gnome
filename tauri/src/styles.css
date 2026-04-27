@@ -1,0 +1,28 @@
+body { background: #fdfdfd; min-height: 100vh; margin: 0; }
+.main-content { padding: 40px; max-width: 1280px; margin: 0 auto; }
+.course-row { transition: background-color 0.2s; cursor: pointer; }
+.course-row:hover { background-color: #f5f5f5; }
+.navbar { box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+
+.has-text-primary { color: #739AC3 !important; }
+.is-primary { background-color: #739AC3 !important; color: #fff !important; }
+.button.is-primary { background-color: #739AC3 !important; border-color: transparent !important; color: #fff !important; }
+.button.is-primary.is-light { background-color: #f0f4f8 !important; color: #739AC3 !important; }
+.tag.is-primary { background-color: #739AC3 !important; color: #fff !important; }
+.menu-list a.is-active { background-color: #739AC3 !important; color: #fff !important; }
+.menu-list a.is-active .icon { color: #fff !important; }
+
+.menu-label { margin-top: 1.5em; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; }
+.toc-nested { margin-left: 12px !important; border-left: 1px solid #f0f0f0; padding-left: 4px; }
+
+#toast-container {
+  position: fixed; top: 20px; right: 20px; z-index: 2000; width: 350px; pointer-events: none;
+}
+.toast {
+  pointer-events: auto; margin-bottom: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  border-left: 5px solid; transform: translateX(120%); transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.toast.is-active { transform: translateX(0); }
+.toast.is-danger { border-left-color: #f14668; }
+.toast.is-success { border-left-color: #48c78e; }
+.toast.is-warning { border-left-color: #ffe08a; }
