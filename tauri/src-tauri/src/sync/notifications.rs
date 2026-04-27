@@ -1,0 +1,112 @@
+// Notification sync. Pulls the unified feed and global alerts; upserts into
+// `notifications` keyed by `external_id`.
+
+use crate::error::Result;
+use crate::state::AppState;
+use serde_json::Value;
+
+pub async fn sync(state: &AppState) -> Result<()> {
+    // Unified feed.
+    let feed = state.client.get_unified_feed(&state.pool, None, true).await.unwrap_or_default();
+    for item in &feed {
+        upsert_feed_item(state, item).await.ok();
+    }
+
+    // Global alerts.
+    let alerts = state.client.get_global_alerts(&state.pool, None).await.unwrap_or_default();
+    for a in &alerts {
+        upsert_alert(state, a).await.ok();
+    }
+
+    state.events.notifications_updated();
+    Ok(())
+}
+
+async fn upsert_feed_item(state: &AppState, item: &Value) -> Result<()> {
+    let metadata = item.get("Metadata");
+    let resource = item.get("Resource");
+    let title = metadata.and_then(|m| m.get("Title")).and_then(|v| v.as_str()).unwrap_or("News update").to_string();
+    let body = metadata.and_then(|m| m.pointer("/Summary/Text")).and_then(|v| v.as_str()).map(|s| s.to_string());
+    let date = metadata.and_then(|m| m.get("Date")).and_then(|v| v.as_str())
+        .or_else(|| resource.and_then(|r| r.get("LastModifiedDate")).and_then(|v| v.as_str()))
+        .or_else(|| resource.and_then(|r| r.get("CreatedDate")).and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+
+    let api_view = metadata.and_then(|m| m.get("ApiViewUrl")).and_then(|v| v.as_str()).unwrap_or("");
+    let course_id = regex::Regex::new(r"/(\d+)/news").unwrap()
+        .captures(api_view).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
+    let news_id = metadata.and_then(|m| m.get("Identifier")).and_then(|v| v.as_str()).map(|s| s.to_string())
+        .or_else(|| metadata.and_then(|m| m.get("Identifier")).and_then(|v| v.as_i64()).map(|n| n.to_string()));
+    let external_id = match (&course_id, &news_id) {
+        (Some(c), Some(n)) => format!("news_{}_{}", c, n),
+        (None, Some(n)) => format!("news_{}", n),
+        _ => return Ok(()),
+    };
+
+    let url = metadata.and_then(|m| m.get("WebViewUrl")).and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    sqlx::query(
+        "INSERT INTO notifications (external_id, notification_type, title, body, date, course_id, urgency, is_personal, is_read, url, created_at, updated_at)
+         VALUES (?, 'News', ?, ?, ?, ?, 1, 0, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(external_id) DO UPDATE SET
+            title = excluded.title,
+            body = excluded.body,
+            date = excluded.date,
+            course_id = excluded.course_id,
+            url = excluded.url,
+            updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(&external_id)
+    .bind(&title)
+    .bind(body)
+    .bind(date)
+    .bind(course_id)
+    .bind(url)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
+
+async fn upsert_alert(state: &AppState, alert: &Value) -> Result<()> {
+    let alert_type = alert.get("Type").and_then(|v| v.as_str()).unwrap_or("Alert");
+    let course_id = alert.get("OrgUnitId").and_then(|v| v.as_i64()).map(|n| n.to_string())
+        .or_else(|| alert.get("OrgUnitId").and_then(|v| v.as_str()).map(|s| s.to_string()));
+    let id = alert.get("Id").and_then(|v| v.as_i64()).map(|n| n.to_string())
+        .or_else(|| alert.get("Id").and_then(|v| v.as_str()).map(|s| s.to_string()));
+    let (Some(cid), Some(aid)) = (course_id, id) else { return Ok(()); };
+    let external_id = format!("alert_{}_{}", cid, aid);
+
+    let title = alert.get("Title").and_then(|v| v.as_str()).map(|s| s.to_string())
+        .unwrap_or_else(|| format!("{} Update", alert_type));
+    let body = alert.get("Text").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let date = alert.get("Date").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let urgency = if alert_type == "Grade" { 3 } else { 1 };
+    let is_personal = (alert_type == "Grade") as i64;
+    let url = if alert_type == "Grade" {
+        format!("/course/{}/grades", cid)
+    } else {
+        format!("/course/{}", cid)
+    };
+
+    sqlx::query(
+        "INSERT INTO notifications (external_id, notification_type, title, body, date, course_id, urgency, is_personal, is_read, url, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(external_id) DO UPDATE SET
+            title = excluded.title,
+            body = excluded.body,
+            date = excluded.date,
+            updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(&external_id)
+    .bind(alert_type)
+    .bind(&title)
+    .bind(body)
+    .bind(date)
+    .bind(&cid)
+    .bind(urgency)
+    .bind(is_personal)
+    .bind(url)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
