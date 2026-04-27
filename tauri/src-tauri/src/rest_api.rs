@@ -1,25 +1,35 @@
-// Optional embedded REST API. Mirrors the Ruby /api/v1 routes.
-// Stub: spins up an axum server with a /health endpoint and the /api/v1 namespace
-// reserved. Real route coverage lands alongside the matching command modules.
+// Optional embedded REST API mirroring the Ruby /api/v1 namespace.
+// Auth: `Authorization: Bearer <api_key>` or `?api_key=…`. The API key is set
+// in user_preferences.api_key and gated by api_enabled.
+//
+// Routes wired here are the most commonly-used subset of api_controller.rb:
+// /status, /courses[/:id[/{grades,assignments}/summary]], /notifications,
+// /preferences, /dashboard/summary, /auth/cookies (no-auth), and /token.
 
-use crate::error::Result;
+use crate::auth;
+use crate::error::{AppError, Result};
 use crate::state::AppState;
-use axum::{routing::get, Json, Router};
-use serde::Serialize;
+use axum::{
+    body::Body,
+    extract::{Path, Query, State as AxState},
+    http::{header, HeaderMap, Method, Request, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Json, Response},
+    routing::{get, post},
+    Router,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::oneshot;
+use tower_http::cors::{Any, CorsLayer};
 
 pub struct RestHandle {
     pub bind: String,
     pub port: i64,
     pub shutdown: oneshot::Sender<()>,
-}
-
-#[derive(Serialize)]
-struct Health {
-    status: &'static str,
-    version: &'static str,
 }
 
 pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
@@ -30,12 +40,39 @@ pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
     let port = prefs.1;
 
     let bind_host = if listen_all { "0.0.0.0" } else { "127.0.0.1" };
-    let addr: SocketAddr = format!("{}:{}", bind_host, port).parse().map_err(|e: std::net::AddrParseError| crate::error::AppError::Other(e.to_string()))?;
+    let addr: SocketAddr = format!("{}:{}", bind_host, port)
+        .parse()
+        .map_err(|e: std::net::AddrParseError| AppError::Other(e.to_string()))?;
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers(Any);
+
+    // Routes that bypass api-key auth: /health, /auth/cookies (used by the
+    // browser-extension re-auth flow).
+    let open = Router::new()
+        .route("/health", get(health))
+        .route("/api/v1/auth/cookies", post(auth_cookies));
+
+    let protected = Router::new()
+        .route("/api/v1/status", get(status))
+        .route("/api/v1/preferences", get(preferences))
+        .route("/api/v1/token", get(token))
+        .route("/api/v1/courses", get(list_courses))
+        .route("/api/v1/courses/reorder", post(reorder_courses))
+        .route("/api/v1/courses/:id", get(get_course))
+        .route("/api/v1/courses/:id/grades/summary", get(grades_summary))
+        .route("/api/v1/courses/:id/assignments/summary", get(assignments_summary))
+        .route("/api/v1/notifications", get(notifications))
+        .route("/api/v1/dashboard/summary", get(dashboard_summary))
+        .route("/api/v1/assignments", post(create_assignment))
+        .layer(middleware::from_fn_with_state(state.clone(), require_api_key));
 
     let app = Router::new()
-        .route("/health", get(|| async {
-            Json(Health { status: "ok", version: env!("CARGO_PKG_VERSION") })
-        }))
+        .merge(open)
+        .merge(protected)
+        .layer(cors)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -43,9 +80,7 @@ pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
 
     tokio::spawn(async move {
         let server = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                rx.await.ok();
-            });
+            .with_graceful_shutdown(async move { rx.await.ok(); });
         if let Err(e) = server.await {
             tracing::warn!("rest api server error: {}", e);
         }
@@ -56,4 +91,443 @@ pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
         port,
         shutdown: tx,
     })
+}
+
+// ---- middleware --------------------------------------------------------
+
+async fn require_api_key(
+    AxState(state): AxState<Arc<AppState>>,
+    req: Request<Body>,
+    next: Next,
+) -> std::result::Result<Response, Response> {
+    let prefs: (i64, Option<String>) =
+        sqlx::query_as("SELECT api_enabled, api_key FROM user_preferences LIMIT 1")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if prefs.0 == 0 {
+        return Err(api_error(StatusCode::FORBIDDEN, "API access is disabled".into()));
+    }
+    let Some(expected) = prefs.1 else {
+        return Err(api_error(StatusCode::FORBIDDEN, "API key not configured".into()));
+    };
+    let provided = extract_api_key(req.headers(), req.uri().query());
+    let provided = provided.ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, "missing api key".into()))?;
+    if auth::verify_api_key(&provided, Some(&expected)).is_err() {
+        return Err(api_error(StatusCode::UNAUTHORIZED, "invalid api key".into()));
+    }
+    Ok(next.run(req).await)
+}
+
+fn extract_api_key(headers: &HeaderMap, query: Option<&str>) -> Option<String> {
+    if let Some(h) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(rest) = h.strip_prefix("Bearer ") { return Some(rest.to_string()); }
+    }
+    if let Some(q) = query {
+        for pair in q.split('&') {
+            if let Some((k, v)) = pair.split_once('=') {
+                if k == "api_key" { return Some(urldecode(v)); }
+            }
+        }
+    }
+    None
+}
+
+fn urldecode(s: &str) -> String {
+    let mut out = Vec::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(std::str::from_utf8(&bytes[i+1..i+3]).unwrap_or(""), 16) {
+                out.push(b); i += 3; continue;
+            }
+        }
+        out.push(if bytes[i] == b'+' { b' ' } else { bytes[i] });
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+fn api_error(code: StatusCode, msg: String) -> Response {
+    let body = json!({ "error": msg }).to_string();
+    Response::builder()
+        .status(code)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+// ---- handlers ----------------------------------------------------------
+
+#[derive(Serialize)]
+struct Health { status: &'static str, version: &'static str }
+
+async fn health() -> Json<Health> {
+    Json(Health { status: "ok", version: env!("CARGO_PKG_VERSION") })
+}
+
+async fn status(AxState(state): AxState<Arc<AppState>>) -> Json<Value> {
+    let sync_status = state.sync_status.read().clone();
+    Json(json!({
+        "authenticated": state.client.is_configured(),
+        "degraded_mode": state.client.is_degraded(),
+        "host": state.client.host_clone(),
+        "sync_status": sync_status,
+    }))
+}
+
+async fn preferences(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
+    let row: Value = sqlx::query_scalar(
+        "SELECT json_object(
+            'id', id,
+            'display_name', display_name,
+            'time_zone', time_zone,
+            'brightspace_host', brightspace_host,
+            'api_enabled', api_enabled,
+            'api_listen_all', api_listen_all,
+            'api_port', api_port,
+            'historic_gpa', historic_gpa,
+            'historic_units', historic_units,
+            'default_semester', default_semester,
+            'brightspace_uid', brightspace_uid,
+            'brightspace_user_id', brightspace_user_id,
+            'last_login_at', last_login_at
+         ) FROM user_preferences LIMIT 1",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .map(|s: String| serde_json::from_str(&s).unwrap_or(Value::Null))
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(row))
+}
+
+async fn token(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
+    let secret = auth::ensure_secret(&state.pool)
+        .await
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let display: Option<String> =
+        sqlx::query_scalar("SELECT display_name FROM user_preferences LIMIT 1")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(None);
+    let t = auth::issue(&secret, display.as_deref().unwrap_or("internal"), 60 * 60 * 24)
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "token": t })))
+}
+
+async fn list_courses(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT json_object(
+            'org_unit_id', org_unit_id, 'name', name, 'code', code, 'semester', semester,
+            'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url,
+            'units', units, 'target_grade', target_grade, 'status', status,
+            'sort_order', sort_order, 'last_accessed_at', last_accessed_at
+         ) FROM courses ORDER BY is_pinned DESC, sort_order ASC, last_accessed_at DESC",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let arr: Vec<Value> = rows.into_iter()
+        .map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null))
+        .collect();
+    Ok(Json(Value::Array(arr)))
+}
+
+async fn get_course(
+    AxState(state): AxState<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> std::result::Result<Json<Value>, Response> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT json_object(
+            'org_unit_id', org_unit_id, 'name', name, 'code', code, 'semester', semester,
+            'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url,
+            'units', units, 'target_grade', target_grade, 'status', status,
+            'sort_order', sort_order, 'last_accessed_at', last_accessed_at
+         ) FROM courses WHERE org_unit_id = ?",
+    )
+    .bind(&id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match row {
+        Some((j,)) => Ok(Json(serde_json::from_str(&j).unwrap_or(Value::Null))),
+        None => Err(api_error(StatusCode::NOT_FOUND, "Course not found".into())),
+    }
+}
+
+#[derive(Deserialize)]
+struct ReorderBody { ids: Vec<String> }
+
+async fn reorder_courses(
+    AxState(state): AxState<Arc<AppState>>,
+    Json(body): Json<ReorderBody>,
+) -> std::result::Result<Json<Value>, Response> {
+    let mut tx = state.pool.begin().await.map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    for (i, id) in body.ids.iter().enumerate() {
+        sqlx::query("UPDATE courses SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+            .bind(i as i64)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    tx.commit().await.map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+async fn grades_summary(
+    AxState(state): AxState<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(_q): Query<HashMap<String, String>>,
+) -> std::result::Result<Json<Value>, Response> {
+    // Reuse the Tauri command logic.
+    use crate::commands::grades::grades_summary as cmd;
+    // We don't have AppStateArg<'_> in this context, so reimplement against pool directly.
+    let _ = cmd;
+    let target: Option<(Option<f64>,)> = sqlx::query_as("SELECT target_grade FROM courses WHERE org_unit_id = ?")
+        .bind(&id).fetch_optional(&state.pool).await
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let target = target.and_then(|t| t.0).unwrap_or(93.0);
+
+    let grades: Vec<(i64, String, Option<String>, String, Option<String>, Option<f64>, Option<f64>, Option<f64>, Option<String>, i64, i64, i64, Option<f64>, Option<String>)> = sqlx::query_as(
+        "SELECT id, course_id, brightspace_id, name, displayed_grade, numerator, denominator, weight, due_date, is_extra_credit, hidden, manually_marked_ungraded, expected_score, comments
+         FROM grades WHERE course_id = ? ORDER BY due_date ASC NULLS LAST, name ASC",
+    )
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut earned = 0.0;
+    let mut possible = 0.0;
+    let mut all_possible = 0.0;
+    let mut rows: Vec<Value> = Vec::with_capacity(grades.len());
+    for g in &grades {
+        if g.10 != 0 { continue; } // hidden
+        let denom = g.6.unwrap_or(0.0);
+        all_possible += denom;
+        let is_graded = g.11 == 0 && g.5.is_some() && denom > 0.0;
+        let is_expected = !is_graded && g.12.is_some() && denom > 0.0;
+        let perc = if is_graded { Some(g.5.unwrap_or(0.0) / denom * 100.0) }
+                   else if is_expected { g.12 } else { None };
+        if is_graded {
+            earned += g.5.unwrap_or(0.0);
+            possible += denom;
+        } else if is_expected {
+            earned += denom * (g.12.unwrap_or(0.0) / 100.0);
+            possible += denom;
+        }
+        rows.push(json!({
+            "id": g.0, "course_id": g.1, "brightspace_id": g.2, "name": g.3,
+            "displayed_grade": g.4, "numerator": g.5, "denominator": g.6, "weight": g.7,
+            "due_date": g.8, "is_extra_credit": g.9 != 0, "hidden": g.10 != 0,
+            "manually_marked_ungraded": g.11 != 0, "expected_score": g.12, "comments": g.13,
+            "perc": perc, "is_graded": is_graded, "is_expected": is_expected,
+            "rel_weight": if all_possible > 0.0 { denom / all_possible } else { 0.0 },
+        }));
+    }
+    let score = if possible > 0.0 { Some(earned / possible * 100.0) } else { None };
+    let remaining = (all_possible - possible).max(0.0);
+    let needed_total = all_possible * (target / 100.0);
+    let required_avg = if remaining > 0.0 { Some(((needed_total - earned) / remaining * 100.0).max(0.0)) } else { None };
+    let is_impossible = required_avg.map(|r| r > 100.0).unwrap_or(false);
+
+    Ok(Json(json!({
+        "grades": rows,
+        "grade_stats": {
+            "score": score,
+            "confidence": if all_possible > 0.0 { possible / all_possible } else { 0.0 },
+            "total_points_earned": earned,
+            "total_points_possible": possible,
+            "all_possible_points": all_possible,
+            "remaining_points": remaining,
+            "target_grade": target,
+            "required_avg": required_avg,
+            "is_impossible": is_impossible,
+        }
+    })))
+}
+
+async fn assignments_summary(
+    AxState(state): AxState<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> std::result::Result<Json<Value>, Response> {
+    let show_completed = q.get("show_completed").map(|s| s == "true").unwrap_or(false);
+    let sql = if show_completed {
+        "SELECT json_object(
+            'id', id, 'course_id', course_id, 'brightspace_id', brightspace_id,
+            'name', name, 'due_date', due_date, 'description', description,
+            'is_graded', is_graded, 'grade_item_id', grade_item_id,
+            'assignment_type', assignment_type, 'completed', completed,
+            'completed_at', completed_at, 'synthetic', synthetic,
+            'optional', optional, 'external_url', external_url,
+            'is_quiz', assignment_type = 'quiz'
+         ) FROM assignments WHERE course_id = ? ORDER BY due_date ASC NULLS LAST"
+    } else {
+        "SELECT json_object(
+            'id', id, 'course_id', course_id, 'brightspace_id', brightspace_id,
+            'name', name, 'due_date', due_date, 'description', description,
+            'is_graded', is_graded, 'grade_item_id', grade_item_id,
+            'assignment_type', assignment_type, 'completed', completed,
+            'completed_at', completed_at, 'synthetic', synthetic,
+            'optional', optional, 'external_url', external_url,
+            'is_quiz', assignment_type = 'quiz'
+         ) FROM assignments WHERE course_id = ? AND completed = 0 ORDER BY due_date ASC NULLS LAST"
+    };
+    let rows: Vec<(String,)> = sqlx::query_as(sql)
+        .bind(&id)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let arr: Vec<Value> = rows.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+    Ok(Json(json!({ "assignments": arr })))
+}
+
+async fn notifications(
+    AxState(state): AxState<Arc<AppState>>,
+    Query(q): Query<HashMap<String, String>>,
+) -> std::result::Result<Json<Value>, Response> {
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(25).min(200).max(1);
+    let offset: i64 = q.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0).max(0);
+    let show_read = q.get("show_read").map(|s| s == "true").unwrap_or(false);
+
+    let mut clauses: Vec<&str> = Vec::new();
+    if !show_read { clauses.push("is_read = 0"); }
+    let where_clause = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
+
+    let total_sql = format!("SELECT COUNT(*) FROM notifications {}", where_clause);
+    let total: i64 = sqlx::query_scalar(&total_sql).fetch_one(&state.pool).await
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let list_sql = format!(
+        "SELECT json_object(
+            'id', id, 'external_id', external_id, 'notification_type', notification_type,
+            'title', title, 'body', body, 'date', date,
+            'course_id', course_id, 'course_name', course_name,
+            'urgency', urgency, 'is_personal', is_personal != 0,
+            'is_read', is_read != 0, 'url', url
+         ) FROM notifications {} ORDER BY date DESC NULLS LAST, id DESC LIMIT ? OFFSET ?",
+        where_clause
+    );
+    let rows: Vec<(String,)> = sqlx::query_as(&list_sql)
+        .bind(limit).bind(offset)
+        .fetch_all(&state.pool).await
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let arr: Vec<Value> = rows.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+
+    Ok(Json(json!({
+        "total": total, "limit": limit, "offset": offset, "notifications": arr
+    })))
+}
+
+async fn dashboard_summary(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
+    let courses: Vec<(String,)> = sqlx::query_as(
+        "SELECT json_object(
+            'org_unit_id', org_unit_id, 'name', name, 'code', code, 'semester', semester,
+            'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url
+         ) FROM courses ORDER BY is_pinned DESC, sort_order ASC, last_accessed_at DESC LIMIT 100",
+    )
+    .fetch_all(&state.pool).await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let courses: Vec<Value> = courses.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+
+    let upcoming: Vec<(String,)> = sqlx::query_as(
+        "SELECT json_object(
+            'id', id, 'course_id', course_id, 'name', name, 'due_date', due_date,
+            'optional', optional, 'completed', completed, 'external_url', external_url
+         ) FROM assignments
+         WHERE completed = 0 AND due_date IS NOT NULL
+           AND due_date > datetime('now')
+           AND due_date <= datetime('now', '+14 days')
+         ORDER BY optional ASC, due_date ASC LIMIT 15",
+    )
+    .fetch_all(&state.pool).await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let upcoming: Vec<Value> = upcoming.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+
+    let recent: Vec<(String,)> = sqlx::query_as(
+        "SELECT json_object(
+            'id', id, 'title', title, 'body', body, 'date', date,
+            'course_id', course_id, 'course_name', course_name, 'url', url
+         ) FROM notifications WHERE is_read = 0 ORDER BY date DESC LIMIT 10",
+    )
+    .fetch_all(&state.pool).await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let recent: Vec<Value> = recent.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+
+    Ok(Json(json!({
+        "courses": courses,
+        "upcoming_assignments": upcoming,
+        "recent_notifications": recent,
+    })))
+}
+
+#[derive(Deserialize)]
+struct AuthCookiesBody { host: String, cookies: String }
+
+async fn auth_cookies(
+    AxState(state): AxState<Arc<AppState>>,
+    Json(body): Json<AuthCookiesBody>,
+) -> std::result::Result<Json<Value>, Response> {
+    if body.host.is_empty() || body.cookies.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "Missing parameters".into()));
+    }
+    state.client.store_credentials(&state.pool, body.host.trim(), body.cookies.trim(), None, None).await
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+#[derive(Deserialize)]
+struct CreateAssignmentBody {
+    course_id: String,
+    name: String,
+    description: Option<String>,
+    due_date: Option<String>,
+    due_time: Option<String>,
+    external_url: Option<String>,
+}
+
+async fn create_assignment(
+    AxState(state): AxState<Arc<AppState>>,
+    Json(body): Json<CreateAssignmentBody>,
+) -> std::result::Result<Json<Value>, Response> {
+    if body.course_id.is_empty() || body.name.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "course_id and name are required".into()));
+    }
+    let bs_id = format!("syn_{}", uuid::Uuid::new_v4().simple());
+    let due = match body.due_date {
+        None => None,
+        Some(d) => match body.due_time {
+            Some(t) => Some(format!("{} {}", d, t)),
+            None => Some(format!("{}T23:59:59Z", d)),
+        },
+    };
+    let result = sqlx::query(
+        "INSERT INTO assignments (course_id, brightspace_id, name, description, due_date, external_url, synthetic, manually_edited, manually_edited_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+    )
+    .bind(&body.course_id)
+    .bind(&bs_id)
+    .bind(&body.name)
+    .bind(body.description)
+    .bind(due)
+    .bind(body.external_url)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "status": "ok", "id": result.last_insert_rowid(), "brightspace_id": bs_id })))
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let status = match &self {
+            AppError::Unauthenticated => StatusCode::UNAUTHORIZED,
+            AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        api_error(status, self.to_string())
+    }
 }
