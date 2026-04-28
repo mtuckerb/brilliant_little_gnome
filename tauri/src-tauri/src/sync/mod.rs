@@ -14,7 +14,9 @@ pub mod psy220;
 use crate::error::Result;
 use crate::models::SyncState;
 use crate::state::AppState;
+use futures::stream::{self, StreamExt};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Skip a course's deep sync if its `last_synced_at` is younger than this and
@@ -23,8 +25,16 @@ use std::sync::Arc;
 /// anyway — but we also avoid the DB upsert pass entirely.
 const COURSE_SYNC_TTL_SECS: i64 = 600;
 
-/// Full sync: enrollments → for each *active* course (content, assignments,
-/// grades, discussions) → notifications.
+/// How many courses to sync in parallel. SQLite is in WAL with an 8-connection
+/// pool; 3 concurrent courses × 4 in-course futures ≤ 12 simultaneous queries
+/// fits comfortably and keeps the network parallelism dominant over DB lock
+/// contention. Bumping this past ~4 starts running into Brightspace's per-IP
+/// rate limiting in practice.
+const COURSE_CONCURRENCY: usize = 3;
+
+/// Full sync: enrollments → for each *active* course, in parallel batches
+/// (content, assignments, grades, discussions concurrently within a course)
+/// → notifications.
 ///
 /// `force` bypasses the per-course freshness probe; the upstream HTTP cache in
 /// `client::do_get` is also told to refresh when `force == true`.
@@ -47,44 +57,34 @@ pub async fn sync_all(state: Arc<AppState>, force: bool) -> Result<()> {
         }
     };
 
-    // 2) Drop archived/dropped courses — they have local data but we don't
-    //    re-pull them every sync. Restoring a course flips status back to
-    //    'active' and the next sync will pick it up.
+    // 2) Drop archived/dropped courses.
     let active_ids = active_course_ids(&state, &course_list).await?;
-
     let total = (active_ids.len() as f64).max(1.0) + 1.0;
+    let completed = Arc::new(AtomicUsize::new(0));
 
-    // 3) Per-course sync.
-    for (idx, course_id) in active_ids.iter().enumerate() {
-        let progress = (idx as f64) / total;
-        set_status(&state, SyncState::Syncing, &format!("course {}", course_id), progress);
-        state.events.sync_progress(&format!("course:{}", course_id), progress);
+    // 3) Per-course sync, fanned out with a concurrency cap.
+    stream::iter(active_ids.iter().cloned())
+        .for_each_concurrent(COURSE_CONCURRENCY, |course_id| {
+            let state = state.clone();
+            let completed = completed.clone();
+            async move {
+                if !force && course_recently_synced(&state, &course_id).await {
+                    tracing::debug!("[{}] skip: synced within TTL", course_id);
+                } else {
+                    sync_course_data(&state, &course_id).await;
+                    mark_course_synced(&state, &course_id).await;
+                }
 
-        if !force && course_recently_synced(&state, course_id).await {
-            tracing::debug!("[{}] skip: synced within TTL", course_id);
-            continue;
-        }
-
-        if let Err(e) = content::sync(&state, course_id).await {
-            tracing::warn!("[{}] content sync failed: {}", course_id, e);
-        }
-        if let Err(e) = assignments::sync(&state, course_id).await {
-            tracing::warn!("[{}] assignment sync failed: {}", course_id, e);
-        }
-        if let Err(e) = grades::sync(&state, course_id).await {
-            tracing::warn!("[{}] grade sync failed: {}", course_id, e);
-        }
-        if let Err(e) = discussions::sync(&state, course_id).await {
-            tracing::warn!("[{}] discussion sync failed: {}", course_id, e);
-        }
-        // PSY-220 scraper: only runs for course 446900, no-op otherwise.
-        if let Err(e) = psy220::sync(&state, course_id).await {
-            tracing::warn!("[{}] psy220 scraper failed: {}", course_id, e);
-        }
-
-        mark_course_synced(&state, course_id).await;
-        state.events.course_updated(course_id);
-    }
+                // Progress is monotonic in completion order, not iteration
+                // order, since tasks finish out-of-order under concurrency.
+                let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
+                let progress = (done as f64) / total;
+                set_status(&state, SyncState::Syncing, &format!("course {}", course_id), progress);
+                state.events.sync_progress(&format!("course:{}", course_id), progress);
+                state.events.course_updated(&course_id);
+            }
+        })
+        .await;
 
     // 4) Notifications (global feed/alerts).
     set_status(&state, SyncState::Syncing, "notifications", (active_ids.len() as f64) / total);
@@ -108,22 +108,7 @@ pub async fn sync_course(state: Arc<AppState>, course_id: &str) -> Result<()> {
     set_status(&state, SyncState::Syncing, &format!("course {}", course_id), 0.0);
     state.events.sync_progress(&format!("course:{}", course_id), 0.0);
 
-    if let Err(e) = content::sync(&state, course_id).await {
-        tracing::warn!("[{}] content sync failed: {}", course_id, e);
-    }
-    if let Err(e) = assignments::sync(&state, course_id).await {
-        tracing::warn!("[{}] assignment sync failed: {}", course_id, e);
-    }
-    if let Err(e) = grades::sync(&state, course_id).await {
-        tracing::warn!("[{}] grade sync failed: {}", course_id, e);
-    }
-    if let Err(e) = discussions::sync(&state, course_id).await {
-        tracing::warn!("[{}] discussion sync failed: {}", course_id, e);
-    }
-    if let Err(e) = psy220::sync(&state, course_id).await {
-        tracing::warn!("[{}] psy220 scraper failed: {}", course_id, e);
-    }
-
+    sync_course_data(&state, course_id).await;
     mark_course_synced(&state, course_id).await;
 
     {
@@ -136,6 +121,29 @@ pub async fn sync_course(state: Arc<AppState>, course_id: &str) -> Result<()> {
     state.events.course_updated(course_id);
     state.events.sync_done();
     Ok(())
+}
+
+/// Run the four independent data-type syncs for a course in parallel, then the
+/// PSY-220 scraper. Errors are logged per-service so a failure in one (e.g.
+/// discussions disabled by the instructor) doesn't take the others down.
+async fn sync_course_data(state: &AppState, course_id: &str) {
+    let (c, a, g, d) = tokio::join!(
+        content::sync(state, course_id),
+        assignments::sync(state, course_id),
+        grades::sync(state, course_id),
+        discussions::sync(state, course_id),
+    );
+    if let Err(e) = c { tracing::warn!("[{}] content sync failed: {}", course_id, e); }
+    if let Err(e) = a { tracing::warn!("[{}] assignment sync failed: {}", course_id, e); }
+    if let Err(e) = g { tracing::warn!("[{}] grade sync failed: {}", course_id, e); }
+    if let Err(e) = d { tracing::warn!("[{}] discussion sync failed: {}", course_id, e); }
+
+    // PSY-220 scraper: only runs for course 446900, no-op otherwise. Kept
+    // sequential because it scrapes a rendered HTML page that depends on the
+    // logged-in cookie state and is intentionally low-priority.
+    if let Err(e) = psy220::sync(state, course_id).await {
+        tracing::warn!("[{}] psy220 scraper failed: {}", course_id, e);
+    }
 }
 
 fn set_status(state: &AppState, status: SyncState, task: &str, progress: f64) {
