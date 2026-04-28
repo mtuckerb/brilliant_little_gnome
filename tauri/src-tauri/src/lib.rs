@@ -81,6 +81,12 @@ pub fn run() {
             commands::sync::sync_status,
             commands::sync::sync_all,
             commands::sync::sync_course,
+            // Content
+            commands::content::list_modules,
+            commands::content::list_items,
+            // Discussions
+            commands::discussions::list_forums,
+            commands::discussions::list_topics,
             // REST API
             commands::rest::rest_api_start,
             commands::rest::rest_api_stop,

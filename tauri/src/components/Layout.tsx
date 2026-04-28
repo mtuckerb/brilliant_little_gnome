@@ -22,6 +22,18 @@ export default function Layout({ auth, sync, children }: Props) {
         </div>
         <div className="navbar-end">
           <div className="navbar-item">
+            <Link to="/calendar" className={`button is-white ${tabActive("/calendar")}`}>
+              <span className="icon"><i className="fas fa-calendar-days"></i></span>
+              <span>Calendar</span>
+            </Link>
+          </div>
+          <div className="navbar-item">
+            <Link to="/archive" className={`button is-white ${tabActive("/archive")}`}>
+              <span className="icon"><i className="fas fa-box-archive"></i></span>
+              <span>Archive</span>
+            </Link>
+          </div>
+          <div className="navbar-item">
             <Link to="/notifications" className={`button is-white ${tabActive("/notifications")}`}>
               <span className="icon"><i className="fas fa-bell"></i></span>
               <span>Notifications</span>

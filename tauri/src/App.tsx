@@ -10,6 +10,10 @@ import Assignments from "./pages/Assignments";
 import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import Setup from "./pages/Setup";
+import Calendar from "./pages/Calendar";
+import Modules from "./pages/Modules";
+import Discussions from "./pages/Discussions";
+import Archive from "./pages/Archive";
 import { ToastProvider, useToast } from "./components/ToastProvider";
 
 function AppInner() {
@@ -68,7 +72,11 @@ function AppInner() {
         <Route path="/course/:id" element={<CourseDetail />} />
         <Route path="/course/:id/grades" element={<Grades />} />
         <Route path="/course/:id/assignments" element={<Assignments />} />
+        <Route path="/course/:id/content" element={<Modules />} />
+        <Route path="/course/:id/discussions" element={<Discussions />} />
         <Route path="/notifications" element={<Notifications />} />
+        <Route path="/calendar" element={<Calendar />} />
+        <Route path="/archive" element={<Archive />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

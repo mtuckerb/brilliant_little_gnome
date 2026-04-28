@@ -156,6 +156,53 @@ pub struct SyncStatus {
     pub last_sync_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ContentModule {
+    pub id: i64,
+    pub course_id: String,
+    pub brightspace_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub sort_order: Option<i64>,
+    pub parent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ContentItem {
+    pub id: i64,
+    pub module_id: String,
+    pub brightspace_id: String,
+    pub title: String,
+    pub item_type: Option<String>,
+    pub url: Option<String>,
+    #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
+    pub is_hidden: bool,
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct DiscussionForum {
+    pub id: i64,
+    pub brightspace_id: String,
+    pub course_id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct DiscussionTopic {
+    pub id: i64,
+    pub brightspace_id: String,
+    pub course_id: String,
+    pub forum_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub sort_order: Option<i64>,
+    pub thread_count: Option<i64>,
+    pub post_count: Option<i64>,
+    pub last_post_date: Option<String>,
+}
+
 // SQLite stores booleans as INTEGER. Helpers for serde when flowing through JSON.
 fn de_bool<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
     use serde::Deserialize;

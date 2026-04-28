@@ -120,3 +120,45 @@ export interface SyncStatus {
   progress: number;
   last_sync_at: string | null;
 }
+
+export interface ContentModule {
+  id: number;
+  course_id: string;
+  brightspace_id: string;
+  title: string;
+  description: string | null;
+  sort_order: number | null;
+  parent_id: string | null;
+}
+
+export interface ContentItem {
+  id: number;
+  module_id: string;
+  brightspace_id: string;
+  title: string;
+  item_type: string | null;
+  url: string | null;
+  is_hidden: boolean;
+  sort_order: number | null;
+}
+
+export interface DiscussionForum {
+  id: number;
+  brightspace_id: string;
+  course_id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface DiscussionTopic {
+  id: number;
+  brightspace_id: string;
+  course_id: string;
+  forum_id: string;
+  name: string;
+  description: string | null;
+  sort_order: number | null;
+  thread_count: number | null;
+  post_count: number | null;
+  last_post_date: string | null;
+}

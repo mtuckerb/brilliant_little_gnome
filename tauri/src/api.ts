@@ -9,6 +9,10 @@ import type {
   UserPreferences,
   AuthStatus,
   SyncStatus,
+  ContentModule,
+  ContentItem,
+  DiscussionForum,
+  DiscussionTopic,
 } from "./types";
 
 // All backend access goes through these wrappers. Each one corresponds to a
@@ -84,6 +88,18 @@ export const api = {
   syncAll: (full: boolean) => invoke<void>("sync_all", { full }),
   syncCourse: (id: string, full: boolean) =>
     invoke<void>("sync_course", { id, full }),
+
+  // Content
+  listModules: (courseId: string) =>
+    invoke<ContentModule[]>("list_modules", { courseId }),
+  listItems: (moduleId: string) =>
+    invoke<ContentItem[]>("list_items", { moduleId }),
+
+  // Discussions
+  listForums: (courseId: string) =>
+    invoke<DiscussionForum[]>("list_forums", { courseId }),
+  listTopics: (courseId: string) =>
+    invoke<DiscussionTopic[]>("list_topics", { courseId }),
 
   // REST API toggle
   restApiStart: () => invoke<{ port: number; key: string }>("rest_api_start"),

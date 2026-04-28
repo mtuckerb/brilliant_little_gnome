@@ -6,6 +6,8 @@ pub mod assignments;
 pub mod notifications;
 pub mod sync;
 pub mod rest;
+pub mod content;
+pub mod discussions;
 
 use crate::error::Result;
 use crate::state::AppState;
