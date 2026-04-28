@@ -85,9 +85,9 @@ export const api = {
 
   // Sync
   syncStatus: () => invoke<SyncStatus>("sync_status"),
-  syncAll: (full: boolean) => invoke<void>("sync_all", { full }),
-  syncCourse: (id: string, full: boolean) =>
-    invoke<void>("sync_course", { id, full }),
+  syncAll: (force: boolean) => invoke<void>("sync_all", { force }),
+  syncCourse: (id: string) =>
+    invoke<void>("sync_course", { courseId: id }),
 
   // Content
   listModules: (courseId: string) =>

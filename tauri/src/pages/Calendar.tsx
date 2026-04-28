@@ -56,9 +56,11 @@ export default function Calendar() {
               <div key={a.id} className="is-flex is-justify-content-space-between py-2" style={{ borderBottom: "1px solid #eee" }}>
                 <div>
                   <Link to={`/course/${c.org_unit_id}/assignments`} style={{ color: c.custom_color || undefined }}>
-                    <strong>{c.code || c.name}</strong>
+                    {c.code && <strong className="mr-2">{c.code}</strong>}
+                    <span className="has-text-weight-medium">{c.name}</span>
                   </Link>
-                  <span className="ml-2">{a.name}</span>
+                  <span className="mx-2 has-text-grey-light">·</span>
+                  <span>{a.name}</span>
                   {a.completed && <span className="tag is-success is-light ml-2">done</span>}
                   {a.optional && <span className="tag is-light ml-2">optional</span>}
                 </div>
