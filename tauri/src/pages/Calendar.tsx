@@ -56,8 +56,7 @@ export default function Calendar() {
               <div key={a.id} className="is-flex is-justify-content-space-between py-2" style={{ borderBottom: "1px solid #eee" }}>
                 <div>
                   <Link to={`/course/${c.org_unit_id}/assignments`} style={{ color: c.custom_color || undefined }}>
-                    {c.code && <strong className="mr-2">{c.code}</strong>}
-                    <span className="has-text-weight-medium">{c.name}</span>
+                    <strong>{c.code ? `${c.code} - ${c.name}` : c.name}</strong>
                   </Link>
                   <span className="mx-2 has-text-grey-light">·</span>
                   <span>{a.name}</span>

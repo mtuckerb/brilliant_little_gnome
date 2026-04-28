@@ -57,8 +57,7 @@ export default function Dashboard() {
                       style={{ color: c.custom_color || undefined }}
                     >
                       {c.is_pinned && <i className="fas fa-thumbtack has-text-warning mr-2"></i>}
-                      {c.code && <span className="mr-2">{c.code}</span>}
-                      <span className="has-text-weight-normal">{c.name}</span>
+                      {c.code ? `${c.code} - ${c.name}` : c.name}
                     </Link>
                   </td>
                   <td className="has-text-right">

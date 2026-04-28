@@ -14,15 +14,21 @@ pub async fn sync_enrollments(state: &AppState) -> Result<Vec<String>> {
     for e in &enrollments {
         let Some(ou) = e.get("OrgUnit") else { continue; };
         let Some(id) = ou.get("Id").and_then(value_to_id) else { continue; };
-        let name = ou.get("Name").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string();
+        let raw_name = ou.get("Name").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string();
         // Brightspace's `OrgUnit.Code` at this institution is a section/banner code
         // like "2620.UMS06-S.40963.1" — useless to students. We instead extract a
-        // friendly code ("SWO-350", "PSY 220") from the course Name and fall back
+        // friendly code ("SWO-350", "PSY-220") from the course Name and fall back
         // to the raw Code only when extraction fails.
-        let friendly_code = extract_course_code(&name);
+        //
+        // The raw Brightspace name typically looks like
+        //   "SWO 370:0001-Human Behav in the Socia En II (2026 Spring)"
+        // We strip the code, the leading section number, and the trailing
+        // "(YYYY Season)" so the saved name is just the human title:
+        //   "Human Behav in the Socia En II"
+        let semester = extract_semester(&raw_name);
+        let (friendly_code, name) = extract_code_and_clean_name(&raw_name);
         let raw_code = ou.get("Code").and_then(|v| v.as_str()).map(|s| s.to_string());
         let code = friendly_code.or(raw_code);
-        let semester = extract_semester(&name);
         let banner = extract_banner(ou, host.as_deref());
         let pin_date = e.get("PinDate").and_then(|v| v.as_str());
         let is_pinned = pin_date.is_some();
@@ -77,15 +83,96 @@ fn extract_semester(name: &str) -> Option<String> {
     None
 }
 
-/// Mirror of the Ruby `Brilliant::Client#extract_course_code`: pull e.g.
-/// "SWO-350", "SWO 370", "MAT101" from the full course title. Returns the
-/// matched text trimmed (preserving the original separator the school used
-/// — students recognize "SWO 370" specifically, not "SWO370").
-fn extract_course_code(full_name: &str) -> Option<String> {
-    let re = regex::Regex::new(r"(?i)([A-Z]{2,4}\s*-?\s*\d{3,4})").ok()?;
-    re.captures(full_name)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().trim().to_string())
+/// Pull a friendly code (e.g. "SWO-370") out of the raw Brightspace course name
+/// AND return the title with the code, the section delimiter, and the trailing
+/// "(YYYY Season)" suffix all stripped — so callers don't need to render the
+/// code twice.
+///
+/// Examples:
+///   "SWO 370:0001-Human Behav in the Socia En II (2026 Spring)"
+///     → (Some("SWO-370"), "Human Behav in the Socia En II")
+///   "PSY-220 Introduction to Psychology"
+///     → (Some("PSY-220"), "Introduction to Psychology")
+///   "Special Topics in Robotics"            → (None, "Special Topics in Robotics")
+///   "MAT101"                                → (Some("MAT-101"), "MAT101")  // fallback
+fn extract_code_and_clean_name(full_name: &str) -> (Option<String>, String) {
+    let code_re =
+        regex::Regex::new(r"(?i)([A-Z]{2,4})\s*-?\s*(\d{3,4})").expect("static code regex");
+    let m = code_re.captures(full_name);
+
+    let friendly = m.as_ref().and_then(|c| {
+        let prefix = c.get(1)?.as_str().to_uppercase();
+        let number = c.get(2)?.as_str();
+        Some(format!("{}-{}", prefix, number))
+    });
+
+    // Build the cleaned name: drop the matched code span, then strip a leading
+    // section ("0001-", ":0001 ", etc.) and a trailing semester paren.
+    let mut cleaned = match m.as_ref().and_then(|c| c.get(0)) {
+        Some(span) => {
+            let mut s = String::with_capacity(full_name.len());
+            s.push_str(&full_name[..span.start()]);
+            s.push_str(&full_name[span.end()..]);
+            s
+        }
+        None => full_name.to_string(),
+    };
+
+    let sem_re = regex::Regex::new(
+        r"(?i)\s*\(\s*(?:\d{4}\s+(?:Spring|Fall|Summer|Winter|Session|Quarter)|(?:Spring|Fall|Summer|Winter|Session|Quarter)\s+\d{4})\s*\)\s*$",
+    ).expect("static semester regex");
+    cleaned = sem_re.replace(&cleaned, "").to_string();
+
+    let section_re = regex::Regex::new(r"^[\s:\-\.]*\d{2,4}[\s:\-\.]+").expect("static section regex");
+    cleaned = section_re.replace(&cleaned, "").to_string();
+
+    cleaned = cleaned
+        .trim_matches(|c: char| c.is_whitespace() || matches!(c, ':' | '-' | '_' | '.'))
+        .to_string();
+
+    // If cleanup ate everything (e.g. the whole name was just "MAT101"), fall
+    // back to the raw name so we never store empty.
+    let final_name = if cleaned.is_empty() {
+        full_name.trim().to_string()
+    } else {
+        cleaned
+    };
+
+    (friendly, final_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_code_and_clean_name;
+
+    #[test]
+    fn cleans_typical_brightspace_name() {
+        let (code, name) =
+            extract_code_and_clean_name("SWO 370:0001-Human Behav in the Socia En II (2026 Spring)");
+        assert_eq!(code.as_deref(), Some("SWO-370"));
+        assert_eq!(name, "Human Behav in the Socia En II");
+    }
+
+    #[test]
+    fn handles_already_hyphenated_code() {
+        let (code, name) = extract_code_and_clean_name("PSY-220 Introduction to Psychology");
+        assert_eq!(code.as_deref(), Some("PSY-220"));
+        assert_eq!(name, "Introduction to Psychology");
+    }
+
+    #[test]
+    fn falls_back_when_no_code() {
+        let (code, name) = extract_code_and_clean_name("Special Topics in Robotics");
+        assert_eq!(code, None);
+        assert_eq!(name, "Special Topics in Robotics");
+    }
+
+    #[test]
+    fn falls_back_when_name_is_only_a_code() {
+        let (code, name) = extract_code_and_clean_name("MAT101");
+        assert_eq!(code.as_deref(), Some("MAT-101"));
+        assert_eq!(name, "MAT101");
+    }
 }
 
 /// Banner image lookup mirrors the Ruby `notification_service.rb`:
