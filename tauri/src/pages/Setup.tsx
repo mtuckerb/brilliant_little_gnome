@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "../api";
 import type { AuthStatus } from "../types";
 
@@ -27,19 +28,39 @@ export default function Setup({ onComplete }: Props) {
   }
 
   // Native cookie capture: opens a real Brightspace login in a Tauri webview
-  // window. Backend listens for navigation and pulls cookies from the session.
+  // window. The backend polls the runtime cookie store; when both
+  // d2lSessionVal + d2lSecureSessionVal arrive it persists them and emits
+  // `auth-captured`.
   async function loginWithBrowser() {
     setBusy(true);
     setErr(null);
     try {
-      const auth = await api.setupCookies(host, "");
-      onComplete(auth);
+      await api.openLoginWindow(host);
+      // wait for backend to confirm capture
     } catch (e: any) {
       setErr(String(e?.message ?? e));
-    } finally {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    const unlistenCaptured = listen<string>("auth-captured", async () => {
+      try {
+        const auth = await api.authStatus();
+        onComplete(auth);
+      } finally {
+        setBusy(false);
+      }
+    });
+    const unlistenTimeout = listen<string>("auth-capture-timeout", () => {
+      setErr("Login timed out. Please try again.");
+      setBusy(false);
+    });
+    return () => {
+      unlistenCaptured.then((u) => u());
+      unlistenTimeout.then((u) => u());
+    };
+  }, [onComplete]);
 
   return (
     <div className="main-content container" style={{ maxWidth: 640 }}>

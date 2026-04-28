@@ -49,6 +49,7 @@ pub fn run() {
             commands::auth::auth_status,
             commands::auth::setup_cookies,
             commands::auth::clear_auth,
+            commands::auth::open_login_window,
             // Prefs
             commands::prefs::get_prefs,
             commands::prefs::update_prefs,

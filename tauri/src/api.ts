@@ -19,6 +19,8 @@ export const api = {
   authStatus: () => invoke<AuthStatus>("auth_status"),
   setupCookies: (host: string, cookieString: string) =>
     invoke<AuthStatus>("setup_cookies", { host, cookieString }),
+  openLoginWindow: (host: string) =>
+    invoke<void>("open_login_window", { host }),
   clearAuth: () => invoke<void>("clear_auth"),
 
   // Preferences
