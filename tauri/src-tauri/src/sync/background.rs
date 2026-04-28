@@ -8,7 +8,7 @@ use tauri::AppHandle;
 pub async fn run_periodic_loop(state: Arc<AppState>, _app: AppHandle) {
     // Initial sync on launch when authenticated.
     if state.client.is_configured() {
-        if let Err(e) = super::sync_all(state.clone()).await {
+        if let Err(e) = super::sync_all(state.clone(), false).await {
             tracing::warn!("initial sync failed: {}", e);
         }
     }
@@ -21,7 +21,7 @@ pub async fn run_periodic_loop(state: Arc<AppState>, _app: AppHandle) {
         if !state.client.is_configured() {
             continue;
         }
-        if let Err(e) = super::sync_all(state.clone()).await {
+        if let Err(e) = super::sync_all(state.clone(), false).await {
             tracing::warn!("periodic sync failed: {}", e);
             state.events.sync_error(&e.to_string());
         }

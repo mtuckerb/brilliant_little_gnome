@@ -8,8 +8,8 @@ pub async fn sync_status(state: AppStateArg<'_>) -> Result<SyncStatus> {
 }
 
 #[tauri::command]
-pub async fn sync_all(state: AppStateArg<'_>) -> Result<()> {
-    crate::sync::sync_all(state.inner().clone()).await
+pub async fn sync_all(state: AppStateArg<'_>, force: Option<bool>) -> Result<()> {
+    crate::sync::sync_all(state.inner().clone(), force.unwrap_or(false)).await
 }
 
 #[tauri::command]

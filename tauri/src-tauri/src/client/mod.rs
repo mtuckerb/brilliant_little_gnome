@@ -107,9 +107,14 @@ impl BrightspaceClient {
 
     /// GET a JSON path with cache-aware semantics. Returns `Value` so callers can
     /// decide whether the payload is an array, an Objects-wrapped page, etc.
+    ///
+    /// Pagination cursors (`?bookmark=...`) are intentionally **not** persisted to
+    /// `api_caches`: bookmarks are opaque, change every fetch, and would never be
+    /// re-hit — caching them just bloats the table.
     pub async fn do_get(&self, pool: &SqlitePool, path: &str, force_refresh: bool) -> Result<Value> {
         let path = normalize_path(path);
-        let cached = read_cache(pool, &path).await?;
+        let is_bookmark_page = path.contains("bookmark=");
+        let cached = if is_bookmark_page { None } else { read_cache(pool, &path).await? };
 
         if !force_refresh {
             if let Some((value, age)) = &cached {
@@ -127,7 +132,9 @@ impl BrightspaceClient {
 
         match self.fetch(&path).await {
             Ok(value) => {
-                write_cache(pool, &path, &value).await?;
+                if !is_bookmark_page {
+                    write_cache(pool, &path, &value).await?;
+                }
                 Ok(value)
             }
             Err(e) => {

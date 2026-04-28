@@ -1,22 +1,55 @@
 // Notification sync. Pulls the unified feed and global alerts; upserts into
 // `notifications` keyed by `external_id`.
+//
+// We track `user_preferences.last_notification_sync_at` and pass it as `?since=`
+// to both endpoints so each subsequent sync only fetches deltas. The very first
+// sync (or any sync after a manual reset) sends no `since` and pulls the full
+// window the server returns.
 
 use crate::error::Result;
 use crate::state::AppState;
 use serde_json::Value;
 
 pub async fn sync(state: &AppState) -> Result<()> {
+    // Snapshot the previous high-water mark BEFORE we start fetching, so the
+    // window we use to filter is stable across the two endpoint calls.
+    let since: Option<String> = sqlx::query_scalar(
+        "SELECT last_notification_sync_at FROM user_preferences LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+    let since_ref = since.as_deref();
+
     // Unified feed.
-    let feed = state.client.get_unified_feed(&state.pool, None, true).await.unwrap_or_default();
+    let feed = state
+        .client
+        .get_unified_feed(&state.pool, since_ref, true)
+        .await
+        .unwrap_or_default();
     for item in &feed {
         upsert_feed_item(state, item).await.ok();
     }
 
     // Global alerts.
-    let alerts = state.client.get_global_alerts(&state.pool, None).await.unwrap_or_default();
+    let alerts = state
+        .client
+        .get_global_alerts(&state.pool, since_ref)
+        .await
+        .unwrap_or_default();
     for a in &alerts {
         upsert_alert(state, a).await.ok();
     }
+
+    // Advance the high-water mark only on a clean fetch path. We use the local
+    // clock rather than a server-provided timestamp because Brightspace doesn't
+    // return one consistently; clock skew is acceptable for a delta window.
+    let _ = sqlx::query(
+        "UPDATE user_preferences SET last_notification_sync_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM user_preferences LIMIT 1)",
+    )
+    .execute(&state.pool)
+    .await;
 
     state.events.notifications_updated();
     Ok(())
