@@ -219,6 +219,29 @@ impl BrightspaceClient {
         Ok(items)
     }
 
+    /// Fetch a raw HTML page (not JSON, not cached). Used by the PSY-220
+    /// scraper which has to parse the rendered grades view.
+    pub async fn fetch_html(&self, path: &str) -> Result<String> {
+        let host = self.host.read().clone()
+            .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
+        let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
+        let url = format!("https://{}{}", host, path);
+        let resp = self.http.get(&url)
+            .header(header::ACCEPT, "text/html,application/xhtml+xml")
+            .header(header::COOKIE, cookie)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+                *self.degraded.write() = true;
+            }
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::BrightspaceApi { status: status.as_u16(), body });
+        }
+        Ok(resp.text().await?)
+    }
+
     pub async fn archive_cache(&self, pool: &SqlitePool, path: &str) -> Result<()> {
         sqlx::query("UPDATE api_caches SET is_archived = 1, updated_at = CURRENT_TIMESTAMP WHERE path = ?")
             .bind(normalize_path(path))

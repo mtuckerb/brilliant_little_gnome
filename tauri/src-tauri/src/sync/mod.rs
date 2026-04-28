@@ -6,8 +6,10 @@ pub mod assignments;
 pub mod background;
 pub mod content;
 pub mod courses;
+pub mod discussions;
 pub mod grades;
 pub mod notifications;
+pub mod psy220;
 
 use crate::error::Result;
 use crate::models::SyncState;
@@ -51,6 +53,13 @@ pub async fn sync_all(state: Arc<AppState>) -> Result<()> {
         if let Err(e) = grades::sync(&state, course_id).await {
             tracing::warn!("[{}] grade sync failed: {}", course_id, e);
         }
+        if let Err(e) = discussions::sync(&state, course_id).await {
+            tracing::warn!("[{}] discussion sync failed: {}", course_id, e);
+        }
+        // PSY-220 scraper: only runs for course 446900, no-op otherwise.
+        if let Err(e) = psy220::sync(&state, course_id).await {
+            tracing::warn!("[{}] psy220 scraper failed: {}", course_id, e);
+        }
         state.events.course_updated(course_id);
     }
 
@@ -84,6 +93,12 @@ pub async fn sync_course(state: Arc<AppState>, course_id: &str) -> Result<()> {
     }
     if let Err(e) = grades::sync(&state, course_id).await {
         tracing::warn!("[{}] grade sync failed: {}", course_id, e);
+    }
+    if let Err(e) = discussions::sync(&state, course_id).await {
+        tracing::warn!("[{}] discussion sync failed: {}", course_id, e);
+    }
+    if let Err(e) = psy220::sync(&state, course_id).await {
+        tracing::warn!("[{}] psy220 scraper failed: {}", course_id, e);
     }
 
     {
