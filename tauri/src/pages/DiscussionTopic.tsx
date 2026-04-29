@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { DiscussionPost, DiscussionTopic as DTopic } from "../types";
+import CourseNav from "../components/CourseNav";
 
 interface PostNode extends DiscussionPost {
   children: PostNode[];
@@ -97,6 +98,7 @@ export default function DiscussionTopicPage() {
 
   return (
     <div>
+      {courseId && <CourseNav courseId={courseId} />}
       <div className="mb-3">
         <Link to={`/course/${courseId}/discussions`} className="is-size-7">
           <i className="fas fa-arrow-left mr-1"></i>back to discussions

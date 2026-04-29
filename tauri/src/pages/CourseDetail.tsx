@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { Course } from "../types";
 import SyllabusPanel from "../components/SyllabusPanel";
 import { triggerDownload } from "../lib/download";
+import CourseNav from "../components/CourseNav";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -91,6 +92,7 @@ export default function CourseDetail() {
           <li className="is-active"><a>{course.name}</a></li>
         </ul>
       </nav>
+      <CourseNav courseId={course.org_unit_id} />
 
       {banner ? (
         <section
@@ -155,18 +157,6 @@ export default function CourseDetail() {
             title="Course color"
           />
         </label>
-        <Link to={`/course/${course.org_unit_id}/grades`} className="button is-primary is-light">
-          <span className="icon"><i className="fas fa-poll"></i></span><span>Grades</span>
-        </Link>
-        <Link to={`/course/${course.org_unit_id}/assignments`} className="button is-primary is-light">
-          <span className="icon"><i className="fas fa-tasks"></i></span><span>Assignments</span>
-        </Link>
-        <Link to={`/course/${course.org_unit_id}/content`} className="button is-primary is-light">
-          <span className="icon"><i className="fas fa-folder-tree"></i></span><span>Modules</span>
-        </Link>
-        <Link to={`/course/${course.org_unit_id}/discussions`} className="button is-primary is-light">
-          <span className="icon"><i className="fas fa-comments"></i></span><span>Discussions</span>
-        </Link>
         <button className="button is-small is-light" onClick={onSync} disabled={syncing}>
           <span className="icon"><i className={`fas fa-sync ${syncing ? "fa-spin" : ""}`}></i></span>
           <span>{syncing ? "Syncing…" : "Sync"}</span>

@@ -7,6 +7,8 @@ import type {
   AssignmentDetailPayload,
   Course,
 } from "../types";
+import { fmtNum } from "../lib/format";
+import CourseNav from "../components/CourseNav";
 
 function AttachmentList({ items }: { items: AssignmentAttachment[] }) {
   if (items.length === 0) return null;
@@ -90,6 +92,7 @@ export default function AssignmentDetail() {
           <li className="is-active"><a>{a.name}</a></li>
         </ul>
       </nav>
+      {id && <CourseNav courseId={id} />}
 
       <div className="box">
         <h1 className="title is-4" style={{ color: accent }}>{a.name}</h1>
@@ -158,8 +161,8 @@ export default function AssignmentDetail() {
           <h2 className="title is-5"><i className="fas fa-chart-bar mr-2"></i>Score</h2>
           {fb?.score_numerator != null && fb.score_denominator != null && (
             <p className="is-size-4">
-              <strong>{fb.score_numerator}</strong>
-              <span className="has-text-grey"> / {fb.score_denominator}</span>
+              <strong>{fmtNum(fb.score_numerator)}</strong>
+              <span className="has-text-grey"> / {fmtNum(fb.score_denominator)}</span>
             </p>
           )}
           {fb?.displayed_score && <p className="has-text-grey">{fb.displayed_score}</p>}
@@ -168,7 +171,7 @@ export default function AssignmentDetail() {
               {gb.displayed_grade && <p className="is-size-5">{gb.displayed_grade}</p>}
               {gb.numerator != null && gb.denominator != null && (
                 <p className="is-size-6 has-text-grey">
-                  {gb.numerator} / {gb.denominator}
+                  {fmtNum(gb.numerator)} / {fmtNum(gb.denominator)}
                 </p>
               )}
               <p className="is-size-7 has-text-grey-light"><em>from gradebook</em></p>

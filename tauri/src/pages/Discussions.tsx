@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { DiscussionForum, DiscussionTopic } from "../types";
+import CourseNav from "../components/CourseNav";
 
 export default function Discussions() {
   const { id: courseId } = useParams<{ id: string }>();
@@ -20,6 +21,7 @@ export default function Discussions() {
 
   return (
     <div>
+      {courseId && <CourseNav courseId={courseId} />}
       <h1 className="title"><i className="fas fa-comments mr-2"></i>Discussions</h1>
       {forums.length === 0 && <p className="has-text-grey">No discussion forums.</p>}
       {forums.map((f) => {
