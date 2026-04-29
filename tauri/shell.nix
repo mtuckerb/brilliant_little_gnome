@@ -4,10 +4,16 @@
 # toolchain regardless of which channel the host nixpkgs is on.
 
 let
+  # Pin nixpkgs explicitly so we don't depend on the host having a
+  # `nixpkgs` channel registered (the macOS multi-user installer skips
+  # that step by default, which makes `<nixpkgs>` resolution fail).
+  nixpkgsTarball = fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz";
+  };
   rustOverlay = import (fetchTarball {
     url = "https://github.com/oxalica/rust-overlay/archive/master.tar.gz";
   });
-  pkgs = import <nixpkgs> { overlays = [ rustOverlay ]; };
+  pkgs = import nixpkgsTarball { overlays = [ rustOverlay ]; };
   inherit (pkgs) lib stdenv;
 
   # Single source of truth for the toolchain. Bump as needed.
