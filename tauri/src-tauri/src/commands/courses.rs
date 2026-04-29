@@ -68,6 +68,21 @@ pub async fn update_course_target_grade(state: AppStateArg<'_>, id: String, targ
 }
 
 #[tauri::command]
+pub async fn update_course_end_of_week(state: AppStateArg<'_>, id: String, day: i64) -> Result<()> {
+    // 0 = Sunday … 6 = Saturday. Reject anything outside that range so we don't
+    // store junk that downstream date math will silently mis-handle.
+    if !(0..=6).contains(&day) {
+        return Err(crate::error::AppError::Other(format!("end_of_week_day out of range: {}", day)));
+    }
+    sqlx::query("UPDATE courses SET end_of_week_day = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+        .bind(day)
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn drop_course(state: AppStateArg<'_>, id: String) -> Result<()> {
     sqlx::query("UPDATE courses SET status = 'dropped', updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
         .bind(id)

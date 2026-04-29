@@ -60,6 +60,7 @@ pub fn run() {
             commands::courses::update_course_color,
             commands::courses::update_course_units,
             commands::courses::update_course_target_grade,
+            commands::courses::update_course_end_of_week,
             commands::courses::drop_course,
             commands::courses::refresh_course,
             // Grades
@@ -73,6 +74,12 @@ pub fn run() {
             commands::assignments::toggle_assignment_complete,
             commands::assignments::toggle_assignment_optional,
             commands::assignments::update_assignment_due_date,
+            commands::assignments::create_synthetic_assignment,
+            commands::assignments::delete_assignment,
+            commands::assignment_detail::get_assignment_detail,
+            commands::downloads::download_topic_file,
+            commands::downloads::download_module_archive,
+            commands::downloads::download_course_archive,
             // Notifications
             commands::notifications::list_notifications,
             commands::notifications::mark_notification_read,
@@ -87,6 +94,10 @@ pub fn run() {
             // Discussions
             commands::discussions::list_forums,
             commands::discussions::list_topics,
+            commands::discussions::list_topic_posts,
+            // Overview / syllabus
+            commands::overview::get_course_overview,
+            commands::overview::fetch_course_overview_attachment,
             // REST API
             commands::rest::rest_api_start,
             commands::rest::rest_api_stop,

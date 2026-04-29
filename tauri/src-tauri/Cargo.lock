@@ -264,6 +264,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "cookie_store 0.21.1",
+ "crc32fast",
  "dirs 5.0.1",
  "futures",
  "hex",

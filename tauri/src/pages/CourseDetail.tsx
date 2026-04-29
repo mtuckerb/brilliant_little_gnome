@@ -2,11 +2,17 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { Course } from "../types";
+import SyllabusPanel from "../components/SyllabusPanel";
+import { triggerDownload } from "../lib/download";
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function CourseDetail() {
   const { id } = useParams<{ id: string }>();
   const [course, setCourse] = useState<Course | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -22,6 +28,56 @@ export default function CourseDetail() {
     if (!course) return;
     setCourse({ ...course, custom_color: next });
     await api.updateCourseColor(course.org_unit_id, next).catch(() => {});
+  }
+
+  async function onTargetChange(raw: string) {
+    if (!course) return;
+    const n = raw.trim() === "" ? null : parseFloat(raw);
+    if (n !== null && (Number.isNaN(n) || n < 0 || n > 100)) return;
+    setCourse({ ...course, target_grade: n });
+    await api.updateCourseTargetGrade(course.org_unit_id, n).catch(() => {});
+  }
+
+  async function onUnitsChange(raw: string) {
+    if (!course) return;
+    const n = raw.trim() === "" ? null : parseFloat(raw);
+    if (n !== null && (Number.isNaN(n) || n < 0)) return;
+    setCourse({ ...course, units: n });
+    await api.updateCourseUnits(course.org_unit_id, n).catch(() => {});
+  }
+
+  async function onEndOfWeekChange(raw: string) {
+    if (!course) return;
+    const n = parseInt(raw, 10);
+    if (Number.isNaN(n) || n < 0 || n > 6) return;
+    setCourse({ ...course, end_of_week_day: n });
+    await api.updateCourseEndOfWeek(course.org_unit_id, n).catch(() => {});
+  }
+
+  async function onDownloadEverything() {
+    if (!course || downloading) return;
+    if (!confirm("Download every file in this course? This may take a while for large courses.")) return;
+    setDownloading(true);
+    try {
+      const payload = await api.downloadCourseArchive(course.org_unit_id);
+      triggerDownload(payload);
+    } catch (e) {
+      alert(`Download failed: ${String((e as { message?: string })?.message ?? e)}`);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function onSync() {
+    if (!course || syncing) return;
+    setSyncing(true);
+    try {
+      await api.syncCourse(course.org_unit_id);
+      const fresh = await api.getCourse(course.org_unit_id);
+      setCourse(fresh);
+    } finally {
+      setSyncing(false);
+    }
   }
 
   const accent = course.custom_color || "#739AC3";
@@ -88,7 +144,7 @@ export default function CourseDetail() {
         </h1>
       )}
 
-      <div className="is-flex is-align-items-center mb-4" style={{ gap: 12 }}>
+      <div className="is-flex is-align-items-center is-flex-wrap-wrap mb-4" style={{ gap: 12 }}>
         <label className="is-flex is-align-items-center" style={{ gap: 8 }}>
           <span className="is-size-7 has-text-grey">Color</span>
           <input
@@ -105,9 +161,74 @@ export default function CourseDetail() {
         <Link to={`/course/${course.org_unit_id}/assignments`} className="button is-primary is-light">
           <span className="icon"><i className="fas fa-tasks"></i></span><span>Assignments</span>
         </Link>
-        <button className="button is-small is-light" onClick={() => api.refreshCourse(course.org_unit_id)}>
-          <span className="icon"><i className="fas fa-sync"></i></span><span>Refresh</span>
+        <Link to={`/course/${course.org_unit_id}/content`} className="button is-primary is-light">
+          <span className="icon"><i className="fas fa-folder-tree"></i></span><span>Modules</span>
+        </Link>
+        <Link to={`/course/${course.org_unit_id}/discussions`} className="button is-primary is-light">
+          <span className="icon"><i className="fas fa-comments"></i></span><span>Discussions</span>
+        </Link>
+        <button className="button is-small is-light" onClick={onSync} disabled={syncing}>
+          <span className="icon"><i className={`fas fa-sync ${syncing ? "fa-spin" : ""}`}></i></span>
+          <span>{syncing ? "Syncing…" : "Sync"}</span>
         </button>
+        <button
+          className="button is-small is-light"
+          onClick={onDownloadEverything}
+          disabled={downloading}
+          title="Download every content file in this course as a ZIP"
+        >
+          <span className="icon"><i className={`fas ${downloading ? "fa-circle-notch fa-spin" : "fa-file-archive"}`}></i></span>
+          <span>{downloading ? "Bundling…" : "Download all"}</span>
+        </button>
+      </div>
+
+      <SyllabusPanel courseId={course.org_unit_id} />
+
+      <div className="box">
+        <h2 className="title is-6 mb-3"><i className="fas fa-sliders-h mr-2 has-text-grey"></i>Course settings</h2>
+        <div className="columns is-multiline">
+          <div className="column is-one-third">
+            <label className="label is-small">Target grade (%)</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              max={100}
+              step={0.5}
+              defaultValue={course.target_grade ?? ""}
+              onBlur={(e) => onTargetChange(e.target.value)}
+              placeholder="93"
+            />
+            <p className="help">Used to compute the average needed on remaining work.</p>
+          </div>
+          <div className="column is-one-third">
+            <label className="label is-small">Units / Credits</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              step={0.5}
+              defaultValue={course.units ?? ""}
+              onBlur={(e) => onUnitsChange(e.target.value)}
+              placeholder="3"
+            />
+            <p className="help">Used for GPA weighting.</p>
+          </div>
+          <div className="column is-one-third">
+            <label className="label is-small">End of week</label>
+            <div className="select is-fullwidth">
+              <select
+                value={course.end_of_week_day ?? 0}
+                onChange={(e) => onEndOfWeekChange(e.target.value)}
+              >
+                {DAY_NAMES.map((d, i) => (
+                  <option key={i} value={i}>{d}</option>
+                ))}
+              </select>
+            </div>
+            <p className="help">Default due day for synthetic tasks.</p>
+          </div>
+        </div>
       </div>
     </div>
   );

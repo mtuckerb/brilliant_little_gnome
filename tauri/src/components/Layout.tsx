@@ -34,18 +34,16 @@ export default function Layout({ auth, sync, children }: Props) {
             </Link>
           </div>
           <div className="navbar-item">
-            <Link to="/notifications" className={`button is-white ${tabActive("/notifications")}`}>
+            <Link to="/notifications" className={`button is-white ${tabActive("/notifications")}`} title="Notifications" aria-label="Notifications">
               <span className="icon"><i className="fas fa-bell"></i></span>
-              <span>Notifications</span>
             </Link>
           </div>
           <div className="navbar-item">
             <span className="icon mr-3" title={auth.degraded ? "Session Expired" : "Authenticated"}>
               <i className={`fas fa-circle ${auth.degraded ? "has-text-danger" : "has-text-success"}`} style={{ fontSize: "0.75rem" }}></i>
             </span>
-            <Link to="/settings" className="button is-primary is-light" style={{ border: "2px solid #739AC3", fontWeight: "bold" }}>
+            <Link to="/settings" className="button is-primary is-light" style={{ border: "2px solid #739AC3", fontWeight: "bold" }} title="Settings" aria-label="Settings">
               <span className="icon"><i className="fas fa-cog"></i></span>
-              <span>Settings</span>
             </Link>
           </div>
         </div>

@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[tauri::command]
 pub async fn get_prefs(state: AppStateArg<'_>) -> Result<UserPreferences> {
     let prefs = sqlx::query_as::<_, UserPreferences>(
-        "SELECT id, display_name, time_zone, brightspace_host, api_enabled, api_key, api_listen_all, api_port, jwt_secret, historic_gpa, historic_units, default_semester, brightspace_uid, brightspace_user_id, last_login_at FROM user_preferences LIMIT 1",
+        "SELECT id, display_name, time_zone, brightspace_host, api_enabled, api_key, api_listen_all, api_port, jwt_secret, historic_gpa, historic_units, default_semester, brightspace_uid, brightspace_user_id, last_login_at, calendar_show_empty_days FROM user_preferences LIMIT 1",
     )
     .fetch_one(&state.pool)
     .await?;
@@ -23,6 +23,7 @@ pub struct PrefsPatch {
     pub api_enabled: Option<bool>,
     pub api_listen_all: Option<bool>,
     pub api_port: Option<i64>,
+    pub calendar_show_empty_days: Option<bool>,
 }
 
 #[tauri::command]
@@ -60,6 +61,10 @@ pub async fn update_prefs(state: AppStateArg<'_>, patch: PrefsPatch) -> Result<U
     if let Some(v) = patch.api_port {
         sqlx::query("UPDATE user_preferences SET api_port = ?, updated_at = CURRENT_TIMESTAMP")
             .bind(v).execute(pool).await?;
+    }
+    if let Some(v) = patch.calendar_show_empty_days {
+        sqlx::query("UPDATE user_preferences SET calendar_show_empty_days = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(v as i64).execute(pool).await?;
     }
     get_prefs(state).await
 }

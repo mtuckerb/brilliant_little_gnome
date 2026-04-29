@@ -26,3 +26,26 @@ body { background: #fdfdfd; min-height: 100vh; margin: 0; }
 .toast.is-danger { border-left-color: #f14668; }
 .toast.is-success { border-left-color: #48c78e; }
 .toast.is-warning { border-left-color: #ffe08a; }
+
+/* Assignment row exit: dissolve+pop when an item becomes completed and the
+   "show completed" toggle is off. The parent keeps the row mounted with
+   .is-leaving for ~300ms so this keyframe can play before unmount. */
+.assignment-row {
+  transition: background-color 0.15s;
+}
+.assignment-row.is-leaving {
+  animation: dissolve-pop 280ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+  pointer-events: none;
+  overflow: hidden;
+}
+@keyframes dissolve-pop {
+  0%   { opacity: 1; transform: scale(1);    max-height: 80px; }
+  40%  { opacity: 0.9; transform: scale(1.04); }
+  100% { opacity: 0; transform: scale(0.9);  max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; border-color: transparent; }
+}
+
+.calendar-empty-day {
+  height: 14px;
+  border-bottom: 1px dashed #eee;
+  opacity: 0.5;
+}

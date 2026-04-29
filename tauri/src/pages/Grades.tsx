@@ -23,8 +23,8 @@ export default function Grades() {
   const load = useCallback(() => {
     if (!id) return;
     api.gradesSummary(id, showHidden).then((d) => {
-      setGrades(d.grades);
-      setStats(d.grade_stats);
+      setGrades(d.rows);
+      setStats(d.stats);
     });
   }, [id, showHidden]);
 

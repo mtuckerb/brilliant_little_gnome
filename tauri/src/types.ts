@@ -104,6 +104,7 @@ export interface UserPreferences {
   brightspace_uid: string | null;
   brightspace_user_id: string | null;
   last_login_at: string | null;
+  calendar_show_empty_days: boolean;
 }
 
 export interface AuthStatus {
@@ -161,4 +162,54 @@ export interface DiscussionTopic {
   thread_count: number | null;
   post_count: number | null;
   last_post_date: string | null;
+}
+
+export interface AssignmentAttachment {
+  name: string;
+  url: string | null;
+  size: number | null;
+}
+
+export interface AssignmentSubmissionDetail {
+  submitted_at: string | null;
+  comment_html: string | null;
+  files: AssignmentAttachment[];
+}
+
+export interface AssignmentFeedback {
+  displayed_score: string | null;
+  score_numerator: number | null;
+  score_denominator: number | null;
+  feedback_html: string | null;
+  attachments: AssignmentAttachment[];
+}
+
+export interface GradebookEntry {
+  displayed_grade: string | null;
+  numerator: number | null;
+  denominator: number | null;
+  comments_html: string | null;
+}
+
+export interface AssignmentDetailPayload {
+  folder_raw: unknown | null;
+  rubrics_raw: unknown | null;
+  feedback: AssignmentFeedback | null;
+  submissions: AssignmentSubmissionDetail[];
+  instructions_html: string | null;
+  instruction_attachments: AssignmentAttachment[];
+  gradebook: GradebookEntry | null;
+  synthetic: boolean;
+}
+
+export interface DiscussionPost {
+  post_id: string;
+  parent_post_id: string | null;
+  thread_id: string | null;
+  subject: string | null;
+  body_html: string | null;
+  author_name: string | null;
+  author_id: string | null;
+  posted_at: string | null;
+  is_pinned: boolean;
 }

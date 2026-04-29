@@ -249,6 +249,43 @@ impl BrightspaceClient {
         Ok(resp.text().await?)
     }
 
+    /// Fetch arbitrary binary content (PDFs, attachments, etc.) with the user's
+    /// auth cookie. Bypasses the JSON cache because attachments aren't JSON and
+    /// can be large. Returns `(bytes, content_type, suggested_filename)`. The
+    /// filename is parsed from the `Content-Disposition` header when present.
+    pub async fn fetch_bytes(&self, url_or_path: &str) -> Result<(Vec<u8>, Option<String>, Option<String>)> {
+        let host = self.host.read().clone()
+            .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
+        let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
+
+        // Brightspace attachment URLs may be absolute (https://…) or root-relative.
+        let url = if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
+            url_or_path.to_string()
+        } else {
+            format!("https://{}{}", host, url_or_path)
+        };
+
+        let resp = self.http.get(&url)
+            .header(header::COOKIE, cookie)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+                *self.degraded.write() = true;
+            }
+            return Err(AppError::BrightspaceApi { status: status.as_u16(), body: format!("GET {} -> {}", url, status) });
+        }
+        let content_type = resp.headers().get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let filename = resp.headers().get(header::CONTENT_DISPOSITION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_filename_from_content_disposition);
+        let bytes = resp.bytes().await?.to_vec();
+        Ok((bytes, content_type, filename))
+    }
+
     pub async fn archive_cache(&self, pool: &SqlitePool, path: &str) -> Result<()> {
         sqlx::query("UPDATE api_caches SET is_archived = 1, updated_at = CURRENT_TIMESTAMP WHERE path = ?")
             .bind(normalize_path(path))
@@ -293,6 +330,26 @@ impl BrightspaceClient {
         self.get_all_pages(pool, &path, force_refresh).await
     }
 
+    pub async fn get_assignment_folder(&self, pool: &SqlitePool, course_id: &str, folder_id: &str, force_refresh: bool) -> Result<Value> {
+        let path = format!("/d2l/api/le/{}/{}/dropbox/folders/{}", API_VERSION, course_id, folder_id);
+        self.do_get(pool, &path, force_refresh).await
+    }
+
+    pub async fn get_assignment_feedback(&self, pool: &SqlitePool, course_id: &str, folder_id: &str, force_refresh: bool) -> Result<Value> {
+        let path = format!("/d2l/api/le/{}/{}/dropbox/folders/{}/feedback/myFeedback", API_VERSION, course_id, folder_id);
+        self.do_get(pool, &path, force_refresh).await
+    }
+
+    pub async fn get_assignment_submissions(&self, pool: &SqlitePool, course_id: &str, folder_id: &str, force_refresh: bool) -> Result<Value> {
+        let path = format!("/d2l/api/le/{}/{}/dropbox/folders/{}/submissions/", API_VERSION, course_id, folder_id);
+        self.do_get(pool, &path, force_refresh).await
+    }
+
+    pub async fn get_assignment_rubrics(&self, pool: &SqlitePool, course_id: &str, force_refresh: bool) -> Result<Value> {
+        let path = format!("/d2l/api/le/{}/{}/feedback/rubrics/", API_VERSION, course_id);
+        self.do_get(pool, &path, force_refresh).await
+    }
+
     pub async fn get_quizzes(&self, pool: &SqlitePool, course_id: &str, force_refresh: bool) -> Result<Vec<Value>> {
         let path = format!("/d2l/api/le/{}/{}/quizzes/", API_VERSION, course_id);
         self.get_all_pages(pool, &path, force_refresh).await
@@ -318,6 +375,14 @@ impl BrightspaceClient {
         let path = format!("/d2l/api/le/{}/{}/discussions/forums/{}/topics/", API_VERSION, course_id, forum_id);
         let data = self.do_get(pool, &path, force_refresh).await?;
         Ok(ensure_array(&data))
+    }
+
+    pub async fn get_discussion_posts(&self, pool: &SqlitePool, course_id: &str, forum_id: &str, topic_id: &str, force_refresh: bool) -> Result<Vec<Value>> {
+        let path = format!(
+            "/d2l/api/le/{}/{}/discussions/forums/{}/topics/{}/posts/",
+            API_VERSION, course_id, forum_id, topic_id,
+        );
+        self.get_all_pages(pool, &path, force_refresh).await
     }
 
     pub async fn get_global_alerts(&self, pool: &SqlitePool, since: Option<&str>) -> Result<Vec<Value>> {
@@ -396,6 +461,62 @@ fn normalize_cookie_string(c: &str) -> String {
         .join(" ")
         .trim()
         .to_string()
+}
+
+/// Parse RFC 6266 `Content-Disposition` filename, supporting both `filename=`
+/// and the UTF-8 `filename*=UTF-8''…` form. Returns the decoded basename only.
+fn parse_filename_from_content_disposition(cd: &str) -> Option<String> {
+    // Prefer filename* (UTF-8) when present.
+    for part in cd.split(';') {
+        let p = part.trim();
+        if let Some(rest) = p.strip_prefix("filename*=") {
+            // filename*=UTF-8''<percent-encoded>
+            if let Some(idx) = rest.find("''") {
+                let raw = &rest[idx + 2..];
+                return Some(percent_decode(raw));
+            }
+            return Some(strip_quotes(rest).to_string());
+        }
+    }
+    for part in cd.split(';') {
+        let p = part.trim();
+        if let Some(rest) = p.strip_prefix("filename=") {
+            return Some(strip_quotes(rest).to_string());
+        }
+    }
+    None
+}
+
+fn strip_quotes(s: &str) -> &str {
+    let s = s.trim();
+    s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s)
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn urlencoding(s: &str) -> String {
