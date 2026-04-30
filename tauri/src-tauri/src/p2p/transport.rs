@@ -65,11 +65,31 @@ pub enum WireMsg {
     StateResponse { vv: Vec<u8>, bytes: Vec<u8> },
 }
 
+impl WireMsg {
+    /// Encode via `postcard` (the same compact, schema-evolution-friendly
+    /// format the rest of the iroh ecosystem uses). Errors here mean a
+    /// programmer bug — Vec<u8> fields can't fail to serialize — so we
+    /// surface as AppError::Other rather than threading postcard's error
+    /// type through the public surface.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        postcard::to_allocvec(self)
+            .map_err(|e| AppError::Other(format!("wire encode: {e}")))
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        postcard::from_bytes(bytes)
+            .map_err(|e| AppError::Other(format!("wire decode: {e}")))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum TransportEvent {
     PeerConnected(String),
     PeerDisconnected(String),
-    Message { from: String, payload: Vec<u8> },
+    /// A typed gossip message. Malformed inbound bytes are logged at
+    /// warn and dropped before they reach a subscriber — the consumer
+    /// never has to handle "what if this isn't a WireMsg".
+    Message { from: String, payload: WireMsg },
 }
 
 pub struct Transport {
@@ -187,11 +207,22 @@ impl Transport {
                                     Some(TransportEvent::PeerConnected(id.to_string())),
                                 Event::NeighborDown(id) =>
                                     Some(TransportEvent::PeerDisconnected(id.to_string())),
-                                Event::Received(msg) =>
-                                    Some(TransportEvent::Message {
-                                        from: msg.delivered_from.to_string(),
-                                        payload: msg.content.to_vec(),
-                                    }),
+                                Event::Received(msg) => {
+                                    match WireMsg::decode(&msg.content) {
+                                        Ok(payload) => Some(TransportEvent::Message {
+                                            from: msg.delivered_from.to_string(),
+                                            payload,
+                                        }),
+                                        Err(e) => {
+                                            warn!(
+                                                "dropping {}-byte message from {}: {e}",
+                                                msg.content.len(),
+                                                msg.delivered_from,
+                                            );
+                                            None
+                                        }
+                                    }
+                                }
                                 Event::Lagged => {
                                     warn!("gossip receiver lagged");
                                     None
@@ -240,11 +271,14 @@ impl Transport {
         self.inbox.subscribe()
     }
 
-    pub async fn broadcast(&self, payload: Vec<u8>) -> Result<()> {
+    /// Send a typed `WireMsg` over the gossip topic. Postcard framing
+    /// is internal — callers never see encoded bytes.
+    pub async fn broadcast(&self, msg: WireMsg) -> Result<()> {
+        let bytes = msg.encode()?;
         self.sender
             .lock()
             .await
-            .broadcast(Bytes::from(payload))
+            .broadcast(Bytes::from(bytes))
             .await
             .map_err(|e| AppError::Other(format!("gossip broadcast: {e}")))
     }
@@ -260,6 +294,48 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_wire_round_trip(msg: WireMsg) {
+        let bytes = msg.encode().unwrap();
+        let decoded = WireMsg::decode(&bytes).unwrap();
+        // Compare via debug repr so we don't have to derive PartialEq on
+        // WireMsg (the inner Vec<u8> already compares fine, but keeping
+        // the public type minimal is worth the assert acrobatics).
+        assert_eq!(format!("{decoded:?}"), format!("{msg:?}"));
+    }
+
+    #[test]
+    fn wire_msg_round_trip_update() {
+        assert_wire_round_trip(WireMsg::Update { bytes: vec![] });
+        assert_wire_round_trip(WireMsg::Update { bytes: vec![0; 4096] });
+    }
+
+    #[test]
+    fn wire_msg_round_trip_snapshot() {
+        assert_wire_round_trip(WireMsg::Snapshot { bytes: b"snap".to_vec() });
+    }
+
+    #[test]
+    fn wire_msg_round_trip_state_request() {
+        assert_wire_round_trip(WireMsg::StateRequest { vv: vec![1, 2, 3, 4, 5] });
+    }
+
+    #[test]
+    fn wire_msg_round_trip_state_response() {
+        assert_wire_round_trip(WireMsg::StateResponse {
+            vv: vec![9, 8, 7],
+            bytes: vec![0xde, 0xad, 0xbe, 0xef],
+        });
+    }
+
+    #[test]
+    fn wire_msg_decode_rejects_garbage() {
+        // Postcard rejects: discriminator out of range (we only have 4 variants)
+        let bad = vec![99u8, 0, 0, 0];
+        assert!(WireMsg::decode(&bad).is_err());
+        // And empty input.
+        assert!(WireMsg::decode(&[]).is_err());
+    }
 
     #[test]
     fn topic_id_is_deterministic_and_domain_separated() {
@@ -371,8 +447,10 @@ mod tests {
                 .await
                 .expect("peers did not join the topic in time");
 
-            // Now broadcast from t1 and assert t2 sees the bytes.
-            t1.broadcast(b"hello-from-t1".to_vec()).await.unwrap();
+            // Now broadcast from t1 and assert t2 sees the typed message.
+            t1.broadcast(WireMsg::Update { bytes: b"hello-from-t1".to_vec() })
+                .await
+                .unwrap();
             let received = timeout(Duration::from_secs(2), async {
                 loop {
                     if let Ok(TransportEvent::Message { from, payload }) = rx2.recv().await {
@@ -384,14 +462,19 @@ mod tests {
             .expect("t2 did not receive broadcast within 2s");
 
             assert_eq!(received.0, t1.endpoint_id().to_string());
-            assert_eq!(received.1, b"hello-from-t1");
+            match received.1 {
+                WireMsg::Update { bytes } => assert_eq!(bytes, b"hello-from-t1"),
+                other => panic!("expected Update, got {other:?}"),
+            }
 
-            // Reverse direction sanity check.
-            t2.broadcast(b"reply-from-t2".to_vec()).await.unwrap();
+            // Reverse direction sanity check with a different variant.
+            t2.broadcast(WireMsg::StateRequest { vv: vec![0xaa, 0xbb] })
+                .await
+                .unwrap();
             let received = timeout(Duration::from_secs(2), async {
                 loop {
                     if let Ok(TransportEvent::Message { payload, .. }) = rx1.recv().await {
-                        if payload == b"reply-from-t2" {
+                        if matches!(&payload, WireMsg::StateRequest { vv } if vv == &[0xaa, 0xbb]) {
                             return payload;
                         }
                     }
@@ -399,7 +482,7 @@ mod tests {
             })
             .await
             .expect("t1 did not receive reply within 2s");
-            assert_eq!(received, b"reply-from-t2");
+            assert!(matches!(received, WireMsg::StateRequest { .. }));
 
             let _ = id2; // silence unused warn; we only bootstrap from id1.
             t1.shutdown().await.unwrap();
