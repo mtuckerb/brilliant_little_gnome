@@ -11,6 +11,9 @@ pub mod rest_api;
 pub mod state;
 pub mod sync;
 
+#[cfg(feature = "p2p")]
+pub mod p2p;
+
 use state::AppState;
 use std::sync::Arc;
 use tauri::Manager;
