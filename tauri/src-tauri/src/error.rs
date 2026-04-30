@@ -16,6 +16,9 @@ pub enum AppError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Jwt(#[from] jsonwebtoken::errors::Error),
+    #[cfg(feature = "p2p")]
+    #[error("loro: {0}")]
+    Loro(#[from] loro::LoroError),
     #[error("authentication required")]
     Unauthenticated,
     #[error("not found: {0}")]
