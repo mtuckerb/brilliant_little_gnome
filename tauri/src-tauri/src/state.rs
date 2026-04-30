@@ -18,6 +18,13 @@ pub struct AppState {
     pub events: EventBus,
     pub rest_handle: Mutex<Option<crate::rest_api::RestHandle>>,
     pub app: AppHandle,
+
+    // P2P device-to-device sync engine. `None` until the user opts in
+    // via Settings → Sync (which calls the `p2p_enable` Tauri command,
+    // added in T-014). Wrapped in an `Arc` so background tasks can hold
+    // their own clones without locking the whole `AppState`.
+    #[cfg(feature = "p2p")]
+    pub sync: Option<Arc<crate::p2p::SyncEngine>>,
 }
 
 impl AppState {
@@ -31,6 +38,8 @@ impl AppState {
             events: EventBus::new(app.clone()),
             rest_handle: Mutex::new(None),
             app,
+            #[cfg(feature = "p2p")]
+            sync: None,
         })
     }
 }
