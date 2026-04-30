@@ -78,6 +78,10 @@ zeroize = "=1.8.2"
 [dev-dependencies]
 # Used by p2p::persistence integration tests for ephemeral data dirs.
 tempfile = "=3.14.0"
+# Test-only iroh feature: pulls in `iroh::test_utils::run_relay_server`
+# and the relay server impl needed by `p2p::transport` integration tests.
+# Cargo's feature unification adds these only at test time.
+iroh = { version = "=0.98.2", features = ["test-utils"] }
 
 [features]
 default = ["custom-protocol", "p2p"]
