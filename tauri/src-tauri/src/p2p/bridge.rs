@@ -16,14 +16,31 @@
 
 #![allow(dead_code)]
 
+use std::sync::Arc;
+
 /// Reconciles SQLite rows with the in-memory Loro doc.
-/// Wired up by T-008.
+/// T-008 holds an `Arc<Bridge>` on the engine; T-009/T-010 fill in
+/// `apply_local` / `apply_remote` and the actual fields.
 pub struct Bridge {
-    // T-008:
+    // T-009 will add:
     //   pool:   sqlx::SqlitePool,
-    //   doc:    Arc<SyncDoc>,
-    //   events: EventBus,
+    //   doc:    Arc<crate::p2p::doc::SyncDoc>,
+    //   events: crate::events::EventBus,
     //   origin: parking_lot::RwLock<Origin>  (or per-task marker)
+}
+
+impl Bridge {
+    /// Placeholder constructor. T-009 widens this to take the SQLite
+    /// pool, the SyncDoc, and the EventBus.
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {})
+    }
+}
+
+impl Default for Bridge {
+    fn default() -> Self {
+        Self {}
+    }
 }
 
 /// Local-origin change. One variant per Class-B SQLite write listed
