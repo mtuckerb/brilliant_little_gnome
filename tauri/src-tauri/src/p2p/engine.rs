@@ -76,7 +76,7 @@ impl SyncEngine {
         let store = Arc::new(SyncStore::open(&state.app)?);
         let doc = Arc::new(SyncDoc::from_doc(store.load()?));
         let transport = Arc::new(Transport::start(node_secret, &doc_secret).await?);
-        let bridge = Bridge::new();
+        let bridge = Bridge::new(doc.clone());
 
         Self::start_with_parts(store, doc, transport, bridge).await
     }
@@ -448,7 +448,7 @@ mod tests {
                 store_a.clone(),
                 doc_a.clone(),
                 transport_a.clone(),
-                Bridge::new(),
+                Bridge::new(doc_a.clone()),
             )
             .await
             .unwrap();
@@ -459,7 +459,7 @@ mod tests {
                 store_b.clone(),
                 doc_b.clone(),
                 transport_b.clone(),
-                Bridge::new(),
+                Bridge::new(doc_b.clone()),
             )
             .await
             .unwrap();
@@ -564,7 +564,7 @@ mod tests {
             store.clone(),
             doc.clone(),
             transport.clone(),
-            Bridge::new(),
+            Bridge::new(doc.clone()),
         )
         .await
         .unwrap();
