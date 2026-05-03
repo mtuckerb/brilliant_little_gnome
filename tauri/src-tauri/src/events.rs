@@ -42,6 +42,18 @@ impl EventBus {
     pub fn notifications_updated(&self) {
         self.emit("notifications:updated", ());
     }
+
+    pub fn prefs_updated(&self) {
+        self.emit("prefs:updated", ());
+    }
+
+    pub fn assignments_updated(&self) {
+        self.emit("assignments:updated", ());
+    }
+
+    pub fn grades_updated(&self) {
+        self.emit("grades:updated", ());
+    }
 }
 
 #[derive(Serialize, Clone)]

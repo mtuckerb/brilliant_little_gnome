@@ -13,34 +13,154 @@
 //                             been fetched yet, defer into the
 //                             pending_overlay_apply table (introduced
 //                             alongside this method's migration 0006).
+//
+// ---- Echo-storm guard (apply_remote) -------------------------------------
+//
+// The natural chokepoint is `EventTriggerKind`: Loro tags every diff event
+// with `Local` (this doc's own commit), `Import` (`doc.import(...)` called),
+// or `Checkout` (manual time-travel). The bridge subscribes via
+// `subscribe_root` and SHORT-CIRCUITS on anything that isn't `Import`.
+//
+// That single filter prevents the cycle:
+//   • Local apply_local() → Loro commit → diff fires with `Local` → SKIPPED
+//     (the SQLite row that started the change is already authoritative)
+//   • Remote import       → diff fires with `Import` → SQLite UPDATE +
+//     Tauri event emit → DOES NOT call apply_local, so no re-broadcast
+//
+// The broadcast path itself is independently guarded inside SyncEngine:
+// the `subscribe_local_update` callback that drives the gossip Update
+// only fires for local commits, never for `import()`.
 
 #![allow(dead_code)]
 
 use crate::error::Result;
+use crate::events::EventBus;
 use crate::p2p::doc::{
-    AssignmentField, CourseField, GradeField, SyncDoc, SyntheticAssignment,
+    AssignmentField, CourseField, CourseOverlay, GradeField, GradeOverlay, SyncDoc,
+    SyntheticAssignment,
 };
+use loro::event::Diff;
+use loro::{Index, Subscription};
+use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio_util::task::AbortOnDropHandle;
+use tracing::warn;
+
+/// Lets the bridge emit Tauri events without depending on the full
+/// `tauri::AppHandle` — tests pass a recording impl. Production wiring
+/// uses `EventBus`, which mirrors these onto the React side.
+pub trait BridgeEventSink: Send + Sync {
+    fn course_updated(&self, course_id: &str);
+    fn assignments_updated(&self);
+    fn grades_updated(&self);
+    fn notifications_updated(&self);
+    fn prefs_updated(&self);
+}
+
+impl BridgeEventSink for EventBus {
+    fn course_updated(&self, course_id: &str) {
+        EventBus::course_updated(self, course_id);
+    }
+    fn assignments_updated(&self) {
+        EventBus::assignments_updated(self);
+    }
+    fn grades_updated(&self) {
+        EventBus::grades_updated(self);
+    }
+    fn notifications_updated(&self) {
+        EventBus::notifications_updated(self);
+    }
+    fn prefs_updated(&self) {
+        EventBus::prefs_updated(self);
+    }
+}
 
 /// Reconciles SQLite rows with the in-memory Loro doc.
 ///
-/// T-009 wires up `apply_local` (SQLite → Loro). T-010 will subscribe
-/// to the Loro doc and add `apply_remote` (Loro → SQLite), plus the
-/// echo-storm guard that prevents a remote-applied SQLite write from
-/// re-entering `apply_local`.
+/// Two construction paths:
+///  - `Bridge::new(doc)` — apply_local only; no SQLite, no event emission,
+///    no diff subscription. Used by SyncEngine tests that don't exercise
+///    the SQLite mirror, and by anything that just wants a Loro façade.
+///  - `Bridge::with_sql(doc, pool, events)` — full wiring. Installs the
+///    `subscribe_root` handler that routes remote diffs to SQLite UPDATE
+///    + Tauri event emit. This is what `SyncEngine::start()` uses in
+///    production.
 pub struct Bridge {
     doc: Arc<SyncDoc>,
-    // T-010 will add:
-    //   pool:   sqlx::SqlitePool,
-    //   events: crate::events::EventBus,
-    //   origin guard for echo-storm suppression (likely a tokio
-    //   task-local, not an AtomicU8 — multiple concurrent tasks must
-    //   each carry their own marker).
+    pool: Option<SqlitePool>,
+    events: Option<Arc<dyn BridgeEventSink>>,
+
+    // Holding the Subscription keeps the diff callback registered;
+    // dropping the Bridge drops the subscription. The pump task is on
+    // an AbortOnDropHandle for the same reason.
+    _sub: Option<Subscription>,
+    _pump: Option<AbortOnDropHandle<()>>,
 }
 
 impl Bridge {
+    /// Bare bridge: apply_local only, no SQLite, no events. Mostly used
+    /// by engine.rs's T-008 integration tests, which exercise gossip +
+    /// persistence without bringing up a SQLite pool.
     pub fn new(doc: Arc<SyncDoc>) -> Arc<Self> {
-        Arc::new(Self { doc })
+        Arc::new(Self {
+            doc,
+            pool: None,
+            events: None,
+            _sub: None,
+            _pump: None,
+        })
+    }
+
+    /// Production wiring. Subscribes to `doc.subscribe_root`, filters to
+    /// `Import` events, classifies the affected entities, and streams
+    /// them onto an mpsc that an async task drains into SQLite.
+    ///
+    /// The synchronous diff callback runs on Loro's commit thread — we
+    /// MUST NOT call sqlx from there. `collect_touched` is cheap and
+    /// allocation-light, then the bytes go through an unbounded channel
+    /// to the async pump. Unbounded is fine: peer updates arrive at
+    /// human pace (and even a burst of 100 updates costs ~kB of channel
+    /// memory).
+    pub fn with_sql(
+        doc: Arc<SyncDoc>,
+        pool: SqlitePool,
+        events: Arc<dyn BridgeEventSink>,
+    ) -> Arc<Self> {
+        let (tx, mut rx) = mpsc::unbounded_channel::<HashSet<Touched>>();
+
+        let sub = doc.doc().subscribe_root(Arc::new(move |ev| {
+            // The single guard rail. Local commits skip; the SQLite row
+            // is already the source of truth. Import comes from a peer.
+            // Checkout (time-travel) we ignore — we never use it.
+            if !ev.triggered_by.is_import() {
+                return;
+            }
+            let touched = collect_touched(&ev);
+            if !touched.is_empty() {
+                let _ = tx.send(touched);
+            }
+        }));
+
+        let pump = AbortOnDropHandle::new(tokio::spawn({
+            let doc = doc.clone();
+            let pool = pool.clone();
+            let events = events.clone();
+            async move {
+                while let Some(set) = rx.recv().await {
+                    apply_touched(&doc, &pool, events.as_ref(), set).await;
+                }
+            }
+        }));
+
+        Arc::new(Self {
+            doc,
+            pool: Some(pool),
+            events: Some(events),
+            _sub: Some(sub),
+            _pump: Some(pump),
+        })
     }
 
     /// Apply a local SQLite mutation to the Loro doc.
@@ -50,8 +170,9 @@ impl Bridge {
     /// broadcast as `WireMsg::Update`. So this method does NOT return
     /// the bytes — the engine owns the broadcast path.
     ///
-    /// Origin handling: T-010 will short-circuit this when called from
-    /// the apply_remote path. Today every call is treated as `Local`.
+    /// Safe to call concurrently with the apply_remote path: the diff
+    /// it triggers is `EventTriggerKind::Local`, which the apply_remote
+    /// subscription filters out (see module-level comment).
     pub async fn apply_local(&self, change: LocalChange) -> Result<()> {
         match change {
             LocalChange::Pref(field) => self.apply_pref(field)?,
@@ -174,20 +295,422 @@ pub enum PrefField {
     CalendarShowEmptyDays(bool),
 }
 
-/// Remote-origin change derived from a Loro diff. Filled in by T-010.
-#[derive(Debug, Clone)]
-pub enum RemoteChange {
-    // expanded in T-010 — mirrors LocalChange's coverage
+/// What changed in this batch of remote diffs. We collect a HashSet of
+/// these in the synchronous Loro callback, then the async pump re-reads
+/// each one from the doc and writes SQLite. Re-reading (rather than
+/// trying to apply each delta surgically) makes the bridge robust to
+/// any combination of nested ops in a single transaction.
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+enum Touched {
+    /// Any change to the prefs root (single user_preferences row)
+    Prefs,
+    /// course_overlays.<org_unit_id>
+    Course(String),
+    /// assignment_overlays.<"course_id:bid">
+    Assignment(String),
+    /// grade_overlays.<"course_id:bid">
+    Grade(String),
+    /// content_item_overlays.<brightspace_id>
+    ContentItem(String),
+    /// notification_read.<external_id>
+    Notification(String),
+    /// synthetic_assignments.<uuid> (lives in `assignments` table)
+    Synthetic(String),
 }
 
-/// Origin marker used to suppress echo storms (kickoff watch-out #1):
-/// a Loro diff caused by a remote message must NOT bounce back into
-/// `apply_local` and re-broadcast. T-010 wires the actual guard; the
-/// enum is defined here so the bridge surface exposes it from day one.
+/// Origin marker. Today the Loro `EventTriggerKind` filter inside
+/// `Bridge::with_sql` is the actual mechanism that prevents echo storms,
+/// so this enum doesn't gate any control flow. It stays in the public
+/// surface as documentation of the contract: anything that ever needs
+/// to know "did this SQLite write originate from a remote diff?" should
+/// reach for this marker rather than re-inventing one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     Local,
     Remote,
+}
+
+// ---- Diff classification --------------------------------------------------
+
+fn collect_touched(ev: &loro::event::DiffEvent) -> HashSet<Touched> {
+    let mut out = HashSet::new();
+    for cdiff in &ev.events {
+        // Loro's `path` walks from the document root down to (and
+        // including the index for) the target. `path[0].1` is the root
+        // container's own name (`"course_overlays"`, `"prefs"`, …) —
+        // NOT the first key inside the root. Real entity keys start at
+        // `path[1].1`. Empty path is impossible: every diff has at
+        // least one hop (the root-name hop).
+        let Some((_, root_idx)) = cdiff.path.first() else { continue };
+        let Index::Key(root_name) = root_idx else { continue };
+        let root_name = root_name.as_ref();
+
+        if cdiff.path.len() >= 2 {
+            // Nested diff: the entity-level key lives at path[1].
+            if let Some(Index::Key(key)) = cdiff.path.get(1).map(|(_, i)| i) {
+                if let Some(t) = touched_for(root_name, key.as_ref()) {
+                    out.insert(t);
+                }
+            }
+            continue;
+        }
+
+        // path.len() == 1 → diff is the root container itself. Use the
+        // root's MapDelta to learn which entries changed.
+        if let Diff::Map(map_delta) = &cdiff.diff {
+            // The prefs row maps to one SQLite row; any prefs-root diff
+            // (display_name added, time_zone changed, semester_colors
+            // sub-map appeared, …) lumps into a single re-write.
+            if root_name == "prefs" {
+                out.insert(Touched::Prefs);
+                continue;
+            }
+            for (k, _) in &map_delta.updated {
+                if let Some(t) = touched_for(root_name, k.as_ref()) {
+                    out.insert(t);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn touched_for(root: &str, key: &str) -> Option<Touched> {
+    Some(match root {
+        "prefs" => Touched::Prefs,
+        "course_overlays" => Touched::Course(key.to_string()),
+        "assignment_overlays" => Touched::Assignment(key.to_string()),
+        "grade_overlays" => Touched::Grade(key.to_string()),
+        "content_item_overlays" => Touched::ContentItem(key.to_string()),
+        "synthetic_assignments" => Touched::Synthetic(key.to_string()),
+        "notification_read" => Touched::Notification(key.to_string()),
+        _ => return None,
+    })
+}
+
+// ---- SQLite mirror --------------------------------------------------------
+
+async fn apply_touched(
+    doc: &SyncDoc,
+    pool: &SqlitePool,
+    events: &dyn BridgeEventSink,
+    set: HashSet<Touched>,
+) {
+    let mut prefs_changed = false;
+    let mut courses_emitted: HashSet<String> = HashSet::new();
+    let mut assignments_changed = false;
+    let mut grades_changed = false;
+    let mut notifications_changed = false;
+
+    for t in set {
+        match t {
+            Touched::Prefs => {
+                if let Err(e) = apply_prefs_to_sqlite(doc, pool).await {
+                    warn!("apply_remote prefs failed: {e}");
+                } else {
+                    prefs_changed = true;
+                }
+            }
+            Touched::Course(id) => {
+                if let Err(e) = apply_course_to_sqlite(doc, pool, &id).await {
+                    warn!("apply_remote course {id} failed: {e}");
+                } else {
+                    courses_emitted.insert(id);
+                }
+            }
+            Touched::Assignment(key) => {
+                if let Err(e) = apply_assignment_to_sqlite(doc, pool, &key).await {
+                    warn!("apply_remote assignment {key} failed: {e}");
+                } else {
+                    assignments_changed = true;
+                }
+            }
+            Touched::Grade(key) => {
+                if let Err(e) = apply_grade_to_sqlite(doc, pool, &key).await {
+                    warn!("apply_remote grade {key} failed: {e}");
+                } else {
+                    grades_changed = true;
+                }
+            }
+            Touched::ContentItem(bid) => {
+                if let Err(e) = apply_content_item_to_sqlite(doc, pool, &bid).await {
+                    warn!("apply_remote content_item {bid} failed: {e}");
+                }
+            }
+            Touched::Notification(eid) => {
+                if let Err(e) = apply_notification_to_sqlite(doc, pool, &eid).await {
+                    warn!("apply_remote notification {eid} failed: {e}");
+                } else {
+                    notifications_changed = true;
+                }
+            }
+            Touched::Synthetic(uuid) => {
+                if let Err(e) = apply_synthetic_to_sqlite(doc, pool, &uuid).await {
+                    warn!("apply_remote synthetic {uuid} failed: {e}");
+                } else {
+                    assignments_changed = true;
+                }
+            }
+        }
+    }
+
+    if prefs_changed {
+        events.prefs_updated();
+    }
+    for c in courses_emitted {
+        events.course_updated(&c);
+    }
+    if assignments_changed {
+        events.assignments_updated();
+    }
+    if grades_changed {
+        events.grades_updated();
+    }
+    if notifications_changed {
+        events.notifications_updated();
+    }
+}
+
+async fn apply_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
+    let display_name = doc.get_pref_display_name();
+    let time_zone = doc.get_pref_time_zone();
+    let historic_gpa = doc.get_pref_historic_gpa();
+    let historic_units = doc.get_pref_historic_units();
+    let default_semester = doc.get_pref_default_semester();
+    let show_upcoming = doc.get_pref_show_upcoming_assignments().map(|b| b as i64);
+    let show_course_list = doc.get_pref_show_course_list().map(|b| b as i64);
+    let show_recent = doc.get_pref_show_recent_updates().map(|b| b as i64);
+    let calendar_show_empty = doc.get_pref_calendar_show_empty_days().map(|b| b as i64);
+
+    let semester_colors_json = serde_json::to_string(
+        &doc.iter_pref_semester_colors()
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>(),
+    )
+    .unwrap_or_else(|_| "{}".to_string());
+
+    let collapsed_topics_json = serde_json::to_string(
+        &doc.iter_pref_collapsed_topics()
+            .into_iter()
+            .filter_map(|(k, v)| v.then_some(k))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string());
+
+    sqlx::query(
+        "UPDATE user_preferences SET \
+           display_name              = COALESCE(?, display_name), \
+           time_zone                 = COALESCE(?, time_zone), \
+           historic_gpa              = COALESCE(?, historic_gpa), \
+           historic_units            = COALESCE(?, historic_units), \
+           default_semester          = COALESCE(?, default_semester), \
+           show_upcoming_assignments = COALESCE(?, show_upcoming_assignments), \
+           show_course_list          = COALESCE(?, show_course_list), \
+           show_recent_updates       = COALESCE(?, show_recent_updates), \
+           calendar_show_empty_days  = COALESCE(?, calendar_show_empty_days), \
+           semester_colors           = ?, \
+           collapsed_topics          = ?, \
+           updated_at                = CURRENT_TIMESTAMP",
+    )
+    .bind(display_name)
+    .bind(time_zone)
+    .bind(historic_gpa)
+    .bind(historic_units)
+    .bind(default_semester)
+    .bind(show_upcoming)
+    .bind(show_course_list)
+    .bind(show_recent)
+    .bind(calendar_show_empty)
+    .bind(semester_colors_json)
+    .bind(collapsed_topics_json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn apply_course_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, id: &str) -> Result<()> {
+    let Some(o) = doc.get_course_overlay(id) else {
+        // Entry vanished from the doc — nothing to mirror. (Course
+        // overlay deletion isn't a feature today; this is defensive.)
+        return Ok(());
+    };
+    let CourseOverlay {
+        is_pinned,
+        custom_color,
+        units,
+        target_grade,
+        sort_order,
+        end_of_week_day,
+    } = o;
+    sqlx::query(
+        "UPDATE courses SET \
+           is_pinned       = COALESCE(?, is_pinned), \
+           custom_color    = ?, \
+           units           = COALESCE(?, units), \
+           target_grade    = COALESCE(?, target_grade), \
+           sort_order      = COALESCE(?, sort_order), \
+           end_of_week_day = COALESCE(?, end_of_week_day), \
+           updated_at      = CURRENT_TIMESTAMP \
+         WHERE org_unit_id = ?",
+    )
+    .bind(is_pinned.map(|b| b as i64))
+    .bind(custom_color) // None → SQL NULL: clearing the override
+    .bind(units)
+    .bind(target_grade)
+    .bind(sort_order)
+    .bind(end_of_week_day)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Assignment overlays use `"<course_id>:<brightspace_id>"` as the key.
+fn split_composite(key: &str) -> Option<(&str, &str)> {
+    key.split_once(':')
+}
+
+async fn apply_assignment_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, key: &str) -> Result<()> {
+    let Some((course_id, bid)) = split_composite(key) else { return Ok(()) };
+    let Some(o) = doc.get_assignment_overlay(key) else { return Ok(()) };
+    sqlx::query(
+        "UPDATE assignments SET \
+           completed           = COALESCE(?, completed), \
+           completed_at        = COALESCE(?, completed_at), \
+           optional            = COALESCE(?, optional), \
+           manually_edited     = COALESCE(?, manually_edited), \
+           manually_edited_at  = COALESCE(?, manually_edited_at), \
+           name                = COALESCE(?, name), \
+           description         = COALESCE(?, description), \
+           due_date            = COALESCE(?, due_date), \
+           updated_at          = CURRENT_TIMESTAMP \
+         WHERE course_id = ? AND brightspace_id = ?",
+    )
+    .bind(o.completed.map(|b| b as i64))
+    .bind(o.completed_at)
+    .bind(o.optional.map(|b| b as i64))
+    .bind(o.manually_edited.map(|b| b as i64))
+    .bind(o.manually_edited_at)
+    .bind(o.name)
+    .bind(o.description)
+    .bind(o.due_date)
+    .bind(course_id)
+    .bind(bid)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn apply_grade_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, key: &str) -> Result<()> {
+    let Some((course_id, bid)) = split_composite(key) else { return Ok(()) };
+    let Some(o) = doc.get_grade_overlay(key) else { return Ok(()) };
+    let GradeOverlay {
+        is_extra_credit,
+        hidden,
+        manually_marked_ungraded,
+        expected_score,
+        comments,
+    } = o;
+    sqlx::query(
+        "UPDATE grades SET \
+           is_extra_credit          = COALESCE(?, is_extra_credit), \
+           hidden                   = COALESCE(?, hidden), \
+           manually_marked_ungraded = COALESCE(?, manually_marked_ungraded), \
+           expected_score           = COALESCE(?, expected_score), \
+           comments                 = COALESCE(?, comments), \
+           updated_at               = CURRENT_TIMESTAMP \
+         WHERE course_id = ? AND brightspace_id = ?",
+    )
+    .bind(is_extra_credit.map(|b| b as i64))
+    .bind(hidden.map(|b| b as i64))
+    .bind(manually_marked_ungraded.map(|b| b as i64))
+    .bind(expected_score)
+    .bind(comments)
+    .bind(course_id)
+    .bind(bid)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn apply_content_item_to_sqlite(
+    doc: &SyncDoc,
+    pool: &SqlitePool,
+    brightspace_id: &str,
+) -> Result<()> {
+    let Some(o) = doc.get_content_item_overlay(brightspace_id) else { return Ok(()) };
+    let Some(hidden) = o.is_hidden else { return Ok(()) };
+    sqlx::query(
+        "UPDATE content_items SET is_hidden = ?, updated_at = CURRENT_TIMESTAMP \
+         WHERE brightspace_id = ?",
+    )
+    .bind(hidden as i64)
+    .bind(brightspace_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn apply_notification_to_sqlite(
+    doc: &SyncDoc,
+    pool: &SqlitePool,
+    external_id: &str,
+) -> Result<()> {
+    let Some(read) = doc.get_notification_read(external_id) else { return Ok(()) };
+    sqlx::query(
+        "UPDATE notifications SET is_read = ?, updated_at = CURRENT_TIMESTAMP \
+         WHERE external_id = ?",
+    )
+    .bind(read as i64)
+    .bind(external_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Synthetic assignments live in the regular `assignments` table with
+/// `synthetic = 1` and `brightspace_id = <uuid>`. The Loro entry being
+/// gone (None) means the synthetic was deleted on the peer; mirror that
+/// with a DELETE here.
+async fn apply_synthetic_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, uuid: &str) -> Result<()> {
+    match doc.get_synthetic_assignment(uuid) {
+        Some(a) => {
+            sqlx::query(
+                "INSERT INTO assignments \
+                   (course_id, brightspace_id, name, due_date, description, \
+                    is_graded, completed, completed_at, synthetic, optional, \
+                    created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
+                 ON CONFLICT(course_id, brightspace_id) DO UPDATE SET \
+                   name         = excluded.name, \
+                   due_date     = excluded.due_date, \
+                   description  = excluded.description, \
+                   completed    = excluded.completed, \
+                   completed_at = excluded.completed_at, \
+                   optional     = excluded.optional, \
+                   updated_at   = CURRENT_TIMESTAMP",
+            )
+            .bind(a.course_id.to_string())
+            .bind(uuid)
+            .bind(&a.name)
+            .bind(a.due_date.as_deref())
+            .bind(&a.description)
+            .bind(a.completed as i64)
+            .bind(a.completed_at)
+            .bind(a.optional as i64)
+            .execute(pool)
+            .await?;
+        }
+        None => {
+            sqlx::query(
+                "DELETE FROM assignments WHERE brightspace_id = ? AND synthetic = 1",
+            )
+            .bind(uuid)
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 // ---- Tests ----------------------------------------------------------------
@@ -196,10 +719,16 @@ pub enum Origin {
 mod tests {
     use super::*;
     use crate::p2p::doc::{CourseField, GradeField, SyntheticAssignment};
+    use parking_lot::Mutex;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::time::Duration;
+    use tokio::time::timeout;
 
     fn fresh() -> Arc<Bridge> {
         Bridge::new(Arc::new(SyncDoc::new()))
     }
+
+    // ---- T-009 unit tests (apply_local) -----------------------------------
 
     #[tokio::test]
     async fn apply_local_pref_display_name() {
@@ -483,5 +1012,437 @@ mod tests {
             .unwrap();
         let after = bridge.doc.doc().oplog_vv().encode();
         assert_ne!(before, after, "apply_local must advance the oplog");
+    }
+
+    // ---- T-010 apply_remote tests -----------------------------------------
+
+    #[derive(Default)]
+    struct RecordingSink {
+        course_updated: Mutex<Vec<String>>,
+        assignments_updated: Mutex<u32>,
+        grades_updated: Mutex<u32>,
+        notifications_updated: Mutex<u32>,
+        prefs_updated: Mutex<u32>,
+    }
+
+    impl BridgeEventSink for RecordingSink {
+        fn course_updated(&self, course_id: &str) {
+            self.course_updated.lock().push(course_id.to_string());
+        }
+        fn assignments_updated(&self) {
+            *self.assignments_updated.lock() += 1;
+        }
+        fn grades_updated(&self) {
+            *self.grades_updated.lock() += 1;
+        }
+        fn notifications_updated(&self) {
+            *self.notifications_updated.lock() += 1;
+        }
+        fn prefs_updated(&self) {
+            *self.prefs_updated.lock() += 1;
+        }
+    }
+
+    /// Spin up an in-memory SQLite pool with the migrations applied.
+    /// Each call gets its own pool — sqlite `:memory:` is per-connection,
+    /// but `max_connections = 1` keeps everything on one shared db.
+    async fn mem_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        // Migration leaves user_preferences empty; insert the singleton row.
+        sqlx::query("INSERT INTO user_preferences (api_port) VALUES (4567)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    /// Wait up to 2s for `pred` (async closure) to return true. The
+    /// apply_remote pump is async, so writes don't land synchronously
+    /// after `import`. A sync-only predicate would deadlock here:
+    /// running `block_on` inside `#[tokio::test]` blocks the same thread
+    /// the sqlx future needs to make progress.
+    async fn wait_for<F, Fut>(mut pred: F)
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if pred().await {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("apply_remote did not converge within 2s");
+    }
+
+    /// Apply A → import into B → assert B's SQLite mirror.
+    async fn apply_into(b_doc: &SyncDoc, a_doc: &SyncDoc) {
+        let bytes = a_doc.doc().export(loro::ExportMode::all_updates()).unwrap();
+        b_doc.doc().import(&bytes).unwrap();
+    }
+
+    /// Acceptance test (ticket T-010): A pins a course; B's SQLite shows
+    /// is_pinned=1 and the recording sink captured a `course_updated`.
+    #[tokio::test]
+    async fn apply_remote_course_pinned_propagates_to_sqlite_and_event() {
+        let pool_b = mem_pool().await;
+        let course_id = "12345";
+        sqlx::query(
+            "INSERT INTO courses (org_unit_id, name, semester, is_pinned) \
+             VALUES (?, 'Intro to CRDTs', '2026-spring', 0)",
+        )
+        .bind(course_id)
+        .execute(&pool_b)
+        .await
+        .unwrap();
+
+        let sink_b: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let doc_a = Arc::new(SyncDoc::new());
+        let doc_b = Arc::new(SyncDoc::new());
+        let bridge_a = Bridge::new(doc_a.clone());
+        let _bridge_b = Bridge::with_sql(
+            doc_b.clone(),
+            pool_b.clone(),
+            sink_b.clone() as Arc<dyn BridgeEventSink>,
+        );
+
+        bridge_a
+            .apply_local(LocalChange::Course {
+                id: course_id.into(),
+                field: CourseField::IsPinned(true),
+            })
+            .await
+            .unwrap();
+
+        apply_into(&doc_b, &doc_a).await;
+
+        // Wait for B's pump to land the UPDATE.
+        let pool_b_for_check = pool_b.clone();
+        wait_for(|| {
+            let pool = pool_b_for_check.clone();
+            async move {
+                let row: Option<(i64,)> =
+                    sqlx::query_as("SELECT is_pinned FROM courses WHERE org_unit_id = ?")
+                        .bind(course_id)
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten();
+                matches!(row, Some((1,)))
+            }
+        })
+        .await;
+
+        let emitted = sink_b.course_updated.lock().clone();
+        assert_eq!(emitted, vec![course_id.to_string()]);
+    }
+
+    /// Confirms the echo-storm guard: a LOCAL apply on Bridge B does NOT
+    /// trigger the apply_remote pump (which would re-write the SQLite row
+    /// the local command already authored). We verify by counting events:
+    /// the recording sink should stay quiet for purely-local activity.
+    #[tokio::test]
+    async fn apply_remote_skips_local_origin_diffs() {
+        let pool = mem_pool().await;
+        sqlx::query(
+            "INSERT INTO courses (org_unit_id, name, is_pinned) \
+             VALUES ('999', 'Local Course', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let sink: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let doc = Arc::new(SyncDoc::new());
+        let bridge = Bridge::with_sql(
+            doc.clone(),
+            pool.clone(),
+            sink.clone() as Arc<dyn BridgeEventSink>,
+        );
+
+        bridge
+            .apply_local(LocalChange::Course {
+                id: "999".into(),
+                field: CourseField::IsPinned(true),
+            })
+            .await
+            .unwrap();
+
+        // Give the pump a generous chance to (incorrectly) wake up.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT is_pinned FROM courses WHERE org_unit_id = ?")
+                .bind("999")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        // SQLite was NOT touched by apply_remote — the local INSERT-as-0
+        // is still there, because the production wiring is: command writes
+        // SQL, then calls apply_local. apply_local commits Loro, fires a
+        // LOCAL diff event, which apply_remote skips by design.
+        assert_eq!(row, Some((0,)));
+        assert!(sink.course_updated.lock().is_empty());
+    }
+
+    /// Multiple roots changed in one peer batch → one event per affected
+    /// kind; courses fan out per-id.
+    #[tokio::test]
+    async fn apply_remote_multi_kind_batch_emits_grouped_events() {
+        let pool = mem_pool().await;
+        sqlx::query(
+            "INSERT INTO courses (org_unit_id, name, is_pinned) \
+             VALUES ('A', 'Course A', 0), ('B', 'Course B', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO assignments (course_id, brightspace_id, name, completed) \
+             VALUES ('A', 'a-1', 'HW 1', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO notifications (external_id, notification_type, title, is_read) \
+             VALUES ('ext-1', 'announcement', 'Welcome', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let sink: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let doc_a = Arc::new(SyncDoc::new());
+        let doc_b = Arc::new(SyncDoc::new());
+        let bridge_a = Bridge::new(doc_a.clone());
+        let _bridge_b = Bridge::with_sql(
+            doc_b.clone(),
+            pool.clone(),
+            sink.clone() as Arc<dyn BridgeEventSink>,
+        );
+
+        bridge_a
+            .apply_local(LocalChange::Course {
+                id: "A".into(),
+                field: CourseField::IsPinned(true),
+            })
+            .await
+            .unwrap();
+        bridge_a
+            .apply_local(LocalChange::Course {
+                id: "B".into(),
+                field: CourseField::CustomColor(Some("#aabbcc".into())),
+            })
+            .await
+            .unwrap();
+        bridge_a
+            .apply_local(LocalChange::Assignment {
+                key: "A:a-1".into(),
+                field: AssignmentField::Completed(true),
+            })
+            .await
+            .unwrap();
+        bridge_a
+            .apply_local(LocalChange::NotificationRead {
+                external_id: "ext-1".into(),
+                read: true,
+            })
+            .await
+            .unwrap();
+
+        apply_into(&doc_b, &doc_a).await;
+
+        let pool_for_check = pool.clone();
+        wait_for(|| {
+            let pool = pool_for_check.clone();
+            async move {
+                let a_pinned: Option<(i64,)> =
+                    sqlx::query_as("SELECT is_pinned FROM courses WHERE org_unit_id = 'A'")
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten();
+                let b_color: Option<(Option<String>,)> = sqlx::query_as(
+                    "SELECT custom_color FROM courses WHERE org_unit_id = 'B'",
+                )
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+                let hw_done: Option<(i64,)> = sqlx::query_as(
+                    "SELECT completed FROM assignments \
+                     WHERE course_id = 'A' AND brightspace_id = 'a-1'",
+                )
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+                let ext_read: Option<(i64,)> = sqlx::query_as(
+                    "SELECT is_read FROM notifications WHERE external_id = 'ext-1'",
+                )
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+                matches!(a_pinned, Some((1,)))
+                    && matches!(&b_color, Some((Some(c),)) if c == "#aabbcc")
+                    && matches!(hw_done, Some((1,)))
+                    && matches!(ext_read, Some((1,)))
+            }
+        })
+        .await;
+
+        let mut courses = sink.course_updated.lock().clone();
+        courses.sort();
+        assert_eq!(courses, vec!["A".to_string(), "B".to_string()]);
+        assert!(*sink.assignments_updated.lock() >= 1);
+        assert!(*sink.notifications_updated.lock() >= 1);
+    }
+
+    #[tokio::test]
+    async fn apply_remote_synthetic_assignment_insert_then_delete() {
+        let pool = mem_pool().await;
+
+        let sink: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let doc_a = Arc::new(SyncDoc::new());
+        let doc_b = Arc::new(SyncDoc::new());
+        let bridge_a = Bridge::new(doc_a.clone());
+        let _bridge_b = Bridge::with_sql(
+            doc_b.clone(),
+            pool.clone(),
+            sink.clone() as Arc<dyn BridgeEventSink>,
+        );
+
+        let uuid = "abcdef00-0000-4000-8000-000000000001";
+        let synth = SyntheticAssignment {
+            course_id: 42,
+            name: "My deadline".into(),
+            description: "Personal study time".into(),
+            due_date: Some("2026-05-30".into()),
+            optional: false,
+            completed: false,
+            completed_at: None,
+            created_at: 1700000000,
+        };
+
+        bridge_a
+            .apply_local(LocalChange::SyntheticAssignmentUpsert {
+                uuid: uuid.into(),
+                value: synth.clone(),
+            })
+            .await
+            .unwrap();
+        apply_into(&doc_b, &doc_a).await;
+
+        let pool_check = pool.clone();
+        wait_for(|| {
+            let pool = pool_check.clone();
+            async move {
+                let row: Option<(String, i64)> = sqlx::query_as(
+                    "SELECT course_id, synthetic FROM assignments WHERE brightspace_id = ?",
+                )
+                .bind(uuid)
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+                matches!(&row, Some((cid, 1)) if cid == "42")
+            }
+        })
+        .await;
+
+        bridge_a
+            .apply_local(LocalChange::SyntheticAssignmentDelete { uuid: uuid.into() })
+            .await
+            .unwrap();
+        apply_into(&doc_b, &doc_a).await;
+
+        let pool_check = pool.clone();
+        wait_for(|| {
+            let pool = pool_check.clone();
+            async move {
+                let row: Option<(i64,)> =
+                    sqlx::query_as("SELECT id FROM assignments WHERE brightspace_id = ?")
+                        .bind(uuid)
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten();
+                row.is_none()
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn apply_remote_prefs_writes_all_columns_in_one_pass() {
+        let pool = mem_pool().await;
+        let sink: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let doc_a = Arc::new(SyncDoc::new());
+        let doc_b = Arc::new(SyncDoc::new());
+        let bridge_a = Bridge::new(doc_a.clone());
+        let _bridge_b = Bridge::with_sql(
+            doc_b.clone(),
+            pool.clone(),
+            sink.clone() as Arc<dyn BridgeEventSink>,
+        );
+
+        for change in [
+            LocalChange::Pref(PrefField::DisplayName("Tucker".into())),
+            LocalChange::Pref(PrefField::TimeZone("America/New_York".into())),
+            LocalChange::Pref(PrefField::HistoricGpa(3.85)),
+            LocalChange::Pref(PrefField::SemesterColor {
+                semester: "2026-spring".into(),
+                color: "#ff8800".into(),
+            }),
+            LocalChange::Pref(PrefField::CollapsedTopic {
+                topic: "topic:42".into(),
+                collapsed: true,
+            }),
+        ] {
+            bridge_a.apply_local(change).await.unwrap();
+        }
+
+        apply_into(&doc_b, &doc_a).await;
+
+        let pool_check = pool.clone();
+        wait_for(|| {
+            let pool = pool_check.clone();
+            async move {
+                let row: Option<(Option<String>, Option<String>, Option<f64>, String, String)> =
+                    sqlx::query_as(
+                        "SELECT display_name, time_zone, historic_gpa, semester_colors, collapsed_topics \
+                         FROM user_preferences LIMIT 1",
+                    )
+                    .fetch_optional(&pool)
+                    .await
+                    .ok()
+                    .flatten();
+                match row {
+                    Some((Some(name), Some(tz), Some(gpa), colors, topics))
+                        if name == "Tucker"
+                            && tz == "America/New_York"
+                            && (gpa - 3.85).abs() < 1e-9 =>
+                    {
+                        colors.contains("2026-spring")
+                            && colors.contains("#ff8800")
+                            && topics.contains("topic:42")
+                    }
+                    _ => false,
+                }
+            }
+        })
+        .await;
+
+        assert!(*sink.prefs_updated.lock() >= 1);
     }
 }

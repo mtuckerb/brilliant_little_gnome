@@ -76,7 +76,13 @@ impl SyncEngine {
         let store = Arc::new(SyncStore::open(&state.app)?);
         let doc = Arc::new(SyncDoc::from_doc(store.load()?));
         let transport = Arc::new(Transport::start(node_secret, &doc_secret).await?);
-        let bridge = Bridge::new(doc.clone());
+        // Production wiring: Bridge::with_sql installs the Loro→SQLite
+        // subscription so remote diffs land in the local DB and emit
+        // matching Tauri events (T-010). The wrapping Arc<EventBus>
+        // satisfies the BridgeEventSink trait object the bridge holds.
+        let events: Arc<dyn crate::p2p::bridge::BridgeEventSink> =
+            Arc::new(state.events.clone());
+        let bridge = Bridge::with_sql(doc.clone(), state.pool.clone(), events);
 
         Self::start_with_parts(store, doc, transport, bridge).await
     }
