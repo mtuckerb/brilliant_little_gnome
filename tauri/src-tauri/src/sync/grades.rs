@@ -82,6 +82,21 @@ pub async fn sync(state: &AppState, course_id: &str) -> Result<()> {
         .bind(grade_type)
         .execute(&state.pool)
         .await?;
+
+        // T-011: drain any pending grade overlay for this row.
+        #[cfg(feature = "p2p")]
+        {
+            let key = format!("{}:{}", course_id, obj_id);
+            if let Err(e) = crate::p2p::bridge::drain_pending_overlay(
+                &state.pool,
+                crate::p2p::bridge::OverlayKind::Grade,
+                &key,
+            )
+            .await
+            {
+                tracing::warn!("drain pending grade overlay {}: {}", key, e);
+            }
+        }
     }
 
     // Clear manually_marked_ungraded if a positive numerator now exists.

@@ -36,13 +36,14 @@
 use crate::error::Result;
 use crate::events::EventBus;
 use crate::p2p::doc::{
-    AssignmentField, CourseField, CourseOverlay, GradeField, GradeOverlay, SyncDoc,
-    SyntheticAssignment,
+    AssignmentField, AssignmentOverlay, ContentItemOverlay, CourseField, CourseOverlay,
+    GradeField, GradeOverlay, SyncDoc, SyntheticAssignment,
 };
 use loro::event::Diff;
 use loro::{Index, Subscription};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::task::AbortOnDropHandle;
@@ -91,6 +92,11 @@ pub struct Bridge {
     doc: Arc<SyncDoc>,
     pool: Option<SqlitePool>,
     events: Option<Arc<dyn BridgeEventSink>>,
+    // Pauses the apply_remote diff callback while `hydrate_from_doc`
+    // is walking the doc. Without this, a peer's gossip Update can
+    // race with hydrate and apply twice (or out of order). The flag
+    // is set/cleared via a Drop guard so panics can't strand it.
+    paused: Arc<AtomicBool>,
 
     // Holding the Subscription keeps the diff callback registered;
     // dropping the Bridge drops the subscription. The pump task is on
@@ -108,6 +114,7 @@ impl Bridge {
             doc,
             pool: None,
             events: None,
+            paused: Arc::new(AtomicBool::new(false)),
             _sub: None,
             _pump: None,
         })
@@ -129,17 +136,26 @@ impl Bridge {
         events: Arc<dyn BridgeEventSink>,
     ) -> Arc<Self> {
         let (tx, mut rx) = mpsc::unbounded_channel::<HashSet<Touched>>();
+        let paused = Arc::new(AtomicBool::new(false));
 
-        let sub = doc.doc().subscribe_root(Arc::new(move |ev| {
-            // The single guard rail. Local commits skip; the SQLite row
-            // is already the source of truth. Import comes from a peer.
-            // Checkout (time-travel) we ignore — we never use it.
-            if !ev.triggered_by.is_import() {
-                return;
-            }
-            let touched = collect_touched(&ev);
-            if !touched.is_empty() {
-                let _ = tx.send(touched);
+        let sub = doc.doc().subscribe_root(Arc::new({
+            let paused = paused.clone();
+            move |ev| {
+                // The single guard rail. Local commits skip; the SQLite row
+                // is already the source of truth. Import comes from a peer.
+                // Checkout (time-travel) we ignore — we never use it.
+                if !ev.triggered_by.is_import() {
+                    return;
+                }
+                // Hydration in progress — let `hydrate_from_doc` walk the
+                // doc without racing the pump.
+                if paused.load(Ordering::Acquire) {
+                    return;
+                }
+                let touched = collect_touched(&ev);
+                if !touched.is_empty() {
+                    let _ = tx.send(touched);
+                }
             }
         }));
 
@@ -158,9 +174,55 @@ impl Bridge {
             doc,
             pool: Some(pool),
             events: Some(events),
+            paused,
             _sub: Some(sub),
             _pump: Some(pump),
         })
+    }
+
+    /// Initial-pair hydration (T-011). Walks every Loro overlay and
+    /// writes the matching SQLite row. Composite-key overlays whose
+    /// Brightspace row hasn't been fetched yet are deferred into the
+    /// `pending_overlay_apply` table; the next sync/*.rs fetcher to
+    /// upsert that row calls `drain_pending_overlay` to re-apply.
+    ///
+    /// Pauses the apply_remote pump for the duration of the walk so a
+    /// concurrent peer Update can't half-apply on top of the
+    /// hydration. The pause is released on drop of `_g`, so a panic
+    /// here can't strand the bridge in a paused state.
+    ///
+    /// No-ops on a Bridge built via `Bridge::new(doc)` — without a
+    /// pool there's nothing to hydrate to. Safe to call repeatedly;
+    /// running it after the row exists just runs `UPDATE` over the
+    /// same overlay, which is idempotent.
+    pub async fn hydrate_from_doc(&self) -> Result<()> {
+        let Some(pool) = self.pool.as_ref() else { return Ok(()) };
+        let _g = PauseGuard::new(&self.paused);
+
+        // prefs is always present: the migration seeds the singleton row.
+        write_prefs_to_sqlite(&self.doc, pool).await?;
+
+        for (id, overlay) in self.doc.iter_course_overlays() {
+            apply_or_defer_course(pool, &id, &overlay).await?;
+        }
+        for (key, overlay) in self.doc.iter_assignment_overlays() {
+            apply_or_defer_assignment(pool, &key, &overlay).await?;
+        }
+        for (key, overlay) in self.doc.iter_grade_overlays() {
+            apply_or_defer_grade(pool, &key, &overlay).await?;
+        }
+        for (bid, overlay) in self.doc.iter_content_item_overlays() {
+            apply_or_defer_content_item(pool, &bid, &overlay).await?;
+        }
+        for (eid, read) in self.doc.iter_notifications_read() {
+            apply_or_defer_notification(pool, &eid, read).await?;
+        }
+        // Synthetic assignments are entirely user-authored — no parent
+        // Brightspace row to wait for, INSERT OR REPLACE always wins.
+        for (uuid, _) in self.doc.iter_synthetic_assignments() {
+            apply_synthetic_to_sqlite(&self.doc, pool, &uuid).await?;
+        }
+        Ok(())
     }
 
     /// Apply a local SQLite mutation to the Loro doc.
@@ -318,6 +380,49 @@ enum Touched {
     Synthetic(String),
 }
 
+/// What kind of row a pending overlay is waiting on. Mirrors the §10
+/// overlay namespace so `drain_pending_overlay` can be called from
+/// each Brightspace fetcher with a strongly-typed argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayKind {
+    Course,
+    Assignment,
+    Grade,
+    ContentItem,
+    Notification,
+}
+
+impl OverlayKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            OverlayKind::Course => "course",
+            OverlayKind::Assignment => "assignment",
+            OverlayKind::Grade => "grade",
+            OverlayKind::ContentItem => "content_item",
+            OverlayKind::Notification => "notification",
+        }
+    }
+}
+
+/// RAII guard for `Bridge::paused`. Set on construction, cleared on
+/// drop — even if the caller panics or `?`-bails out of hydrate.
+struct PauseGuard<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> PauseGuard<'a> {
+    fn new(flag: &'a AtomicBool) -> Self {
+        flag.store(true, Ordering::Release);
+        Self { flag }
+    }
+}
+
+impl Drop for PauseGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
 /// Origin marker. Today the Loro `EventTriggerKind` filter inside
 /// `Bridge::with_sql` is the actual mechanism that prevents echo storms,
 /// so this enum doesn't gate any control flow. It stays in the public
@@ -472,6 +577,10 @@ async fn apply_touched(
 }
 
 async fn apply_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
+    write_prefs_to_sqlite(doc, pool).await
+}
+
+async fn write_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
     let display_name = doc.get_pref_display_name();
     let time_zone = doc.get_pref_time_zone();
     let historic_gpa = doc.get_pref_historic_gpa();
@@ -534,15 +643,23 @@ async fn apply_course_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, id: &str) -> R
         // overlay deletion isn't a feature today; this is defensive.)
         return Ok(());
     };
-    let CourseOverlay {
-        is_pinned,
-        custom_color,
-        units,
-        target_grade,
-        sort_order,
-        end_of_week_day,
-    } = o;
-    sqlx::query(
+    apply_or_defer_course(pool, id, &o).await
+}
+
+async fn apply_or_defer_course(pool: &SqlitePool, id: &str, o: &CourseOverlay) -> Result<()> {
+    let n = write_course_to_sqlite(pool, id, o).await?;
+    if n == 0 {
+        defer_overlay(pool, OverlayKind::Course, id, o).await?;
+    }
+    Ok(())
+}
+
+async fn write_course_to_sqlite(
+    pool: &SqlitePool,
+    id: &str,
+    o: &CourseOverlay,
+) -> Result<u64> {
+    let res = sqlx::query(
         "UPDATE courses SET \
            is_pinned       = COALESCE(?, is_pinned), \
            custom_color    = ?, \
@@ -553,16 +670,16 @@ async fn apply_course_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, id: &str) -> R
            updated_at      = CURRENT_TIMESTAMP \
          WHERE org_unit_id = ?",
     )
-    .bind(is_pinned.map(|b| b as i64))
-    .bind(custom_color) // None → SQL NULL: clearing the override
-    .bind(units)
-    .bind(target_grade)
-    .bind(sort_order)
-    .bind(end_of_week_day)
+    .bind(o.is_pinned.map(|b| b as i64))
+    .bind(o.custom_color.as_deref()) // None → SQL NULL: clearing the override
+    .bind(o.units)
+    .bind(o.target_grade)
+    .bind(o.sort_order)
+    .bind(o.end_of_week_day)
     .bind(id)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 /// Assignment overlays use `"<course_id>:<brightspace_id>"` as the key.
@@ -571,9 +688,29 @@ fn split_composite(key: &str) -> Option<(&str, &str)> {
 }
 
 async fn apply_assignment_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, key: &str) -> Result<()> {
-    let Some((course_id, bid)) = split_composite(key) else { return Ok(()) };
     let Some(o) = doc.get_assignment_overlay(key) else { return Ok(()) };
-    sqlx::query(
+    apply_or_defer_assignment(pool, key, &o).await
+}
+
+async fn apply_or_defer_assignment(
+    pool: &SqlitePool,
+    key: &str,
+    o: &AssignmentOverlay,
+) -> Result<()> {
+    let n = write_assignment_to_sqlite(pool, key, o).await?;
+    if n == 0 {
+        defer_overlay(pool, OverlayKind::Assignment, key, o).await?;
+    }
+    Ok(())
+}
+
+async fn write_assignment_to_sqlite(
+    pool: &SqlitePool,
+    key: &str,
+    o: &AssignmentOverlay,
+) -> Result<u64> {
+    let Some((course_id, bid)) = split_composite(key) else { return Ok(0) };
+    let res = sqlx::query(
         "UPDATE assignments SET \
            completed           = COALESCE(?, completed), \
            completed_at        = COALESCE(?, completed_at), \
@@ -591,27 +728,40 @@ async fn apply_assignment_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, key: &str)
     .bind(o.optional.map(|b| b as i64))
     .bind(o.manually_edited.map(|b| b as i64))
     .bind(o.manually_edited_at)
-    .bind(o.name)
-    .bind(o.description)
-    .bind(o.due_date)
+    .bind(o.name.as_deref())
+    .bind(o.description.as_deref())
+    .bind(o.due_date.as_deref())
     .bind(course_id)
     .bind(bid)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 async fn apply_grade_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, key: &str) -> Result<()> {
-    let Some((course_id, bid)) = split_composite(key) else { return Ok(()) };
     let Some(o) = doc.get_grade_overlay(key) else { return Ok(()) };
-    let GradeOverlay {
-        is_extra_credit,
-        hidden,
-        manually_marked_ungraded,
-        expected_score,
-        comments,
-    } = o;
-    sqlx::query(
+    apply_or_defer_grade(pool, key, &o).await
+}
+
+async fn apply_or_defer_grade(
+    pool: &SqlitePool,
+    key: &str,
+    o: &GradeOverlay,
+) -> Result<()> {
+    let n = write_grade_to_sqlite(pool, key, o).await?;
+    if n == 0 {
+        defer_overlay(pool, OverlayKind::Grade, key, o).await?;
+    }
+    Ok(())
+}
+
+async fn write_grade_to_sqlite(
+    pool: &SqlitePool,
+    key: &str,
+    o: &GradeOverlay,
+) -> Result<u64> {
+    let Some((course_id, bid)) = split_composite(key) else { return Ok(0) };
+    let res = sqlx::query(
         "UPDATE grades SET \
            is_extra_credit          = COALESCE(?, is_extra_credit), \
            hidden                   = COALESCE(?, hidden), \
@@ -621,16 +771,16 @@ async fn apply_grade_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, key: &str) -> R
            updated_at               = CURRENT_TIMESTAMP \
          WHERE course_id = ? AND brightspace_id = ?",
     )
-    .bind(is_extra_credit.map(|b| b as i64))
-    .bind(hidden.map(|b| b as i64))
-    .bind(manually_marked_ungraded.map(|b| b as i64))
-    .bind(expected_score)
-    .bind(comments)
+    .bind(o.is_extra_credit.map(|b| b as i64))
+    .bind(o.hidden.map(|b| b as i64))
+    .bind(o.manually_marked_ungraded.map(|b| b as i64))
+    .bind(o.expected_score)
+    .bind(o.comments.as_deref())
     .bind(course_id)
     .bind(bid)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 async fn apply_content_item_to_sqlite(
@@ -639,8 +789,16 @@ async fn apply_content_item_to_sqlite(
     brightspace_id: &str,
 ) -> Result<()> {
     let Some(o) = doc.get_content_item_overlay(brightspace_id) else { return Ok(()) };
+    apply_or_defer_content_item(pool, brightspace_id, &o).await
+}
+
+async fn apply_or_defer_content_item(
+    pool: &SqlitePool,
+    brightspace_id: &str,
+    o: &ContentItemOverlay,
+) -> Result<()> {
     let Some(hidden) = o.is_hidden else { return Ok(()) };
-    sqlx::query(
+    let res = sqlx::query(
         "UPDATE content_items SET is_hidden = ?, updated_at = CURRENT_TIMESTAMP \
          WHERE brightspace_id = ?",
     )
@@ -648,6 +806,9 @@ async fn apply_content_item_to_sqlite(
     .bind(brightspace_id)
     .execute(pool)
     .await?;
+    if res.rows_affected() == 0 {
+        defer_overlay(pool, OverlayKind::ContentItem, brightspace_id, o).await?;
+    }
     Ok(())
 }
 
@@ -657,7 +818,15 @@ async fn apply_notification_to_sqlite(
     external_id: &str,
 ) -> Result<()> {
     let Some(read) = doc.get_notification_read(external_id) else { return Ok(()) };
-    sqlx::query(
+    apply_or_defer_notification(pool, external_id, read).await
+}
+
+async fn apply_or_defer_notification(
+    pool: &SqlitePool,
+    external_id: &str,
+    read: bool,
+) -> Result<()> {
+    let res = sqlx::query(
         "UPDATE notifications SET is_read = ?, updated_at = CURRENT_TIMESTAMP \
          WHERE external_id = ?",
     )
@@ -665,6 +834,16 @@ async fn apply_notification_to_sqlite(
     .bind(external_id)
     .execute(pool)
     .await?;
+    if res.rows_affected() == 0 {
+        let payload = serde_json::json!({ "is_read": read });
+        defer_overlay_raw(
+            pool,
+            OverlayKind::Notification,
+            external_id,
+            &payload.to_string(),
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -710,6 +889,142 @@ async fn apply_synthetic_to_sqlite(doc: &SyncDoc, pool: &SqlitePool, uuid: &str)
             .await?;
         }
     }
+    Ok(())
+}
+
+// ---- Pending overlay applications (T-011) --------------------------------
+//
+// When a Class-B overlay arrives for a row that hasn't been fetched
+// from Brightspace yet (typically: hydrate_from_doc on a freshly
+// paired device, or apply_remote racing the next sync), we park the
+// overlay snapshot in `pending_overlay_apply`. Each Brightspace
+// fetcher in `sync/*.rs` calls `drain_pending_overlay` after upserting
+// a row; if a pending entry exists for `(kind, key)` we apply it on
+// top and remove the pending row.
+
+async fn defer_overlay<T: serde::Serialize>(
+    pool: &SqlitePool,
+    kind: OverlayKind,
+    key: &str,
+    payload: &T,
+) -> Result<()> {
+    let json = serde_json::to_string(payload)
+        .map_err(|e| crate::error::AppError::Other(format!("defer_overlay serialize: {e}")))?;
+    defer_overlay_raw(pool, kind, key, &json).await
+}
+
+async fn defer_overlay_raw(
+    pool: &SqlitePool,
+    kind: OverlayKind,
+    key: &str,
+    json: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO pending_overlay_apply (kind, key, payload, created_at) \
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP) \
+         ON CONFLICT(kind, key) DO UPDATE SET \
+            payload = excluded.payload, \
+            created_at = CURRENT_TIMESTAMP",
+    )
+    .bind(kind.as_str())
+    .bind(key)
+    .bind(json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Re-apply any pending overlay for `(kind, key)` and remove it.
+///
+/// Called by `sync/*.rs` Brightspace fetchers right after they upsert
+/// a row, so any overlay that was waiting on that row gets applied on
+/// top — preserving user intent (`is_pinned`, `custom_color`,
+/// `manually_edited` …) across the initial-pair / Brightspace-sync
+/// gap. No-ops when there's nothing pending.
+///
+/// If the JSON parse fails (e.g. the row was written by a future
+/// schema version), we log + DELETE the row rather than spinning on
+/// it forever — apply_remote will re-create it next time a peer
+/// touches the entity.
+pub async fn drain_pending_overlay(
+    pool: &SqlitePool,
+    kind: OverlayKind,
+    key: &str,
+) -> Result<()> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT payload FROM pending_overlay_apply WHERE kind = ? AND key = ?",
+    )
+    .bind(kind.as_str())
+    .bind(key)
+    .fetch_optional(pool)
+    .await?;
+    let Some((payload,)) = row else { return Ok(()) };
+
+    let parse_err = |e: serde_json::Error| {
+        warn!("drain_pending_overlay {} {}: bad payload: {e}", kind.as_str(), key);
+    };
+
+    match kind {
+        OverlayKind::Course => match serde_json::from_str::<CourseOverlay>(&payload) {
+            Ok(o) => {
+                write_course_to_sqlite(pool, key, &o).await?;
+            }
+            Err(e) => parse_err(e),
+        },
+        OverlayKind::Assignment => match serde_json::from_str::<AssignmentOverlay>(&payload) {
+            Ok(o) => {
+                write_assignment_to_sqlite(pool, key, &o).await?;
+            }
+            Err(e) => parse_err(e),
+        },
+        OverlayKind::Grade => match serde_json::from_str::<GradeOverlay>(&payload) {
+            Ok(o) => {
+                write_grade_to_sqlite(pool, key, &o).await?;
+            }
+            Err(e) => parse_err(e),
+        },
+        OverlayKind::ContentItem => match serde_json::from_str::<ContentItemOverlay>(&payload) {
+            Ok(o) => {
+                if let Some(hidden) = o.is_hidden {
+                    sqlx::query(
+                        "UPDATE content_items SET is_hidden = ?, updated_at = CURRENT_TIMESTAMP \
+                         WHERE brightspace_id = ?",
+                    )
+                    .bind(hidden as i64)
+                    .bind(key)
+                    .execute(pool)
+                    .await?;
+                }
+            }
+            Err(e) => parse_err(e),
+        },
+        OverlayKind::Notification => {
+            // Stored as `{"is_read": bool}`.
+            let parsed: std::result::Result<serde_json::Value, _> =
+                serde_json::from_str(&payload);
+            match parsed {
+                Ok(v) => {
+                    if let Some(read) = v.get("is_read").and_then(|x| x.as_bool()) {
+                        sqlx::query(
+                            "UPDATE notifications SET is_read = ?, updated_at = CURRENT_TIMESTAMP \
+                             WHERE external_id = ?",
+                        )
+                        .bind(read as i64)
+                        .bind(key)
+                        .execute(pool)
+                        .await?;
+                    }
+                }
+                Err(e) => parse_err(e),
+            }
+        }
+    }
+
+    sqlx::query("DELETE FROM pending_overlay_apply WHERE kind = ? AND key = ?")
+        .bind(kind.as_str())
+        .bind(key)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -1444,5 +1759,266 @@ mod tests {
         .await;
 
         assert!(*sink.prefs_updated.lock() >= 1);
+    }
+
+    // ---- T-011 hydrate_from_doc + drain_pending_overlay tests -------------
+
+    /// Acceptance test: hydrate_from_doc on an empty SQLite seeds the
+    /// rows that ALREADY exist (prefs, courses with rows present), and
+    /// parks composite-key entries with no underlying row into
+    /// pending_overlay_apply for the Brightspace sync to drain later.
+    #[tokio::test]
+    async fn hydrate_from_doc_writes_existing_rows_and_defers_missing_ones() {
+        let pool = mem_pool().await;
+        // Course "12345" exists locally already (e.g. fetched during a
+        // prior incomplete sync). Course "99999" does not — its overlay
+        // must be deferred until Brightspace returns it.
+        sqlx::query(
+            "INSERT INTO courses (org_unit_id, name, is_pinned) VALUES ('12345', 'Existing', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let doc = Arc::new(SyncDoc::new());
+        doc.set_pref_display_name("Tucker").unwrap();
+        doc.set_course_overlay("12345", CourseField::IsPinned(true))
+            .unwrap();
+        doc.set_course_overlay("99999", CourseField::CustomColor(Some("#ff0000".into())))
+            .unwrap();
+        // assignment overlay for an assignment we haven't fetched yet
+        doc.set_assignment_overlay(
+            "777:abc",
+            AssignmentField::Completed(true),
+        )
+        .unwrap();
+
+        let sink: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let bridge = Bridge::with_sql(
+            doc.clone(),
+            pool.clone(),
+            sink.clone() as Arc<dyn BridgeEventSink>,
+        );
+
+        bridge.hydrate_from_doc().await.unwrap();
+
+        // Existing course got the overlay applied.
+        let row: (i64,) =
+            sqlx::query_as("SELECT is_pinned FROM courses WHERE org_unit_id = '12345'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row, (1,));
+
+        // Prefs row got the display_name written.
+        let pref: (Option<String>,) =
+            sqlx::query_as("SELECT display_name FROM user_preferences LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(pref.0.as_deref(), Some("Tucker"));
+
+        // Missing-course overlay is parked.
+        let pending: Vec<(String, String)> = sqlx::query_as(
+            "SELECT kind, key FROM pending_overlay_apply ORDER BY kind, key",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            pending,
+            vec![
+                ("assignment".into(), "777:abc".into()),
+                ("course".into(), "99999".into()),
+            ],
+        );
+    }
+
+    /// Drain re-applies a pending overlay AFTER the Brightspace fetcher
+    /// inserts the underlying row. Mirrors the call sequence from
+    /// `sync/courses.rs`.
+    #[tokio::test]
+    async fn drain_pending_overlay_applies_after_row_appears() {
+        let pool = mem_pool().await;
+        let doc = Arc::new(SyncDoc::new());
+
+        // Pair-time: hydrate writes the overlay to pending (course doesn't exist yet).
+        doc.set_course_overlay("99999", CourseField::CustomColor(Some("#abcdef".into())))
+            .unwrap();
+        doc.set_course_overlay("99999", CourseField::TargetGrade(Some(94.0)))
+            .unwrap();
+
+        let sink: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let bridge = Bridge::with_sql(
+            doc.clone(),
+            pool.clone(),
+            sink.clone() as Arc<dyn BridgeEventSink>,
+        );
+        bridge.hydrate_from_doc().await.unwrap();
+
+        // Brightspace sync now learns about course 99999 and inserts it.
+        sqlx::query(
+            "INSERT INTO courses (org_unit_id, name, is_pinned) VALUES ('99999', 'Late Course', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // …and immediately calls drain (this is what sync/courses.rs does).
+        drain_pending_overlay(&pool, OverlayKind::Course, "99999")
+            .await
+            .unwrap();
+
+        let row: (Option<String>, Option<f64>) = sqlx::query_as(
+            "SELECT custom_color, target_grade FROM courses WHERE org_unit_id = '99999'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0.as_deref(), Some("#abcdef"));
+        assert_eq!(row.1, Some(94.0));
+
+        // Pending row removed.
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM pending_overlay_apply WHERE kind = 'course' AND key = '99999'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 0);
+    }
+
+    /// Drain on a key with nothing pending is a no-op.
+    #[tokio::test]
+    async fn drain_pending_overlay_is_noop_when_nothing_pending() {
+        let pool = mem_pool().await;
+        sqlx::query(
+            "INSERT INTO courses (org_unit_id, name, is_pinned) VALUES ('123', 'Test', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Should succeed even though pending_overlay_apply has no row.
+        drain_pending_overlay(&pool, OverlayKind::Course, "123")
+            .await
+            .unwrap();
+    }
+
+    /// apply_remote (via peer Update) on a key whose row doesn't exist
+    /// yet must also defer. Verifies the deferred-on-zero-rows path
+    /// fires from the live diff handler, not just from hydrate.
+    #[tokio::test]
+    async fn apply_remote_defers_when_target_row_missing() {
+        let pool = mem_pool().await;
+        // No `INSERT INTO courses` — the org_unit_id="lateppl" row doesn't
+        // exist yet on this device.
+        let sink: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let doc_a = Arc::new(SyncDoc::new());
+        let doc_b = Arc::new(SyncDoc::new());
+        let bridge_a = Bridge::new(doc_a.clone());
+        let _bridge_b = Bridge::with_sql(
+            doc_b.clone(),
+            pool.clone(),
+            sink.clone() as Arc<dyn BridgeEventSink>,
+        );
+
+        bridge_a
+            .apply_local(LocalChange::Course {
+                id: "lateppl".into(),
+                field: CourseField::IsPinned(true),
+            })
+            .await
+            .unwrap();
+        apply_into(&doc_b, &doc_a).await;
+
+        // Pump should have parked it.
+        let pool_check = pool.clone();
+        wait_for(|| {
+            let pool = pool_check.clone();
+            async move {
+                let row: Option<(String,)> = sqlx::query_as(
+                    "SELECT payload FROM pending_overlay_apply WHERE kind = 'course' AND key = 'lateppl'",
+                )
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+                row.is_some()
+            }
+        })
+        .await;
+    }
+
+    /// hydrate_from_doc must not race with concurrent Import diffs:
+    /// while it's walking, the apply_remote pump is paused. After the
+    /// walk completes, the pause is lifted automatically — verified
+    /// by an Import diff for a different course landing in SQLite via
+    /// the normal apply_remote path.
+    #[tokio::test]
+    async fn hydrate_pauses_apply_remote_then_resumes() {
+        let pool = mem_pool().await;
+        sqlx::query(
+            "INSERT INTO courses (org_unit_id, name, is_pinned) VALUES \
+             ('A', 'Course A', 0), ('B', 'Course B', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Two separate docs (mirrors the working apply_remote tests):
+        //  - doc_b is the local doc with the bridge attached
+        //  - doc_a is the peer that broadcasts the post-hydrate update
+        let sink: Arc<RecordingSink> = Arc::new(RecordingSink::default());
+        let doc_a = Arc::new(SyncDoc::new());
+        let doc_b = Arc::new(SyncDoc::new());
+        let bridge_a = Bridge::new(doc_a.clone());
+        let bridge_b = Bridge::with_sql(
+            doc_b.clone(),
+            pool.clone(),
+            sink.clone() as Arc<dyn BridgeEventSink>,
+        );
+
+        // Pre-seed doc_b's overlay and hydrate (sets courses.A.is_pinned=1).
+        doc_b
+            .set_course_overlay("A", CourseField::IsPinned(true))
+            .unwrap();
+        bridge_b.hydrate_from_doc().await.unwrap();
+
+        let row: (i64,) =
+            sqlx::query_as("SELECT is_pinned FROM courses WHERE org_unit_id = 'A'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row, (1,), "hydrate must apply pre-existing overlay");
+
+        // After hydrate returns, the pause guard has dropped — a fresh
+        // peer-imported change for course B should flow through
+        // apply_remote and emit a course_updated event.
+        bridge_a
+            .apply_local(LocalChange::Course {
+                id: "B".into(),
+                field: CourseField::CustomColor(Some("#123456".into())),
+            })
+            .await
+            .unwrap();
+        apply_into(&doc_b, &doc_a).await;
+
+        let pool_check = pool.clone();
+        wait_for(|| {
+            let pool = pool_check.clone();
+            async move {
+                let row: Option<(Option<String>,)> = sqlx::query_as(
+                    "SELECT custom_color FROM courses WHERE org_unit_id = 'B'",
+                )
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+                matches!(&row, Some((Some(c),)) if c == "#123456")
+            }
+        })
+        .await;
+
+        let courses = sink.course_updated.lock().clone();
+        assert!(courses.contains(&"B".to_string()));
     }
 }

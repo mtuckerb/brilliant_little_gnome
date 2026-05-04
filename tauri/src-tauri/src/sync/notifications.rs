@@ -97,6 +97,19 @@ async fn upsert_feed_item(state: &AppState, item: &Value) -> Result<()> {
     .bind(url)
     .execute(&state.pool)
     .await?;
+
+    // T-011: drain any pending notification overlay (is_read flag) for this row.
+    #[cfg(feature = "p2p")]
+    if let Err(e) = crate::p2p::bridge::drain_pending_overlay(
+        &state.pool,
+        crate::p2p::bridge::OverlayKind::Notification,
+        &external_id,
+    )
+    .await
+    {
+        tracing::warn!("drain pending notification overlay {}: {}", external_id, e);
+    }
+
     Ok(())
 }
 
@@ -141,5 +154,18 @@ async fn upsert_alert(state: &AppState, alert: &Value) -> Result<()> {
     .bind(url)
     .execute(&state.pool)
     .await?;
+
+    // T-011: drain any pending notification overlay (is_read flag) for this row.
+    #[cfg(feature = "p2p")]
+    if let Err(e) = crate::p2p::bridge::drain_pending_overlay(
+        &state.pool,
+        crate::p2p::bridge::OverlayKind::Notification,
+        &external_id,
+    )
+    .await
+    {
+        tracing::warn!("drain pending notification overlay {}: {}", external_id, e);
+    }
+
     Ok(())
 }

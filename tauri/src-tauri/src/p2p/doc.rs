@@ -23,11 +23,15 @@
 
 use crate::error::{AppError, Result};
 use loro::{Container, LoroDoc, LoroMap, LoroText, LoroValue, UpdateOptions, ValueOrContainer};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // ---- Read views (returned from getters / iterators) -----------------------
 
-#[derive(Debug, Clone, Default, PartialEq)]
+// Serialize/Deserialize on the overlay structs is for the
+// `pending_overlay_apply` JSON payload (T-011). `default` on missing
+// fields lets us evolve the schema without breaking older payloads.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CourseOverlay {
     pub is_pinned: Option<bool>,
     pub custom_color: Option<String>,
@@ -37,7 +41,7 @@ pub struct CourseOverlay {
     pub end_of_week_day: Option<i64>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AssignmentOverlay {
     pub completed: Option<bool>,
     pub completed_at: Option<i64>,
@@ -49,7 +53,7 @@ pub struct AssignmentOverlay {
     pub due_date: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GradeOverlay {
     pub is_extra_credit: Option<bool>,
     pub hidden: Option<bool>,
@@ -58,7 +62,7 @@ pub struct GradeOverlay {
     pub comments: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContentItemOverlay {
     pub is_hidden: Option<bool>,
 }

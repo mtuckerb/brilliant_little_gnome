@@ -58,6 +58,22 @@ pub async fn sync_enrollments(state: &AppState) -> Result<Vec<String>> {
         .bind(last_accessed)
         .execute(&state.pool)
         .await?;
+
+        // T-011: a freshly-paired device may have a `course_overlays.<id>`
+        // entry waiting on this row. Drain re-applies the overlay on
+        // top so user intent (custom_color, target_grade, …) survives
+        // the initial-pair → first-sync gap.
+        #[cfg(feature = "p2p")]
+        if let Err(e) = crate::p2p::bridge::drain_pending_overlay(
+            &state.pool,
+            crate::p2p::bridge::OverlayKind::Course,
+            &id,
+        )
+        .await
+        {
+            tracing::warn!("drain pending course overlay {}: {}", id, e);
+        }
+
         ids.push(id);
     }
     Ok(ids)
