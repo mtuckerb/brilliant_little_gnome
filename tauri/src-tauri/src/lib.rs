@@ -17,6 +17,8 @@ pub mod p2p;
 use state::AppState;
 use std::sync::Arc;
 use tauri::Manager;
+#[cfg(feature = "p2p")]
+use tauri::{RunEvent, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -121,6 +123,46 @@ pub fn run() {
             #[cfg(feature = "p2p")]
             commands::sync_p2p::p2p_rotate,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, _event| {
+            // T-020: shut the sync engine down on graceful close so the
+            // final checkpoint lands and the WAL stays minimal. Both
+            // ExitRequested (Cmd+Q / programmatic) and the last
+            // window's CloseRequested go through this path; calling
+            // shutdown() twice is harmless because the engine is taken
+            // out of the lock on the first hit.
+            //
+            // kill -9 / OOM kills bypass this hook entirely — recovery
+            // is handled by the WAL replay path on next startup
+            // (covered by T-005's `append_then_load_replays_updates`
+            // and the engine integration test).
+            #[cfg(feature = "p2p")]
+            {
+                let should_shutdown = matches!(
+                    _event,
+                    RunEvent::ExitRequested { .. }
+                        | RunEvent::WindowEvent {
+                            event: WindowEvent::CloseRequested { .. },
+                            ..
+                        }
+                );
+                if should_shutdown {
+                    if let Some(state) = _app_handle.try_state::<Arc<AppState>>() {
+                        let engine = state.sync.write().take();
+                        if let Some(engine) = engine {
+                            // The event-loop callback is sync; block briefly
+                            // to let shutdown await the checkpoint. The
+                            // worst case is a few hundred ms — acceptable
+                            // for graceful close.
+                            tauri::async_runtime::block_on(async {
+                                if let Err(e) = engine.shutdown().await {
+                                    tracing::warn!("p2p shutdown on close: {e}");
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        });
 }
