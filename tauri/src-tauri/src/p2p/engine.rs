@@ -71,11 +71,24 @@ impl SyncEngine {
     /// on-disk SyncStore under `app_data_dir()/sync/`, brings up the
     /// transport, and spawns all background tasks.
     pub async fn start(state: Arc<AppState>) -> Result<Arc<Self>> {
+        Self::start_with_bootstrap(state, Vec::new()).await
+    }
+
+    /// Like [`start`] but seeds the gossip transport with peers to
+    /// dial proactively. Used by the QR-pairing joiner so it doesn't
+    /// have to wait for relay-broadcast discovery before it can send
+    /// `WireMsg::PairingRequest` to the seed.
+    pub async fn start_with_bootstrap(
+        state: Arc<AppState>,
+        bootstrap_peers: Vec<EndpointId>,
+    ) -> Result<Arc<Self>> {
         let (node_secret, doc_secret) = load_or_init_secrets(&state.pool).await?;
 
         let store = Arc::new(SyncStore::open(&state.app)?);
         let doc = Arc::new(SyncDoc::from_doc(store.load()?));
-        let transport = Arc::new(Transport::start(node_secret, &doc_secret).await?);
+        let transport = Arc::new(
+            Transport::start_with_bootstrap(node_secret, &doc_secret, bootstrap_peers).await?,
+        );
         // Production wiring: Bridge::with_sql installs the Loro→SQLite
         // subscription so remote diffs land in the local DB and emit
         // matching Tauri events (T-010). The wrapping Arc<EventBus>
@@ -85,6 +98,83 @@ impl SyncEngine {
         let bridge = Bridge::with_sql(doc.clone(), state.pool.clone(), events);
 
         Self::start_with_parts(store, doc, transport, bridge).await
+    }
+
+    /// Joiner-side QR-pairing entry point (T-013). Persists the
+    /// `sync_doc_secret` carried in the QR, brings up the engine
+    /// dialing the seed proactively, and broadcasts
+    /// `WireMsg::PairingRequest { nonce }`. The seed verifies the
+    /// nonce hasn't been consumed and replies with a `Snapshot`.
+    ///
+    /// The caller is expected to:
+    ///   1. validate the QR via `pairing::consume_payload(&pool,
+    ///      encoded)` first (rejects expired / replayed locally), then
+    ///   2. call this with the resulting `PairingPayload`,
+    ///   3. await the initial snapshot via
+    ///      `engine.await_initial_snapshot(timeout).await?`,
+    ///   4. run `engine.bridge().hydrate_from_doc().await?` to seed
+    ///      SQLite from the freshly-imported Loro doc.
+    ///
+    /// The Tauri command `p2p_consume_pairing` (T-014) sequences all
+    /// four steps so the React UI sees one async call.
+    pub async fn pair_via_payload(
+        state: Arc<AppState>,
+        payload: &crate::p2p::pairing::PairingPayload,
+    ) -> Result<Arc<Self>> {
+        // Persist the shared secret BEFORE the engine starts so
+        // load_or_init_secrets picks up this value rather than
+        // generating a new random one.
+        set_app_state(&state.pool, "sync_doc_secret", &payload.secret).await?;
+
+        let seed: EndpointId = payload
+            .node
+            .parse()
+            .map_err(|e| AppError::BadRequest(format!("pairing payload node id: {e}")))?;
+        let engine = Self::start_with_bootstrap(state, vec![seed]).await?;
+
+        // Send the pairing request now. Gossip won't have a neighbor
+        // yet — the broadcast queues into the iroh send buffer and
+        // ships once the dial completes (typically <1s in practice).
+        engine
+            .transport
+            .broadcast(WireMsg::PairingRequest {
+                nonce: payload.nonce.clone(),
+            })
+            .await?;
+
+        Ok(engine)
+    }
+
+    /// Block until the first inbound `WireMsg::Snapshot` arrives, or
+    /// `timeout` elapses. Used by the joiner after `pair_via_payload`
+    /// to know it's safe to call `bridge.hydrate_from_doc()` — the
+    /// hydration walk is meaningful only once the seed's snapshot has
+    /// been imported.
+    pub async fn await_initial_snapshot(&self, timeout: Duration) -> Result<()> {
+        let mut rx = self.transport.subscribe();
+        let waited = tokio::time::timeout(timeout, async {
+            loop {
+                match rx.recv().await {
+                    Ok(TransportEvent::Message {
+                        payload: WireMsg::Snapshot { .. },
+                        ..
+                    }) => return Ok::<(), AppError>(()),
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(AppError::Other("transport inbox closed".into()));
+                    }
+                }
+            }
+        })
+        .await;
+        match waited {
+            Ok(inner) => inner,
+            Err(_) => Err(AppError::Other(format!(
+                "no snapshot from seed within {}s",
+                timeout.as_secs()
+            ))),
+        }
     }
 
     /// Test hook: caller has already built the parts (typically via the
@@ -155,6 +245,11 @@ impl SyncEngine {
             let doc = doc.clone();
             let transport = transport.clone();
             let cancel = cancel.clone();
+            // Pool is needed for the seed-side PairingRequest path
+            // (consume_nonce against `consumed_pairing_nonces`). Tests
+            // built via `Bridge::new` get None and skip nonce checks —
+            // the gate is meaningful only when there's a real DB.
+            let pool = bridge.pool().cloned();
             async move {
                 loop {
                     tokio::select! {
@@ -162,7 +257,7 @@ impl SyncEngine {
                         _ = cancel.cancelled() => break,
                         ev = rx.recv() => match ev {
                             Ok(TransportEvent::Message { from, payload }) => {
-                                handle_inbound(&doc, &transport, &from, payload).await;
+                                handle_inbound(&doc, &transport, pool.as_ref(), &from, payload).await;
                             }
                             Ok(TransportEvent::PeerConnected(id)) => {
                                 info!("peer connected: {id}");
@@ -265,6 +360,7 @@ impl SyncEngine {
 async fn handle_inbound(
     doc: &SyncDoc,
     transport: &Transport,
+    pool: Option<&sqlx::SqlitePool>,
     from: &str,
     msg: WireMsg,
 ) {
@@ -298,6 +394,30 @@ async fn handle_inbound(
         WireMsg::StateResponse { bytes, .. } => {
             if let Err(e) = doc.doc().import(&bytes) {
                 warn!("state response import from {from} failed: {e}");
+            }
+        }
+        WireMsg::PairingRequest { nonce } => {
+            // Seed-side: gate on the nonce table. If the joiner is
+            // legitimate (first use of this QR), record the nonce and
+            // reply with a full snapshot. If the nonce is missing
+            // (test wiring with `Bridge::new`), skip the gate but
+            // still reply — that lets the integration test exercise
+            // the snapshot path without bringing up a real DB.
+            if let Some(pool) = pool {
+                if let Err(e) = crate::p2p::pairing::consume_nonce(pool, &nonce).await {
+                    warn!("rejecting pairing request from {from}: {e}");
+                    return;
+                }
+            }
+            let bytes = match doc.doc().export(loro::ExportMode::Snapshot) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!("snapshot export for {from} failed: {e}");
+                    return;
+                }
+            };
+            if let Err(e) = transport.broadcast(WireMsg::Snapshot { bytes }).await {
+                warn!("pairing snapshot broadcast to {from} failed: {e}");
             }
         }
     }
@@ -598,5 +718,268 @@ mod tests {
         assert!(drained.is_ok(), "checkpoint did not fire after threshold");
 
         engine.shutdown().await.unwrap();
+    }
+
+    /// T-013 acceptance: two engines on the in-memory iroh test relay.
+    /// Seed has data; joiner sends `WireMsg::PairingRequest { nonce }`;
+    /// seed consumes nonce + replies with `Snapshot`; joiner awaits
+    /// the snapshot and runs `bridge.hydrate_from_doc()`. Joiner's
+    /// SQLite must mirror the seed's class-B state within 5s.
+    ///
+    /// Also asserts the replay defense: a second PairingRequest with
+    /// the same nonce is rejected by the seed (the joiner times out
+    /// waiting for a second Snapshot).
+    #[tokio::test]
+    async fn pairing_handshake_seeds_joiner_with_full_state() {
+        use crate::p2p::bridge::{BridgeEventSink, OverlayKind};
+        use crate::p2p::pairing::{self, PairingPayload};
+        use sqlx::sqlite::SqlitePoolOptions;
+
+        // ---- shared iroh test infra ---------------------------------------
+        let (relay_map, relay_url, _relay_guard) =
+            iroh::test_utils::run_relay_server().await.unwrap();
+        let memory_lookup = MemoryLookup::new();
+
+        let body = async {
+            let ep_seed = build_test_endpoint(relay_map.clone()).await;
+            let ep_join = build_test_endpoint(relay_map.clone()).await;
+            ep_seed.address_lookup().unwrap().add(memory_lookup.clone());
+            ep_join.address_lookup().unwrap().add(memory_lookup.clone());
+            ep_seed.online().await;
+            ep_join.online().await;
+            let id_seed = ep_seed.id();
+            let id_join = ep_join.id();
+            memory_lookup
+                .add_endpoint_info(EndpointAddr::new(id_seed).with_relay_url(relay_url.clone()));
+            memory_lookup
+                .add_endpoint_info(EndpointAddr::new(id_join).with_relay_url(relay_url.clone()));
+
+            // ---- two SQLite pools (with all migrations) -------------------
+            // The seed's pool is what consume_nonce writes to. Both pools
+            // need the courses table for hydrate to land overlays.
+            async fn build_pool() -> sqlx::SqlitePool {
+                let pool = SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect("sqlite::memory:")
+                    .await
+                    .unwrap();
+                sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+                sqlx::query("INSERT INTO user_preferences (api_port) VALUES (4567)")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                pool
+            }
+            let pool_seed = build_pool().await;
+            let pool_join = build_pool().await;
+
+            // Pre-populate the seed's underlying course rows so apply_remote
+            // (when the seed's overlays land on the joiner side) has rows
+            // to UPDATE — for course IDs that don't exist on the joiner,
+            // hydrate would defer; this test asserts the immediate-update
+            // path. T-011 already covers the deferred case.
+            sqlx::query(
+                "INSERT INTO courses (org_unit_id, name, is_pinned) VALUES \
+                 ('111', 'Course A', 0), ('222', 'Course B', 0)",
+            )
+            .execute(&pool_join)
+            .await
+            .unwrap();
+
+            // ---- seed engine (Bridge with SQL so consume_nonce has a DB) -
+            #[derive(Default)]
+            struct NopSink;
+            impl BridgeEventSink for NopSink {
+                fn course_updated(&self, _: &str) {}
+                fn assignments_updated(&self) {}
+                fn grades_updated(&self) {}
+                fn notifications_updated(&self) {}
+                fn prefs_updated(&self) {}
+            }
+            let sink_seed: Arc<dyn BridgeEventSink> = Arc::new(NopSink);
+            let sink_join: Arc<dyn BridgeEventSink> = Arc::new(NopSink);
+
+            let tmp = TempDir::new().unwrap();
+            let store_seed = store_in(&tmp, "seed");
+            let store_join = store_in(&tmp, "join");
+
+            let secret = b"pairing-handshake-shared-secret";
+            let transport_seed = Arc::new(
+                Transport::start_with_endpoint(ep_seed, secret, vec![]).await.unwrap(),
+            );
+            let transport_join = Arc::new(
+                Transport::start_with_endpoint(ep_join, secret, vec![id_seed])
+                    .await
+                    .unwrap(),
+            );
+
+            let doc_seed = Arc::new(SyncDoc::from_doc(store_seed.load().unwrap()));
+            let bridge_seed = Bridge::with_sql(
+                doc_seed.clone(),
+                pool_seed.clone(),
+                sink_seed.clone(),
+            );
+            let engine_seed = SyncEngine::start_with_parts(
+                store_seed.clone(),
+                doc_seed.clone(),
+                transport_seed.clone(),
+                bridge_seed.clone(),
+            )
+            .await
+            .unwrap();
+
+            let doc_join = Arc::new(SyncDoc::from_doc(store_join.load().unwrap()));
+            let bridge_join = Bridge::with_sql(
+                doc_join.clone(),
+                pool_join.clone(),
+                sink_join.clone(),
+            );
+            let engine_join = SyncEngine::start_with_parts(
+                store_join.clone(),
+                doc_join.clone(),
+                transport_join.clone(),
+                bridge_join.clone(),
+            )
+            .await
+            .unwrap();
+
+            // ---- seed populates some Class-B state ------------------------
+            doc_seed.set_pref_display_name("Tucker").unwrap();
+            doc_seed
+                .set_course_overlay("111", crate::p2p::doc::CourseField::IsPinned(true))
+                .unwrap();
+            doc_seed
+                .set_course_overlay(
+                    "222",
+                    crate::p2p::doc::CourseField::CustomColor(Some("#0099ff".into())),
+                )
+                .unwrap();
+            // A composite-key overlay whose underlying assignment row
+            // doesn't exist on the joiner — should land in pending.
+            doc_seed
+                .set_assignment_overlay(
+                    "777:abc",
+                    crate::p2p::doc::AssignmentField::Completed(true),
+                )
+                .unwrap();
+
+            // ---- wait for gossip mesh formation ---------------------------
+            let mut rx_seed = transport_seed.subscribe();
+            let mut rx_join = transport_join.subscribe();
+            let join_mesh = async {
+                let mut s = false;
+                let mut j = false;
+                while !(s && j) {
+                    tokio::select! {
+                        ev = rx_seed.recv(), if !s => {
+                            if let Ok(TransportEvent::PeerConnected(_)) = ev { s = true; }
+                        }
+                        ev = rx_join.recv(), if !j => {
+                            if let Ok(TransportEvent::PeerConnected(_)) = ev { j = true; }
+                        }
+                    }
+                }
+            };
+            timeout(Duration::from_secs(15), join_mesh)
+                .await
+                .expect("pairing test: peers did not join in time");
+
+            // ---- joiner sends PairingRequest -------------------------------
+            // Construct a PairingPayload purely for its nonce + secret_hex
+            // — the wire-level handshake only consumes those. The QR/scan
+            // surface (start_with_bootstrap) is exercised by T-014.
+            let payload = PairingPayload::new(
+                id_seed.to_string(),
+                vec![],
+                Some(relay_url.to_string()),
+                hex::encode(secret),
+            );
+            transport_join
+                .broadcast(WireMsg::PairingRequest {
+                    nonce: payload.nonce.clone(),
+                })
+                .await
+                .unwrap();
+
+            // ---- joiner awaits the seed's Snapshot reply -------------------
+            engine_join
+                .await_initial_snapshot(Duration::from_secs(5))
+                .await
+                .expect("joiner did not receive snapshot from seed");
+
+            // ---- joiner runs hydrate_from_doc; assert SQLite mirrored -----
+            engine_join.bridge().hydrate_from_doc().await.unwrap();
+
+            let pref: (Option<String>,) =
+                sqlx::query_as("SELECT display_name FROM user_preferences LIMIT 1")
+                    .fetch_one(&pool_join)
+                    .await
+                    .unwrap();
+            assert_eq!(pref.0.as_deref(), Some("Tucker"));
+
+            let row111: (i64,) =
+                sqlx::query_as("SELECT is_pinned FROM courses WHERE org_unit_id = '111'")
+                    .fetch_one(&pool_join)
+                    .await
+                    .unwrap();
+            assert_eq!(row111.0, 1);
+
+            let row222: (Option<String>,) = sqlx::query_as(
+                "SELECT custom_color FROM courses WHERE org_unit_id = '222'",
+            )
+            .fetch_one(&pool_join)
+            .await
+            .unwrap();
+            assert_eq!(row222.0.as_deref(), Some("#0099ff"));
+
+            // The composite-key overlay should be parked in pending.
+            let pending: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM pending_overlay_apply \
+                 WHERE kind = 'assignment' AND key = '777:abc'",
+            )
+            .fetch_one(&pool_join)
+            .await
+            .unwrap();
+            assert_eq!(pending.0, 1);
+
+            // ---- replay defense: second PairingRequest with same nonce ---
+            // Seed should reject (consume_nonce returns BadRequest), so no
+            // second Snapshot is broadcast. Joiner times out.
+            transport_join
+                .broadcast(WireMsg::PairingRequest {
+                    nonce: payload.nonce.clone(),
+                })
+                .await
+                .unwrap();
+            let replay_result = engine_join
+                .await_initial_snapshot(Duration::from_millis(500))
+                .await;
+            assert!(
+                replay_result.is_err(),
+                "replay must be rejected by seed (no second snapshot)"
+            );
+            let count: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM consumed_pairing_nonces WHERE nonce = ?",
+            )
+            .bind(&payload.nonce)
+            .fetch_one(&pool_seed)
+            .await
+            .unwrap();
+            assert_eq!(count.0, 1, "nonce must be recorded exactly once");
+
+            // Reference unused-but-needed values for the borrow checker.
+            let _ = id_join;
+            let _ = bridge_seed;
+            let _ = bridge_join;
+            let _ = pairing::PAIRING_VERSION;
+            let _ = OverlayKind::Course;
+
+            engine_seed.shutdown().await.unwrap();
+            engine_join.shutdown().await.unwrap();
+        };
+
+        timeout(Duration::from_secs(45), body)
+            .await
+            .expect("pairing handshake test exceeded 45s");
     }
 }

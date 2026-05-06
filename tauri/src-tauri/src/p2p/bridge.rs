@@ -180,6 +180,14 @@ impl Bridge {
         })
     }
 
+    /// Borrow the SQLite pool the bridge writes through, if any.
+    /// Returns `None` for a bare `Bridge::new(doc)` — used by the
+    /// engine's inbox handler to gate side effects (PairingRequest's
+    /// consume_nonce step) on production wiring.
+    pub fn pool(&self) -> Option<&SqlitePool> {
+        self.pool.as_ref()
+    }
+
     /// Initial-pair hydration (T-011). Walks every Loro overlay and
     /// writes the matching SQLite row. Composite-key overlays whose
     /// Brightspace row hasn't been fetched yet are deferred into the

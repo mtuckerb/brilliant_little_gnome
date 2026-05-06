@@ -63,6 +63,13 @@ pub enum WireMsg {
     StateRequest { vv: Vec<u8> },
     /// Reply with the state vector + the missing-since-vv updates.
     StateResponse { vv: Vec<u8>, bytes: Vec<u8> },
+    /// Joiner→seed pairing handshake (T-013, design.md §6).
+    /// The seed verifies `nonce` hasn't been consumed (one-shot per
+    /// QR via `consumed_pairing_nonces`), records it, and replies
+    /// with a `Snapshot`. Distinct from `StateRequest` because the
+    /// nonce-check side effect only fires for the QR-pairing path —
+    /// ongoing resync between already-paired devices uses StateRequest.
+    PairingRequest { nonce: String },
 }
 
 impl WireMsg {
@@ -117,6 +124,18 @@ impl Transport {
 
     /// Production constructor: n0 defaults (DNS lookup + n0 relay).
     pub async fn start(secret_key: SecretKey, sync_doc_secret: &[u8]) -> Result<Self> {
+        Self::start_with_bootstrap(secret_key, sync_doc_secret, Vec::new()).await
+    }
+
+    /// Like [`start`] but also seeds the gossip subscription with peers
+    /// to actively dial on join. Used by the QR-pairing joiner so the
+    /// mesh forms with the seed device immediately rather than waiting
+    /// for relay-broadcast discovery.
+    pub async fn start_with_bootstrap(
+        secret_key: SecretKey,
+        sync_doc_secret: &[u8],
+        peers: Vec<iroh::EndpointId>,
+    ) -> Result<Self> {
         let endpoint = Endpoint::builder(presets::N0)
             .secret_key(secret_key)
             .alpns(vec![GOSSIP_ALPN.to_vec()])
@@ -124,7 +143,7 @@ impl Transport {
             .bind()
             .await
             .map_err(|e| AppError::Other(format!("iroh bind: {e}")))?;
-        Self::wire_up(endpoint, sync_doc_secret, Vec::new()).await
+        Self::wire_up(endpoint, sync_doc_secret, peers).await
     }
 
     /// Test hook: caller already built the endpoint (so the test can
@@ -326,6 +345,16 @@ mod tests {
             vv: vec![9, 8, 7],
             bytes: vec![0xde, 0xad, 0xbe, 0xef],
         });
+    }
+
+    #[test]
+    fn wire_msg_round_trip_pairing_request() {
+        assert_wire_round_trip(WireMsg::PairingRequest {
+            nonce: "deadbeef0123456789abcdef01234567".into(),
+        });
+        // Empty nonce (defensive — the protocol-level rejection will
+        // happen at the consume_nonce gate, not at decode time).
+        assert_wire_round_trip(WireMsg::PairingRequest { nonce: String::new() });
     }
 
     #[test]
