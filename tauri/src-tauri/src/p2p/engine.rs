@@ -123,8 +123,15 @@ impl SyncEngine {
     ) -> Result<Arc<Self>> {
         // Persist the shared secret BEFORE the engine starts so
         // load_or_init_secrets picks up this value rather than
-        // generating a new random one.
-        set_app_state(&state.pool, "sync_doc_secret", &payload.secret).await?;
+        // generating a new random one. Goes through the same backend
+        // (keychain primary, app_state fallback) so a re-pair lands
+        // in the same place future loads will read from.
+        crate::p2p::secrets::store(
+            &state.pool,
+            crate::p2p::secrets::SecretKind::SyncDocSecret,
+            &payload.secret,
+        )
+        .await?;
 
         let seed: EndpointId = payload
             .node
@@ -423,22 +430,31 @@ async fn handle_inbound(
     }
 }
 
-/// Read the iroh node secret + shared sync_doc_secret from `app_state`,
-/// generating + persisting either if missing.
+/// Read the iroh node secret + shared sync_doc_secret, generating
+/// and persisting either if missing.
 ///
 /// On-disk format:
 ///   - `iroh_node_secret`: base64 of the 32-byte ed25519 secret bytes
 ///   - `sync_doc_secret`:  hex of the 32 raw bytes (matches the QR
 ///                          payload format from T-012 / design.md §6)
 ///
-/// T-021 will move these into the OS keychain. Until then they live
-/// in the SQLite app_state table next to the rest of the per-device
-/// flags. The `sync_doc_secret` is wrapped in `Zeroizing` once decoded
-/// so it gets scrubbed from RAM on drop.
+/// Storage: `crate::p2p::secrets` reads the OS keychain first and
+/// falls back to the SQLite `app_state` table on systems without
+/// keychain support (T-021). Existing pre-T-021 installs are
+/// migrated transparently — `migrate_to_keychain` runs
+/// unconditionally before the first load so a SQLite-only secret
+/// moves into the keychain on the next start.
+///
+/// `sync_doc_secret` is wrapped in `Zeroizing` so the raw 32 bytes
+/// get scrubbed from RAM on drop.
 async fn load_or_init_secrets(
     pool: &sqlx::SqlitePool,
 ) -> Result<(SecretKey, Zeroizing<Vec<u8>>)> {
-    let node_secret = match get_app_state(pool, "iroh_node_secret").await? {
+    use crate::p2p::secrets::{self, SecretKind};
+    secrets::migrate_to_keychain(pool, SecretKind::IrohNodeSecret).await?;
+    secrets::migrate_to_keychain(pool, SecretKind::SyncDocSecret).await?;
+
+    let node_secret = match secrets::load(pool, SecretKind::IrohNodeSecret).await? {
         Some(s) => {
             let raw = B64
                 .decode(s.as_bytes())
@@ -452,12 +468,12 @@ async fn load_or_init_secrets(
         None => {
             let key = SecretKey::generate();
             let encoded = B64.encode(key.to_bytes());
-            set_app_state(pool, "iroh_node_secret", &encoded).await?;
+            secrets::store(pool, SecretKind::IrohNodeSecret, &encoded).await?;
             key
         }
     };
 
-    let doc_secret = match get_app_state(pool, "sync_doc_secret").await? {
+    let doc_secret = match secrets::load(pool, SecretKind::SyncDocSecret).await? {
         Some(s) => {
             let raw = hex::decode(&s)
                 .map_err(|e| AppError::Other(format!("decode sync_doc_secret: {e}")))?;
@@ -470,7 +486,7 @@ async fn load_or_init_secrets(
             let mut buf = vec![0u8; 32];
             rand::thread_rng().fill_bytes(&mut buf);
             let encoded = hex::encode(&buf);
-            set_app_state(pool, "sync_doc_secret", &encoded).await?;
+            secrets::store(pool, SecretKind::SyncDocSecret, &encoded).await?;
             Zeroizing::new(buf)
         }
     };
@@ -478,7 +494,10 @@ async fn load_or_init_secrets(
     Ok((node_secret, doc_secret))
 }
 
-async fn get_app_state(pool: &sqlx::SqlitePool, key: &str) -> Result<Option<String>> {
+/// Generic key/value read on `app_state`. Public so the pairing-related
+/// commands (and T-022's storage stats) can share one well-known
+/// helper rather than each rolling its own SELECT.
+pub async fn get_app_state(pool: &sqlx::SqlitePool, key: &str) -> Result<Option<String>> {
     let row: Option<(Option<String>,)> =
         sqlx::query_as("SELECT value FROM app_state WHERE key = ?")
             .bind(key)
@@ -487,7 +506,7 @@ async fn get_app_state(pool: &sqlx::SqlitePool, key: &str) -> Result<Option<Stri
     Ok(row.and_then(|(v,)| v))
 }
 
-async fn set_app_state(pool: &sqlx::SqlitePool, key: &str, value: &str) -> Result<()> {
+pub async fn set_app_state(pool: &sqlx::SqlitePool, key: &str, value: &str) -> Result<()> {
     sqlx::query(
         "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) \
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",

@@ -22,6 +22,7 @@ pub mod doc;
 pub mod engine;
 pub mod pairing;
 pub mod persistence;
+pub mod secrets;
 pub mod transport;
 
 pub use engine::SyncEngine;

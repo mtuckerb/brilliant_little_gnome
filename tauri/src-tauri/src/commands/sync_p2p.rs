@@ -113,14 +113,14 @@ pub async fn p2p_pairing_qr(state: AppStateArg<'_>) -> Result<PairingQr> {
         .ok_or_else(|| AppError::BadRequest("p2p engine not running".into()))?;
 
     // Pull the current sync_doc_secret so it goes into the QR. The
-    // engine has it in memory but not exposed; the canonical record
-    // is `app_state.sync_doc_secret` (hex), put there by
-    // `engine::load_or_init_secrets`. Reading from there keeps the
+    // engine has it in memory but not exposed; we read it back from
+    // the same canonical store (keychain / app_state fallback) that
+    // `load_or_init_secrets` populates. Reading on demand keeps the
     // QR honest if rotation has happened.
-    let secret_hex = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT value FROM app_state WHERE key = 'sync_doc_secret'",
+    let secret_hex = crate::p2p::secrets::load(
+        &state.pool,
+        crate::p2p::secrets::SecretKind::SyncDocSecret,
     )
-    .fetch_one(&state.pool)
     .await?
     .ok_or_else(|| AppError::Other("sync_doc_secret missing after p2p_enable".into()))?;
 
@@ -203,18 +203,18 @@ pub async fn p2p_rotate(state: AppStateArg<'_>) -> Result<P2pStatus> {
         }
     }
 
-    // Generate + persist a new shared secret. The joiner-side
-    // re-pairing flow will pick this up via the QR.
+    // Generate + persist a new shared secret via the same backend
+    // (keychain primary, app_state fallback) that load_or_init_secrets
+    // uses. Joiner-side re-pairing picks this up via a fresh QR.
     use rand::RngCore;
     let mut buf = vec![0u8; 32];
     rand::thread_rng().fill_bytes(&mut buf);
     let new_secret = hex::encode(&buf);
-    sqlx::query(
-        "INSERT INTO app_state (key, value, updated_at) VALUES ('sync_doc_secret', ?, CURRENT_TIMESTAMP) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+    crate::p2p::secrets::store(
+        &state.pool,
+        crate::p2p::secrets::SecretKind::SyncDocSecret,
+        &new_secret,
     )
-    .bind(&new_secret)
-    .execute(&state.pool)
     .await?;
 
     // Wipe the consumed-nonces table — the old QRs are dead anyway,
