@@ -74,6 +74,26 @@ pub async fn sync_enrollments(state: &AppState) -> Result<Vec<String>> {
             tracing::warn!("drain pending course overlay {}: {}", id, e);
         }
 
+        // T-017: `is_pinned` is Class-B (per §10). Brightspace
+        // populates it from the user's PinDate, but the column is
+        // user-overridable in principle, so we mirror the
+        // sync-derived value into Loro. If a peer hasn't run
+        // Brightspace sync yet, this gives them the right starting
+        // point; if they have, the apply_remote path is idempotent.
+        #[cfg(feature = "p2p")]
+        if let Some(engine) = state.sync_engine() {
+            if let Err(e) = engine
+                .bridge()
+                .apply_local(crate::p2p::bridge::LocalChange::Course {
+                    id: id.clone(),
+                    field: crate::p2p::doc::CourseField::IsPinned(is_pinned),
+                })
+                .await
+            {
+                tracing::warn!("apply_local sync is_pinned {}: {}", id, e);
+            }
+        }
+
         ids.push(id);
     }
     Ok(ids)
