@@ -12,6 +12,9 @@ pub mod overview;
 pub mod assignment_detail;
 pub mod downloads;
 
+#[cfg(feature = "p2p")]
+pub mod sync_p2p;
+
 use crate::error::Result;
 use crate::state::AppState;
 use std::sync::Arc;

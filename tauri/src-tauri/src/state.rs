@@ -21,10 +21,12 @@ pub struct AppState {
 
     // P2P device-to-device sync engine. `None` until the user opts in
     // via Settings → Sync (which calls the `p2p_enable` Tauri command,
-    // added in T-014). Wrapped in an `Arc` so background tasks can hold
-    // their own clones without locking the whole `AppState`.
+    // added in T-014). Wrapped in an `RwLock` so the enable / disable
+    // / rotate commands can swap it without locking the whole
+    // `AppState`. Holders of the inner `Arc<SyncEngine>` keep the
+    // engine alive for the duration of their borrow.
     #[cfg(feature = "p2p")]
-    pub sync: Option<Arc<crate::p2p::SyncEngine>>,
+    pub sync: RwLock<Option<Arc<crate::p2p::SyncEngine>>>,
 }
 
 impl AppState {
@@ -39,7 +41,15 @@ impl AppState {
             rest_handle: Mutex::new(None),
             app,
             #[cfg(feature = "p2p")]
-            sync: None,
+            sync: RwLock::new(None),
         })
+    }
+
+    /// Snapshot the current sync engine, if any. Returns a clone of
+    /// the inner Arc so the caller doesn't hold the lock while
+    /// awaiting on the engine.
+    #[cfg(feature = "p2p")]
+    pub fn sync_engine(&self) -> Option<Arc<crate::p2p::SyncEngine>> {
+        self.sync.read().clone()
     }
 }

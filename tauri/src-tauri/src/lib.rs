@@ -105,6 +105,21 @@ pub fn run() {
             commands::rest::rest_api_start,
             commands::rest::rest_api_stop,
             commands::rest::rest_api_status,
+            // P2P device-to-device sync (T-014). Gated on the `p2p`
+            // feature so the no-network build doesn't expose a UI
+            // surface that has no engine to back it.
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_status,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_enable,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_disable,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_pairing_qr,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_consume_pairing,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_rotate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
