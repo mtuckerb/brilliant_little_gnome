@@ -122,6 +122,8 @@ pub fn run() {
             commands::sync_p2p::p2p_consume_pairing,
             #[cfg(feature = "p2p")]
             commands::sync_p2p::p2p_rotate,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_storage_stats,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

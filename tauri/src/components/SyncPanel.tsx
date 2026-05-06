@@ -28,9 +28,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { useToast } from "./ToastProvider";
-import type { P2pStatus, PairingQr } from "../types";
+import type { P2pStatus, PairingQr, StorageStats } from "../types";
 
 const PAIR_TTL_SECONDS = 60;
+const STORAGE_POLL_MS = 30_000;
 
 export default function SyncPanel() {
   const toast = useToast();
@@ -44,6 +45,7 @@ export default function SyncPanel() {
   const [qrCountdown, setQrCountdown] = useState<number>(0);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
+  const [storage, setStorage] = useState<StorageStats | null>(null);
   const countdownRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
@@ -93,11 +95,42 @@ export default function SyncPanel() {
           toast.show(`Sync error: ${e.payload.message}`, "is-danger");
         }),
       );
+      unlisteners.push(
+        await listen<{ message: string }>("p2p:warning", (e) => {
+          toast.show(e.payload.message, "is-warning", 10_000);
+        }),
+      );
     })();
     return () => {
       for (const u of unlisteners) u();
     };
   }, [available, refresh, toast]);
+
+  // Poll storage stats while the engine is running. 30s feels right
+  // — these numbers move on minute scales (one checkpoint per
+  // minute), so faster polling would just be UI churn.
+  useEffect(() => {
+    if (!status?.enabled || !status.nodeId) {
+      setStorage(null);
+      return;
+    }
+    let alive = true;
+    const tick = async () => {
+      try {
+        const s = await api.p2pStorageStats();
+        if (alive) setStorage(s);
+      } catch {
+        // Engine isn't running yet — keep showing the previous value
+        // (if any) and try again on the next tick.
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, STORAGE_POLL_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [status?.enabled, status?.nodeId]);
 
   // QR countdown — ticks each second, hides QR when reaching 0. We
   // start the timer when the QR is fetched (so the user-visible
@@ -324,6 +357,13 @@ export default function SyncPanel() {
             </div>
           )}
 
+          {storage && (
+            <div className="mt-3 has-text-grey is-size-7">
+              Storage: snapshot {fmtBytes(storage.snapshotBytes)} · WAL{" "}
+              {fmtBytes(storage.walBytes)} ({storage.walEntries} entries)
+            </div>
+          )}
+
           <hr />
           <div>
             <button
@@ -347,4 +387,14 @@ export default function SyncPanel() {
 function truncate(s: string, head = 8, tail = 6): string {
   if (s.length <= head + tail + 1) return s;
   return `${s.slice(0, head)}…${s.slice(-tail)}`;
+}
+
+/// Render a byte count as KB/MB depending on magnitude. We use SI
+/// (1000-based) units rather than binary because that's what the
+/// backend reports (`fs::metadata` len in bytes) and the user-facing
+/// "MB" most people compare against in tools is decimal too.
+function fmtBytes(n: number): string {
+  if (n < 1_000) return `${n} B`;
+  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)} KB`;
+  return `${(n / 1_000_000).toFixed(1)} MB`;
 }

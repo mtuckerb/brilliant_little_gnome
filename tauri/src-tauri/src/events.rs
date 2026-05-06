@@ -54,6 +54,24 @@ impl EventBus {
     pub fn grades_updated(&self) {
         self.emit("grades:updated", ());
     }
+
+    /// Emit a `p2p:warning` event to the React frontend. Used by the
+    /// sync engine's checkpoint scheduler when the on-disk snapshot
+    /// crosses the 50 MB threshold (T-022). The Settings → Sync
+    /// panel renders these via the existing toast provider.
+    pub fn p2p_warning(&self, message: &str) {
+        self.emit(
+            "p2p:warning",
+            P2pWarningEvent {
+                message: message.to_string(),
+            },
+        );
+    }
+}
+
+#[derive(Serialize, Clone)]
+struct P2pWarningEvent {
+    message: String,
 }
 
 #[derive(Serialize, Clone)]

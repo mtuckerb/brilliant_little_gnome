@@ -50,6 +50,13 @@ use zeroize::Zeroizing;
 /// when WAL entries exceed `CHECKPOINT_WAL_THRESHOLD`.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Snapshot size that triggers a `p2p:warning` event on the
+/// receiving Tauri app (T-022). Design.md §14 calls 50 MB out as
+/// the soft limit before compaction becomes a real concern. The
+/// warning is edge-triggered so the user doesn't see a toast every
+/// minute once they're over.
+const SNAPSHOT_WARNING_BYTES: u64 = 50 * 1_000_000;
+
 pub struct SyncEngine {
     doc: Arc<SyncDoc>,
     store: Arc<SyncStore>,
@@ -288,11 +295,21 @@ impl SyncEngine {
             let doc = doc.clone();
             let cancel = cancel.clone();
             let notify = checkpoint_notify.clone();
+            // Clone the events sink so we can emit p2p:warning when
+            // the snapshot crosses 50 MB (T-022). None for tests
+            // built via Bridge::new, which is fine — production has
+            // a real EventBus and only production cares about UI
+            // notifications anyway.
+            let events = bridge.events().cloned();
             async move {
                 let mut tick = interval(CHECKPOINT_INTERVAL);
                 // Consume the immediate first tick so we don't checkpoint
                 // an empty WAL the moment we boot.
                 tick.tick().await;
+                // Edge-triggered warning: only fire on the transition
+                // from <50 MB to >=50 MB, so the user doesn't see a
+                // toast every 60s once they're over.
+                let mut last_was_oversized = false;
                 loop {
                     tokio::select! {
                         biased;
@@ -305,7 +322,19 @@ impl SyncEngine {
                     }
                     if let Err(e) = store.checkpoint(&doc.doc()) {
                         error!("checkpoint failed: {e}");
+                        continue;
                     }
+                    let stats = store.storage_stats();
+                    let oversized = stats.snapshot_bytes > SNAPSHOT_WARNING_BYTES;
+                    if oversized && !last_was_oversized {
+                        if let Some(events) = &events {
+                            events.p2p_warning(&format!(
+                                "Sync snapshot is {} MB — consider rotating the secret to start fresh.",
+                                stats.snapshot_bytes / 1_000_000
+                            ));
+                        }
+                    }
+                    last_was_oversized = oversized;
                 }
             }
         }));

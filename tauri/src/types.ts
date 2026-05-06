@@ -243,3 +243,9 @@ export interface PairingQr {
   pngB64: string;
   encoded: string;
 }
+
+export interface StorageStats {
+  snapshotBytes: number;
+  walBytes: number;
+  walEntries: number;
+}

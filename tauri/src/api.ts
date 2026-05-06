@@ -17,6 +17,7 @@ import type {
   AssignmentDetailPayload,
   P2pStatus,
   PairingQr,
+  StorageStats,
 } from "./types";
 
 // All backend access goes through these wrappers. Each one corresponds to a
@@ -176,6 +177,7 @@ export const api = {
   p2pConsumePairing: (encoded: string) =>
     invoke<P2pStatus>("p2p_consume_pairing", { args: { encoded } }),
   p2pRotate: () => invoke<P2pStatus>("p2p_rotate"),
+  p2pStorageStats: () => invoke<StorageStats>("p2p_storage_stats"),
 };
 
 // Tauri-event subscriptions (replacing the Ruby SSE stream).

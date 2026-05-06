@@ -24,12 +24,28 @@
 use crate::error::{AppError, Result};
 use loro::{ExportMode, LoroDoc};
 use parking_lot::Mutex;
+use serde::Serialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::{AppHandle, Manager};
 use tracing::warn;
+
+/// Snapshot of the on-disk Loro persistence (T-022). Returned by
+/// `SyncStore::storage_stats` and exposed verbatim through the
+/// `p2p_storage_stats` Tauri command.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageStats {
+    /// Bytes in `doc.snapshot` (0 if no checkpoint has happened yet).
+    pub snapshot_bytes: u64,
+    /// Bytes currently in `doc.wal` since the last checkpoint.
+    pub wal_bytes: u64,
+    /// Frame count since the last checkpoint (mirrors the
+    /// in-memory counter the checkpoint scheduler reads).
+    pub wal_entries: u64,
+}
 
 const SNAPSHOT_FILE: &str = "doc.snapshot";
 const WAL_FILE: &str = "doc.wal";
@@ -138,6 +154,23 @@ impl SyncStore {
     /// The SyncEngine compares this against `CHECKPOINT_WAL_THRESHOLD`.
     pub fn pending_wal_entries(&self) -> usize {
         self.wal_entries.load(Ordering::Relaxed)
+    }
+
+    /// On-disk size summary used by the `p2p_storage_stats` command
+    /// (T-022). All fields are in bytes; missing files report 0
+    /// (a fresh install has neither snapshot nor WAL on disk yet).
+    pub fn storage_stats(&self) -> StorageStats {
+        let snapshot_bytes = fs::metadata(self.dir.join(SNAPSHOT_FILE))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let wal_bytes = fs::metadata(self.dir.join(WAL_FILE))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        StorageStats {
+            snapshot_bytes,
+            wal_bytes,
+            wal_entries: self.pending_wal_entries() as u64,
+        }
     }
 
     /// Rewrite the snapshot atomically and truncate the WAL. Safe to

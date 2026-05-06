@@ -58,6 +58,9 @@ pub trait BridgeEventSink: Send + Sync {
     fn grades_updated(&self);
     fn notifications_updated(&self);
     fn prefs_updated(&self);
+    /// Reserved for T-022 storage warnings. Default no-op so test
+    /// recording impls don't have to mock it.
+    fn p2p_warning(&self, _message: &str) {}
 }
 
 impl BridgeEventSink for EventBus {
@@ -75,6 +78,9 @@ impl BridgeEventSink for EventBus {
     }
     fn prefs_updated(&self) {
         EventBus::prefs_updated(self);
+    }
+    fn p2p_warning(&self, message: &str) {
+        EventBus::p2p_warning(self, message);
     }
 }
 
@@ -186,6 +192,13 @@ impl Bridge {
     /// consume_nonce step) on production wiring.
     pub fn pool(&self) -> Option<&SqlitePool> {
         self.pool.as_ref()
+    }
+
+    /// Borrow the event sink, if any. Used by the engine's
+    /// checkpoint task to emit `p2p:warning` for oversized
+    /// snapshots (T-022).
+    pub fn events(&self) -> Option<&Arc<dyn BridgeEventSink>> {
+        self.events.as_ref()
     }
 
     /// Initial-pair hydration (T-011). Walks every Loro overlay and

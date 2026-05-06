@@ -186,6 +186,20 @@ pub async fn p2p_consume_pairing(
     Ok(build_status(&state).await)
 }
 
+/// On-disk sync persistence numbers, surfaced in Settings → Sync.
+/// Mirrors `SyncStore::storage_stats` 1:1; the command exists so
+/// the React side can poll without holding a Tauri::State across
+/// awaits.
+#[tauri::command]
+pub async fn p2p_storage_stats(
+    state: AppStateArg<'_>,
+) -> Result<crate::p2p::persistence::StorageStats> {
+    let engine = state
+        .sync_engine()
+        .ok_or_else(|| AppError::BadRequest("p2p engine not running".into()))?;
+    Ok(engine.store().storage_stats())
+}
+
 /// Generate a fresh `sync_doc_secret`, restart the engine. Old peers
 /// remain on the previous gossip topic and see no new traffic; they
 /// effectively drop off the sync group. The user has to re-pair every
