@@ -213,3 +213,33 @@ export interface DiscussionPost {
   posted_at: string | null;
   is_pinned: boolean;
 }
+
+// ---- P2P device-to-device sync (T-014/T-015) -----------------------------
+
+export interface PairedPeer {
+  nodeId: string;
+  lastSeenAt: string | null;
+}
+
+export interface P2pStatus {
+  enabled: boolean;
+  nodeId: string | null;
+  pairedPeers: PairedPeer[];
+  lastApplyAt: string | null;
+}
+
+export interface PairingPayload {
+  v: number;
+  node: string;
+  addrs: string[];
+  relay: string | null;
+  secret: string;
+  nonce: string;
+  exp: number;
+}
+
+export interface PairingQr {
+  payload: PairingPayload;
+  pngB64: string;
+  encoded: string;
+}

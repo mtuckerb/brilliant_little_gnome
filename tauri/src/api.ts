@@ -15,6 +15,8 @@ import type {
   DiscussionTopic,
   DiscussionPost,
   AssignmentDetailPayload,
+  P2pStatus,
+  PairingQr,
 } from "./types";
 
 // All backend access goes through these wrappers. Each one corresponds to a
@@ -162,6 +164,18 @@ export const api = {
   restApiStop: () => invoke<void>("rest_api_stop"),
   restApiStatus: () =>
     invoke<{ running: boolean; port: number | null }>("rest_api_status"),
+
+  // P2P device-to-device sync (T-014). Only callable when the
+  // backend is built with the `p2p` feature; otherwise the IPC
+  // command is absent and `invoke` will reject. The Settings panel
+  // gracefully treats that rejection as "p2p not available".
+  p2pStatus: () => invoke<P2pStatus>("p2p_status"),
+  p2pEnable: () => invoke<P2pStatus>("p2p_enable"),
+  p2pDisable: () => invoke<void>("p2p_disable"),
+  p2pPairingQr: () => invoke<PairingQr>("p2p_pairing_qr"),
+  p2pConsumePairing: (encoded: string) =>
+    invoke<P2pStatus>("p2p_consume_pairing", { args: { encoded } }),
+  p2pRotate: () => invoke<P2pStatus>("p2p_rotate"),
 };
 
 // Tauri-event subscriptions (replacing the Ruby SSE stream).

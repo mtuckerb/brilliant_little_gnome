@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import SyncPanel from "../components/SyncPanel";
 import type { UserPreferences } from "../types";
 
 export default function Settings() {
@@ -89,6 +90,8 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      <SyncPanel />
 
       <div className="box">
         <h2 className="title is-5">Calendar</h2>
