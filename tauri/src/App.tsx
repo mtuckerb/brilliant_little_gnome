@@ -7,12 +7,15 @@ import Dashboard from "./pages/Dashboard";
 import CourseDetail from "./pages/CourseDetail";
 import Grades from "./pages/Grades";
 import Assignments from "./pages/Assignments";
+import AssignmentDetail from "./pages/AssignmentDetail";
 import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import Setup from "./pages/Setup";
 import Calendar from "./pages/Calendar";
 import Modules from "./pages/Modules";
+import ModuleDetail from "./pages/ModuleDetail";
 import Discussions from "./pages/Discussions";
+import DiscussionTopic from "./pages/DiscussionTopic";
 import Archive from "./pages/Archive";
 import { ToastProvider, useToast } from "./components/ToastProvider";
 
@@ -72,8 +75,11 @@ function AppInner() {
         <Route path="/course/:id" element={<CourseDetail />} />
         <Route path="/course/:id/grades" element={<Grades />} />
         <Route path="/course/:id/assignments" element={<Assignments />} />
+        <Route path="/course/:id/assignments/:aid" element={<AssignmentDetail />} />
         <Route path="/course/:id/content" element={<Modules />} />
+        <Route path="/course/:id/content/:moduleId" element={<ModuleDetail />} />
         <Route path="/course/:id/discussions" element={<Discussions />} />
+        <Route path="/course/:id/discussions/:topicId" element={<DiscussionTopic />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/archive" element={<Archive />} />

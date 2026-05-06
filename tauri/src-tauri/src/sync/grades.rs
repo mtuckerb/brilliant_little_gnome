@@ -82,9 +82,42 @@ pub async fn sync(state: &AppState, course_id: &str) -> Result<()> {
         .bind(grade_type)
         .execute(&state.pool)
         .await?;
+
+        // T-011: drain any pending grade overlay for this row.
+        #[cfg(feature = "p2p")]
+        {
+            let key = format!("{}:{}", course_id, obj_id);
+            if let Err(e) = crate::p2p::bridge::drain_pending_overlay(
+                &state.pool,
+                crate::p2p::bridge::OverlayKind::Grade,
+                &key,
+            )
+            .await
+            {
+                tracing::warn!("drain pending grade overlay {}: {}", key, e);
+            }
+        }
     }
 
     // Clear manually_marked_ungraded if a positive numerator now exists.
+    // T-017: capture which rows we're about to flip so we can mirror
+    // each one into Loro AFTER the SQL UPDATE — the reset is a
+    // Class-B write driven by Brightspace data and must broadcast
+    // the same way a user-side toggle does, otherwise paired
+    // devices keep displaying "manually ungraded" for grades that
+    // are now real.
+    #[cfg(feature = "p2p")]
+    let cleared_keys: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT brightspace_id FROM grades \
+         WHERE course_id = ? AND manually_marked_ungraded = 1 \
+           AND numerator IS NOT NULL AND numerator > 0 \
+           AND brightspace_id IS NOT NULL",
+    )
+    .bind(course_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
     sqlx::query(
         "UPDATE grades SET manually_marked_ungraded = 0, updated_at = CURRENT_TIMESTAMP
          WHERE course_id = ? AND manually_marked_ungraded = 1 AND numerator IS NOT NULL AND numerator > 0",
@@ -92,6 +125,23 @@ pub async fn sync(state: &AppState, course_id: &str) -> Result<()> {
     .bind(course_id)
     .execute(&state.pool)
     .await?;
+
+    #[cfg(feature = "p2p")]
+    if let Some(engine) = state.sync_engine() {
+        for bid in cleared_keys {
+            let key = format!("{course_id}:{bid}");
+            if let Err(e) = engine
+                .bridge()
+                .apply_local(crate::p2p::bridge::LocalChange::Grade {
+                    key: key.clone(),
+                    field: crate::p2p::doc::GradeField::ManuallyMarkedUngraded(false),
+                })
+                .await
+            {
+                tracing::warn!("apply_local grade-clear {}: {}", key, e);
+            }
+        }
+    }
 
     Ok(())
 }

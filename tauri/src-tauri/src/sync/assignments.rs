@@ -54,6 +54,22 @@ async fn upsert_folder(state: &AppState, course_id: &str, f: &Value) -> Result<(
     .bind(grade_item_id)
     .execute(&state.pool)
     .await?;
+
+    // T-011: drain any pending assignment overlay queued during initial-pair.
+    #[cfg(feature = "p2p")]
+    {
+        let key = format!("{}:{}", course_id, id);
+        if let Err(e) = crate::p2p::bridge::drain_pending_overlay(
+            &state.pool,
+            crate::p2p::bridge::OverlayKind::Assignment,
+            &key,
+        )
+        .await
+        {
+            tracing::warn!("drain pending assignment overlay {}: {}", key, e);
+        }
+    }
+
     Ok(())
 }
 
@@ -91,5 +107,21 @@ async fn upsert_quiz(state: &AppState, course_id: &str, q: &Value) -> Result<()>
     .bind(grade_item_id)
     .execute(&state.pool)
     .await?;
+
+    // T-011: drain any pending assignment overlay for this quiz row.
+    #[cfg(feature = "p2p")]
+    {
+        let key = format!("{}:{}", course_id, bs_id);
+        if let Err(e) = crate::p2p::bridge::drain_pending_overlay(
+            &state.pool,
+            crate::p2p::bridge::OverlayKind::Assignment,
+            &key,
+        )
+        .await
+        {
+            tracing::warn!("drain pending assignment overlay {}: {}", key, e);
+        }
+    }
+
     Ok(())
 }

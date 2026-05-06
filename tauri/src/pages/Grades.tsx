@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { GradeRow, GradeStats } from "../types";
+import { fmtNum, fmtPct } from "../lib/format";
+import CourseNav from "../components/CourseNav";
 
 function gradeColor(score: number | null): string {
   if (score === null) return "is-light";
@@ -23,8 +25,8 @@ export default function Grades() {
   const load = useCallback(() => {
     if (!id) return;
     api.gradesSummary(id, showHidden).then((d) => {
-      setGrades(d.grades);
-      setStats(d.grade_stats);
+      setGrades(d.rows);
+      setStats(d.stats);
     });
   }, [id, showHidden]);
 
@@ -54,6 +56,7 @@ export default function Grades() {
           <li className="is-active"><a>Grades</a></li>
         </ul>
       </nav>
+      {id && <CourseNav courseId={id} />}
 
       <div className="box">
         <div className="level mb-5">
@@ -69,13 +72,13 @@ export default function Grades() {
                 <div className="level-item has-text-centered px-4">
                   <div>
                     <p className="heading">Current Grade</p>
-                    <p className={`title ${gradeColor(stats.score)}`}>{stats.score !== null ? `${stats.score}%` : "TBD"}</p>
+                    <p className={`title ${gradeColor(stats.score)}`}>{stats.score !== null ? fmtPct(stats.score) : "TBD"}</p>
                   </div>
                 </div>
                 <div className="level-item has-text-centered px-4" style={{ borderLeft: "1px solid #eee" }}>
                   <div>
                     <p className="heading">Confidence</p>
-                    <p className={`title ${confColor(stats.confidence)}`}>{stats.confidence}%</p>
+                    <p className={`title ${confColor(stats.confidence)}`}>{fmtPct(stats.confidence)}</p>
                   </div>
                 </div>
               </>
@@ -91,7 +94,7 @@ export default function Grades() {
 
         {stats.confidence < 100 && stats.remaining_points > 0 && (
           <div className="notification is-light is-info py-2 px-4 is-size-7 mb-4">
-            <strong>Confidence Note:</strong> Only {stats.total_points_possible} of the {stats.all_possible_points} total points graded.
+            <strong>Confidence Note:</strong> Only {fmtNum(stats.total_points_possible)} of the {fmtNum(stats.all_possible_points)} total points graded.
           </div>
         )}
 
@@ -111,18 +114,18 @@ export default function Grades() {
               const rowClass = g.hidden ? "has-background-white-ter has-text-grey-light" : (isActuallyGraded ? "" : "has-background-white-ter has-text-grey-light");
               let result;
               if (isActuallyGraded && g.perc !== null) {
-                result = <span className={`tag ${gradeColor(g.perc)} is-light`} style={{ fontWeight: "bold" }}>{g.perc}%</span>;
+                result = <span className={`tag ${gradeColor(g.perc)} is-light`} style={{ fontWeight: "bold" }}>{fmtPct(g.perc)}</span>;
               } else if (g.is_expected && g.expected_score !== null) {
-                result = <a onClick={() => editExpected(g)} title="Expected score (click to edit)" style={{ fontStyle: "italic", color: "#888", textDecoration: "none", borderBottom: "1px dotted #bbb" }}>~{g.expected_score}%</a>;
+                result = <a onClick={() => editExpected(g)} title="Expected score (click to edit)" style={{ fontStyle: "italic", color: "#888", textDecoration: "none", borderBottom: "1px dotted #bbb" }}>~{fmtPct(g.expected_score)}</a>;
               } else if (!g.manually_marked_ungraded) {
                 result = <a onClick={() => editExpected(g)} title="Set an expected score" className="has-text-grey-light">-</a>;
               } else {
                 result = <>-</>;
               }
 
-              const points = isActuallyGraded ? `${g.numerator} / ${g.denominator ?? "-"}` :
-                g.is_expected ? `${Math.round((g.numerator ?? 0) * 100) / 100} / ${g.denominator ?? g.rel_weight ?? "-"}` :
-                `- / ${g.denominator ?? "-"}`;
+              const points = isActuallyGraded ? `${fmtNum(g.numerator)} / ${fmtNum(g.denominator, 2, "-")}` :
+                g.is_expected ? `${fmtNum(g.numerator ?? 0)} / ${fmtNum(g.denominator ?? g.rel_weight, 2, "-")}` :
+                `- / ${fmtNum(g.denominator, 2, "-")}`;
 
               return (
                 <tr key={g.id} className={rowClass} style={{ opacity: g.hidden ? 0.55 : 1 }}>
@@ -149,7 +152,7 @@ export default function Grades() {
                   <td className="has-text-centered is-size-7">
                     {g.due_date ? new Date(g.due_date).toLocaleDateString([], { month: "short", day: "numeric" }) : "-"}
                   </td>
-                  <td className="has-text-centered is-size-7">{g.rel_weight}%</td>
+                  <td className="has-text-centered is-size-7">{fmtPct(g.rel_weight)}</td>
                   <td className="has-text-centered is-size-7" style={{ fontFamily: "monospace" }}>{points}</td>
                   <td className="has-text-right">{result}</td>
                 </tr>
@@ -163,11 +166,11 @@ export default function Grades() {
                 <td></td>
                 <td className="has-text-centered has-text-weight-bold">100%</td>
                 <td className="has-text-centered">
-                  <span className="is-size-7 has-text-weight-bold">{stats.total_points_earned} / {stats.total_points_possible} pts</span>
+                  <span className="is-size-7 has-text-weight-bold">{fmtNum(stats.total_points_earned)} / {fmtNum(stats.total_points_possible)} pts</span>
                 </td>
                 <td className="has-text-right">
                   <span className={`tag ${gradeColor(stats.score)} is-medium`} style={{ fontWeight: "bold" }}>
-                    {stats.score !== null ? `${stats.score}%` : "TBD"}
+                    {stats.score !== null ? fmtPct(stats.score) : "TBD"}
                   </span>
                 </td>
               </tr>

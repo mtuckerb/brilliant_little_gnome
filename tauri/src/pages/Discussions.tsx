@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { DiscussionForum, DiscussionTopic } from "../types";
+import CourseNav from "../components/CourseNav";
 
 export default function Discussions() {
   const { id: courseId } = useParams<{ id: string }>();
@@ -20,6 +21,7 @@ export default function Discussions() {
 
   return (
     <div>
+      {courseId && <CourseNav courseId={courseId} />}
       <h1 className="title"><i className="fas fa-comments mr-2"></i>Discussions</h1>
       {forums.length === 0 && <p className="has-text-grey">No discussion forums.</p>}
       {forums.map((f) => {
@@ -35,7 +37,9 @@ export default function Discussions() {
                 {ft.map((t) => (
                   <li key={t.id} className="py-1" style={{ borderTop: "1px solid #eee" }}>
                     <div className="is-flex is-justify-content-space-between">
-                      <strong>{t.name}</strong>
+                      <Link to={`/course/${courseId}/discussions/${t.brightspace_id}`}>
+                        <strong>{t.name}</strong>
+                      </Link>
                       <span className="has-text-grey is-size-7">
                         {t.thread_count != null && <>{t.thread_count} threads · </>}
                         {t.post_count != null && <>{t.post_count} posts</>}

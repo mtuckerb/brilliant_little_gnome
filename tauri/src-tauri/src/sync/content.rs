@@ -79,6 +79,37 @@ fn walk_modules<'a>(
                     .bind(i as i64)
                     .execute(&state.pool)
                     .await?;
+
+                    // T-011: drain any pending content_item overlay (is_hidden) for this row.
+                    #[cfg(feature = "p2p")]
+                    if let Err(e) = crate::p2p::bridge::drain_pending_overlay(
+                        &state.pool,
+                        crate::p2p::bridge::OverlayKind::ContentItem,
+                        &tid,
+                    )
+                    .await
+                    {
+                        tracing::warn!("drain pending content_item overlay {}: {}", tid, e);
+                    }
+
+                    // T-017: is_hidden is Class-B (the user can override
+                    // an instructor's hide). Mirror the Brightspace-
+                    // sourced value into Loro so paired devices reach
+                    // the same starting point even if their next
+                    // Brightspace fetch hasn't run yet.
+                    #[cfg(feature = "p2p")]
+                    if let Some(engine) = state.sync_engine() {
+                        if let Err(e) = engine
+                            .bridge()
+                            .apply_local(crate::p2p::bridge::LocalChange::ContentItemHidden {
+                                brightspace_id: tid.clone(),
+                                hidden: is_hidden,
+                            })
+                            .await
+                        {
+                            tracing::warn!("apply_local sync is_hidden {}: {}", tid, e);
+                        }
+                    }
                 }
             }
 

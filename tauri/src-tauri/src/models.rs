@@ -125,6 +125,8 @@ pub struct UserPreferences {
     pub brightspace_uid: Option<String>,
     pub brightspace_user_id: Option<String>,
     pub last_login_at: Option<String>,
+    #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
+    pub calendar_show_empty_days: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

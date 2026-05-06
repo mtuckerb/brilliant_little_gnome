@@ -8,6 +8,12 @@ pub mod sync;
 pub mod rest;
 pub mod content;
 pub mod discussions;
+pub mod overview;
+pub mod assignment_detail;
+pub mod downloads;
+
+#[cfg(feature = "p2p")]
+pub mod sync_p2p;
 
 use crate::error::Result;
 use crate::state::AppState;

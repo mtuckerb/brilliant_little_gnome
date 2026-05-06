@@ -11,9 +11,14 @@ pub mod rest_api;
 pub mod state;
 pub mod sync;
 
+#[cfg(feature = "p2p")]
+pub mod p2p;
+
 use state::AppState;
 use std::sync::Arc;
 use tauri::Manager;
+#[cfg(feature = "p2p")]
+use tauri::{RunEvent, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -60,6 +65,7 @@ pub fn run() {
             commands::courses::update_course_color,
             commands::courses::update_course_units,
             commands::courses::update_course_target_grade,
+            commands::courses::update_course_end_of_week,
             commands::courses::drop_course,
             commands::courses::refresh_course,
             // Grades
@@ -73,6 +79,12 @@ pub fn run() {
             commands::assignments::toggle_assignment_complete,
             commands::assignments::toggle_assignment_optional,
             commands::assignments::update_assignment_due_date,
+            commands::assignments::create_synthetic_assignment,
+            commands::assignments::delete_assignment,
+            commands::assignment_detail::get_assignment_detail,
+            commands::downloads::download_topic_file,
+            commands::downloads::download_module_archive,
+            commands::downloads::download_course_archive,
             // Notifications
             commands::notifications::list_notifications,
             commands::notifications::mark_notification_read,
@@ -87,11 +99,72 @@ pub fn run() {
             // Discussions
             commands::discussions::list_forums,
             commands::discussions::list_topics,
+            commands::discussions::list_topic_posts,
+            // Overview / syllabus
+            commands::overview::get_course_overview,
+            commands::overview::fetch_course_overview_attachment,
             // REST API
             commands::rest::rest_api_start,
             commands::rest::rest_api_stop,
             commands::rest::rest_api_status,
+            // P2P device-to-device sync (T-014). Gated on the `p2p`
+            // feature so the no-network build doesn't expose a UI
+            // surface that has no engine to back it.
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_status,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_enable,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_disable,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_pairing_qr,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_consume_pairing,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_rotate,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_storage_stats,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, _event| {
+            // T-020: shut the sync engine down on graceful close so the
+            // final checkpoint lands and the WAL stays minimal. Both
+            // ExitRequested (Cmd+Q / programmatic) and the last
+            // window's CloseRequested go through this path; calling
+            // shutdown() twice is harmless because the engine is taken
+            // out of the lock on the first hit.
+            //
+            // kill -9 / OOM kills bypass this hook entirely — recovery
+            // is handled by the WAL replay path on next startup
+            // (covered by T-005's `append_then_load_replays_updates`
+            // and the engine integration test).
+            #[cfg(feature = "p2p")]
+            {
+                let should_shutdown = matches!(
+                    _event,
+                    RunEvent::ExitRequested { .. }
+                        | RunEvent::WindowEvent {
+                            event: WindowEvent::CloseRequested { .. },
+                            ..
+                        }
+                );
+                if should_shutdown {
+                    if let Some(state) = _app_handle.try_state::<Arc<AppState>>() {
+                        let engine = state.sync.write().take();
+                        if let Some(engine) = engine {
+                            // The event-loop callback is sync; block briefly
+                            // to let shutdown await the checkpoint. The
+                            // worst case is a few hundred ms — acceptable
+                            // for graceful close.
+                            tauri::async_runtime::block_on(async {
+                                if let Err(e) = engine.shutdown().await {
+                                    tracing::warn!("p2p shutdown on close: {e}");
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        });
 }

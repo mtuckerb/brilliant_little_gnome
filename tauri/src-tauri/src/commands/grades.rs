@@ -90,6 +90,10 @@ pub async fn grades_summary(state: AppStateArg<'_>, course_id: String) -> Result
 pub async fn toggle_grade_hidden(state: AppStateArg<'_>, id: i64) -> Result<()> {
     sqlx::query("UPDATE grades SET hidden = 1 - hidden, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         .bind(id).execute(&state.pool).await?;
+    #[cfg(feature = "p2p")]
+    if let Some((key, hidden)) = read_grade_key_and_bool(&state, id, "hidden").await {
+        push_grade_field(&state, key, crate::p2p::doc::GradeField::Hidden(hidden)).await;
+    }
     Ok(())
 }
 
@@ -97,6 +101,17 @@ pub async fn toggle_grade_hidden(state: AppStateArg<'_>, id: i64) -> Result<()> 
 pub async fn toggle_grade_ungraded(state: AppStateArg<'_>, id: i64) -> Result<()> {
     sqlx::query("UPDATE grades SET manually_marked_ungraded = 1 - manually_marked_ungraded, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         .bind(id).execute(&state.pool).await?;
+    #[cfg(feature = "p2p")]
+    if let Some((key, marked)) =
+        read_grade_key_and_bool(&state, id, "manually_marked_ungraded").await
+    {
+        push_grade_field(
+            &state,
+            key,
+            crate::p2p::doc::GradeField::ManuallyMarkedUngraded(marked),
+        )
+        .await;
+    }
     Ok(())
 }
 
@@ -104,6 +119,15 @@ pub async fn toggle_grade_ungraded(state: AppStateArg<'_>, id: i64) -> Result<()
 pub async fn toggle_grade_extra_credit(state: AppStateArg<'_>, id: i64) -> Result<()> {
     sqlx::query("UPDATE grades SET is_extra_credit = 1 - is_extra_credit, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         .bind(id).execute(&state.pool).await?;
+    #[cfg(feature = "p2p")]
+    if let Some((key, extra)) = read_grade_key_and_bool(&state, id, "is_extra_credit").await {
+        push_grade_field(
+            &state,
+            key,
+            crate::p2p::doc::GradeField::IsExtraCredit(extra),
+        )
+        .await;
+    }
     Ok(())
 }
 
@@ -111,5 +135,73 @@ pub async fn toggle_grade_extra_credit(state: AppStateArg<'_>, id: i64) -> Resul
 pub async fn set_expected_score(state: AppStateArg<'_>, id: i64, expected: Option<f64>) -> Result<()> {
     sqlx::query("UPDATE grades SET expected_score = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         .bind(expected).bind(id).execute(&state.pool).await?;
+    #[cfg(feature = "p2p")]
+    if let Some(key) = read_grade_key(&state, id).await {
+        push_grade_field(
+            &state,
+            key,
+            crate::p2p::doc::GradeField::ExpectedScore(expected),
+        )
+        .await;
+    }
     Ok(())
+}
+
+// ---- p2p sync helpers (feature-gated) ------------------------------------
+
+/// Read back the freshly-written value of a single boolean column on
+/// `grades` so we can mirror the canonical state into Loro. Toggles
+/// flip via `1 - col`, so the caller can't compute the new value from
+/// the input — the DB read is the source of truth.
+#[cfg(feature = "p2p")]
+async fn read_grade_key_and_bool(
+    state: &AppStateArg<'_>,
+    id: i64,
+    col: &str,
+) -> Option<(String, bool)> {
+    // Build the column name into the query string — sqlx doesn't bind
+    // identifiers, but `col` is a hard-coded string from each command,
+    // so there's no injection surface.
+    let q = format!(
+        "SELECT course_id, brightspace_id, {col} FROM grades WHERE id = ?"
+    );
+    let row: Option<(String, Option<String>, i64)> =
+        sqlx::query_as(&q).bind(id).fetch_optional(&state.pool).await.ok().flatten();
+    let (course_id, bid, val) = row?;
+    let bid = bid?;
+    Some((format!("{course_id}:{bid}"), val != 0))
+}
+
+/// Same as `read_grade_key_and_bool` but only fetches the composite
+/// key — used when the new value comes from the command's own input
+/// (e.g. set_expected_score).
+#[cfg(feature = "p2p")]
+async fn read_grade_key(state: &AppStateArg<'_>, id: i64) -> Option<String> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT course_id, brightspace_id FROM grades WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+    let (course_id, bid) = row?;
+    Some(format!("{course_id}:{}", bid?))
+}
+
+#[cfg(feature = "p2p")]
+async fn push_grade_field(
+    state: &AppStateArg<'_>,
+    key: String,
+    field: crate::p2p::doc::GradeField,
+) {
+    if let Some(engine) = state.sync_engine() {
+        if let Err(e) = engine
+            .bridge()
+            .apply_local(crate::p2p::bridge::LocalChange::Grade { key: key.clone(), field })
+            .await
+        {
+            tracing::warn!("apply_local grade {}: {}", key, e);
+        }
+    }
 }

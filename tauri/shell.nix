@@ -1,20 +1,29 @@
 # Dev shell for the Tauri port. Usage: `nix-shell` from this directory.
-# Cross-platform: works on NixOS (Linux) and nix-darwin (macOS). Tauri's
-# webview backend pulls different system libs per OS, so we gate them on
-# `stdenv.isLinux` / `stdenv.isDarwin`.
-{ pkgs ? import <nixpkgs> {} }:
+# Cross-platform: NixOS (Linux) + nix-darwin (macOS). Pulls a fixed recent
+# stable Rust via oxalica/rust-overlay so both machines agree on the
+# toolchain regardless of which channel the host nixpkgs is on.
 
 let
+  # Pin nixpkgs explicitly so we don't depend on the host having a
+  # `nixpkgs` channel registered (the macOS multi-user installer skips
+  # that step by default, which makes `<nixpkgs>` resolution fail).
+  nixpkgsTarball = fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz";
+  };
+  rustOverlay = import (fetchTarball {
+    url = "https://github.com/oxalica/rust-overlay/archive/master.tar.gz";
+  });
+  pkgs = import nixpkgsTarball { overlays = [ rustOverlay ]; };
   inherit (pkgs) lib stdenv;
+
+  # Single source of truth for the toolchain. Bump as needed.
+  rustToolchain = pkgs.rust-bin.stable."1.90.0".default.override {
+    extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
+  };
 in
 pkgs.mkShell {
   buildInputs = with pkgs; [
-    # Rust toolchain
-    cargo
-    rustc
-    rustfmt
-    clippy
-    rust-analyzer
+    rustToolchain
 
     # Node + build tools (cross-platform)
     nodejs_20
@@ -34,7 +43,6 @@ pkgs.mkShell {
     atk
     gcc
   ] ++ lib.optionals stdenv.isDarwin [
-    # Tauri/macOS uses the system WebKit, but Rust crates often need these.
     libiconv
     darwin.apple_sdk.frameworks.WebKit
     darwin.apple_sdk.frameworks.AppKit

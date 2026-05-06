@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import SyncPanel from "../components/SyncPanel";
 import type { UserPreferences } from "../types";
 
 export default function Settings() {
@@ -42,6 +43,68 @@ export default function Settings() {
         <div className="field">
           <label className="label">Time zone (IANA)</label>
           <input className="input" value={prefs.time_zone ?? ""} onChange={(e) => update("time_zone", e.target.value)} placeholder="America/New_York" />
+        </div>
+        <div className="field">
+          <label className="label">Default semester</label>
+          <input className="input" value={prefs.default_semester ?? ""} onChange={(e) => update("default_semester", e.target.value)} placeholder="2026 Spring" />
+          <p className="help">Used as the active filter when one is needed and none is selected.</p>
+        </div>
+      </div>
+
+      <div className="box">
+        <h2 className="title is-5">Cumulative GPA</h2>
+        <p className="is-size-7 has-text-grey mb-3">
+          Optional pre-existing record so the app can roll new course grades into a running cumulative GPA.
+        </p>
+        <div className="columns">
+          <div className="column">
+            <label className="label is-small">Historic GPA</label>
+            <input
+              className="input"
+              type="number"
+              step={0.01}
+              min={0}
+              max={4}
+              defaultValue={prefs.historic_gpa ?? ""}
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                update("historic_gpa", v === "" ? null : parseFloat(v));
+              }}
+              placeholder="3.50"
+            />
+          </div>
+          <div className="column">
+            <label className="label is-small">Historic units</label>
+            <input
+              className="input"
+              type="number"
+              step={0.5}
+              min={0}
+              defaultValue={prefs.historic_units ?? ""}
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                update("historic_units", v === "" ? null : parseFloat(v));
+              }}
+              placeholder="60"
+            />
+          </div>
+        </div>
+      </div>
+
+      <SyncPanel />
+
+      <div className="box">
+        <h2 className="title is-5">Calendar</h2>
+        <div className="field">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={prefs.calendar_show_empty_days}
+              onChange={(e) => update("calendar_show_empty_days", e.target.checked)}
+            />{" "}
+            Show empty-day placeholders
+          </label>
+          <p className="help">Render a thin separator for each day of the week, even days with no assignments.</p>
         </div>
       </div>
 

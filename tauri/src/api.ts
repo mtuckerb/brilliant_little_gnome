@@ -13,6 +13,11 @@ import type {
   ContentItem,
   DiscussionForum,
   DiscussionTopic,
+  DiscussionPost,
+  AssignmentDetailPayload,
+  P2pStatus,
+  PairingQr,
+  StorageStats,
 } from "./types";
 
 // All backend access goes through these wrappers. Each one corresponds to a
@@ -39,17 +44,33 @@ export const api = {
     invoke<void>("reorder_courses", { orderedIds }),
   updateCourseColor: (id: string, color: string) =>
     invoke<void>("update_course_color", { id, color }),
-  updateCourseUnits: (id: string, units: number) =>
+  updateCourseUnits: (id: string, units: number | null) =>
     invoke<void>("update_course_units", { id, units }),
-  updateCourseTargetGrade: (id: string, target: number) =>
+  updateCourseTargetGrade: (id: string, target: number | null) =>
     invoke<void>("update_course_target_grade", { id, target }),
+  updateCourseEndOfWeek: (id: string, day: number) =>
+    invoke<void>("update_course_end_of_week", { id, day }),
   dropCourse: (id: string, status: string) =>
     invoke<void>("drop_course", { id, status }),
   refreshCourse: (id: string) => invoke<void>("refresh_course", { id }),
 
+  // Overview / syllabus
+  getCourseOverview: (id: string) =>
+    invoke<{
+      description_html: string | null;
+      has_attachment: boolean;
+      attachment_name: string | null;
+      attachment_url: string | null;
+    }>("get_course_overview", { courseId: id }),
+  fetchCourseOverviewAttachment: (id: string) =>
+    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
+      "fetch_course_overview_attachment",
+      { courseId: id },
+    ),
+
   // Grades
   gradesSummary: (courseId: string, showHidden = false) =>
-    invoke<{ grades: GradeRow[]; grade_stats: GradeStats }>("grades_summary", {
+    invoke<{ rows: GradeRow[]; stats: GradeStats }>("grades_summary", {
       courseId,
       showHidden,
     }),
@@ -71,6 +92,42 @@ export const api = {
     invoke<void>("toggle_assignment_optional", { id }),
   updateAssignmentDueDate: (id: number, dueDate: string | null) =>
     invoke<void>("update_assignment_due_date", { id, dueDate }),
+  createSyntheticAssignment: (
+    courseId: string,
+    name: string,
+    dueDate: string | null,
+    description: string | null,
+  ) =>
+    invoke<Assignment>("create_synthetic_assignment", {
+      courseId,
+      name,
+      dueDate,
+      description,
+    }),
+  deleteAssignment: (id: number) =>
+    invoke<void>("delete_assignment", { id }),
+  getAssignmentDetail: (courseId: string, assignmentId: string) =>
+    invoke<AssignmentDetailPayload>("get_assignment_detail", {
+      courseId,
+      assignmentId,
+    }),
+
+  // Downloads (single file or zipped archive returned as base64)
+  downloadTopicFile: (courseId: string, topicId: string) =>
+    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
+      "download_topic_file",
+      { courseId, topicId },
+    ),
+  downloadModuleArchive: (courseId: string, moduleId: string) =>
+    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
+      "download_module_archive",
+      { courseId, moduleId },
+    ),
+  downloadCourseArchive: (courseId: string) =>
+    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
+      "download_course_archive",
+      { courseId },
+    ),
 
   // Notifications
   listNotifications: (params: {
@@ -85,9 +142,9 @@ export const api = {
 
   // Sync
   syncStatus: () => invoke<SyncStatus>("sync_status"),
-  syncAll: (full: boolean) => invoke<void>("sync_all", { full }),
-  syncCourse: (id: string, full: boolean) =>
-    invoke<void>("sync_course", { id, full }),
+  syncAll: (force: boolean) => invoke<void>("sync_all", { force }),
+  syncCourse: (id: string) =>
+    invoke<void>("sync_course", { courseId: id }),
 
   // Content
   listModules: (courseId: string) =>
@@ -100,12 +157,27 @@ export const api = {
     invoke<DiscussionForum[]>("list_forums", { courseId }),
   listTopics: (courseId: string) =>
     invoke<DiscussionTopic[]>("list_topics", { courseId }),
+  listTopicPosts: (courseId: string, topicId: string) =>
+    invoke<DiscussionPost[]>("list_topic_posts", { courseId, topicId }),
 
   // REST API toggle
   restApiStart: () => invoke<{ port: number; key: string }>("rest_api_start"),
   restApiStop: () => invoke<void>("rest_api_stop"),
   restApiStatus: () =>
     invoke<{ running: boolean; port: number | null }>("rest_api_status"),
+
+  // P2P device-to-device sync (T-014). Only callable when the
+  // backend is built with the `p2p` feature; otherwise the IPC
+  // command is absent and `invoke` will reject. The Settings panel
+  // gracefully treats that rejection as "p2p not available".
+  p2pStatus: () => invoke<P2pStatus>("p2p_status"),
+  p2pEnable: () => invoke<P2pStatus>("p2p_enable"),
+  p2pDisable: () => invoke<void>("p2p_disable"),
+  p2pPairingQr: () => invoke<PairingQr>("p2p_pairing_qr"),
+  p2pConsumePairing: (encoded: string) =>
+    invoke<P2pStatus>("p2p_consume_pairing", { args: { encoded } }),
+  p2pRotate: () => invoke<P2pStatus>("p2p_rotate"),
+  p2pStorageStats: () => invoke<StorageStats>("p2p_storage_stats"),
 };
 
 // Tauri-event subscriptions (replacing the Ruby SSE stream).

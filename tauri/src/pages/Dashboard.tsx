@@ -51,9 +51,13 @@ export default function Dashboard() {
               {list.map((c) => (
                 <tr key={c.org_unit_id} className="course-row">
                   <td>
-                    <Link to={`/course/${c.org_unit_id}`} className="has-text-weight-bold">
+                    <Link
+                      to={`/course/${c.org_unit_id}`}
+                      className="has-text-weight-bold"
+                      style={{ color: c.custom_color || undefined }}
+                    >
                       {c.is_pinned && <i className="fas fa-thumbtack has-text-warning mr-2"></i>}
-                      {c.name}
+                      {c.code ? `${c.code} - ${c.name}` : c.name}
                     </Link>
                   </td>
                   <td className="has-text-right">
