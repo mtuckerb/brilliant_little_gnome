@@ -16,9 +16,23 @@ let
   pkgs = import nixpkgsTarball { overlays = [ rustOverlay ]; };
   inherit (pkgs) lib stdenv;
 
+  # Mobile cross-compile targets. iOS targets only make sense on Darwin (need
+  # Xcode at build time); Android targets are added on both hosts since the
+  # NDK can be installed separately on either. rust-overlay just downloads
+  # the precompiled stdlib for these triples — actual builds still require
+  # the platform SDK to be present.
+  iosTargets = [ "aarch64-apple-ios" "aarch64-apple-ios-sim" ];
+  androidTargets = [
+    "aarch64-linux-android"
+    "armv7-linux-androideabi"
+    "i686-linux-android"
+    "x86_64-linux-android"
+  ];
+
   # Single source of truth for the toolchain. Bump as needed.
   rustToolchain = pkgs.rust-bin.stable."1.90.0".default.override {
     extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
+    targets = androidTargets ++ lib.optionals stdenv.isDarwin iosTargets;
   };
 in
 pkgs.mkShell {
