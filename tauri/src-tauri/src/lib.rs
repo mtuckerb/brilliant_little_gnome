@@ -29,8 +29,18 @@ pub fn run() {
         )
         .init();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init());
+
+    // Mobile-only: native QR scanner for the device-pairing flow. Desktop
+    // builds rely on the manual-paste fallback in SyncPanel.
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    {
+        builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+    }
+
+    builder
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {

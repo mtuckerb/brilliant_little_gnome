@@ -83,6 +83,11 @@ zeroize = "=1.8.2"
 # requires Rust 1.88.
 keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "linux-native"], optional = true }
 
+# Mobile-only: native camera-based QR scanner used by Settings → Sync to
+# pair devices. Desktop builds fall back to the existing manual paste box.
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+tauri-plugin-barcode-scanner = "2"
+
 [dev-dependencies]
 # Used by p2p::persistence integration tests for ephemeral data dirs.
 tempfile = "=3.14.0"

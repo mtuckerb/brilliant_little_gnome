@@ -222,6 +222,41 @@ export default function SyncPanel() {
     }
   }
 
+  // Mobile-only camera scanner. Dynamic-imports the barcode plugin so
+  // desktop bundles don't fail at load time when the plugin's IPC
+  // commands aren't registered. On any error (no camera, denied, or
+  // desktop platform) we surface the cause and pop open the paste form
+  // as the universal fallback.
+  async function scanQr() {
+    setBusy(true);
+    try {
+      const mod = await import("@tauri-apps/plugin-barcode-scanner");
+      let perm = await mod.checkPermissions();
+      if (perm === "prompt") {
+        perm = await mod.requestPermissions();
+      }
+      if (perm !== "granted") {
+        toast.show("Camera permission denied.", "is-warning");
+        setPasteOpen(true);
+        return;
+      }
+      const result = await mod.scan({
+        windowed: false,
+        formats: [mod.Format.QRCode],
+      });
+      if (!result?.content) return;
+      const s = await api.p2pConsumePairing(result.content);
+      setStatus(s);
+      toast.show("Paired — initial sync starting.", "is-success");
+    } catch (e) {
+      console.warn("QR scan unavailable, falling back to paste:", e);
+      toast.show(`Scanner unavailable: ${e}`, "is-warning");
+      setPasteOpen(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function rotate() {
     if (
       !window.confirm(
@@ -289,11 +324,20 @@ export default function SyncPanel() {
             </button>
             <button
               className="button"
+              onClick={scanQr}
+              disabled={busy}
+              title="Mobile: use the camera. Desktop falls back to manual paste."
+            >
+              <span className="icon"><i className="fas fa-camera" /></span>
+              <span>Scan pairing QR</span>
+            </button>
+            <button
+              className="button"
               onClick={() => setPasteOpen((v) => !v)}
               disabled={busy}
             >
               <span className="icon"><i className="fas fa-link" /></span>
-              <span>Pair this device</span>
+              <span>Paste pairing data</span>
             </button>
           </div>
 
