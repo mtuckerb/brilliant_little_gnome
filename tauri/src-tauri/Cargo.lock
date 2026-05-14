@@ -676,6 +676,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "reqwest_cookie_store",
+ "rustls",
  "scraper",
  "serde",
  "serde_json",

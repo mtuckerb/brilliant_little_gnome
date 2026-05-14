@@ -29,6 +29,12 @@ pub fn run() {
         )
         .init();
 
+    // rustls 0.23 (used by reqwest 0.13 via iroh + tauri) refuses to make
+    // TLS connections until a CryptoProvider is installed. Doing it here
+    // before any HTTP client is constructed avoids the "No provider set"
+    // panic. Idempotent — install_default returns Err if already set.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init());
