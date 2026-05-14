@@ -1,0 +1,46 @@
+# Cargo config — Apple toolchain overrides for builds out of a Nix shell.
+#
+# Nix's wrapped clang injects macOS-host flags (-mmacos-version-min,
+# NIX_LDFLAGS, NIX_CFLAGS) that conflict with iOS cross-compiles and
+# also disappear when xcodebuild spawns the prebuild script with a
+# stripped environment. The simplest fix is to delegate Apple-platform
+# linking and C compilation to Apple's own toolchain at /usr/bin, which
+# knows the iOS SDK natively and has libiconv at /usr/lib/libiconv.tbd.
+#
+# Rust itself still comes from the Nix shell (or rustup outside it) —
+# we're only overriding the C-side tools cargo invokes via cc-rs and
+# rustc's -C linker= flag.
+
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/clang"
+
+[target.x86_64-apple-darwin]
+linker = "/usr/bin/clang"
+
+[target.aarch64-apple-ios]
+linker = "/usr/bin/clang"
+
+[target.aarch64-apple-ios-sim]
+linker = "/usr/bin/clang"
+
+[target.x86_64-apple-ios]
+linker = "/usr/bin/clang"
+
+# cc-rs (used by build.rs in ring, openssl-sys, etc.) consults these
+# per-target env vars to decide which C compiler to invoke.
+[env]
+CC_aarch64-apple-darwin = "/usr/bin/clang"
+CXX_aarch64-apple-darwin = "/usr/bin/clang++"
+AR_aarch64-apple-darwin = "/usr/bin/ar"
+CC_x86_64-apple-darwin = "/usr/bin/clang"
+CXX_x86_64-apple-darwin = "/usr/bin/clang++"
+AR_x86_64-apple-darwin = "/usr/bin/ar"
+CC_aarch64-apple-ios = "/usr/bin/clang"
+CXX_aarch64-apple-ios = "/usr/bin/clang++"
+AR_aarch64-apple-ios = "/usr/bin/ar"
+CC_aarch64-apple-ios-sim = "/usr/bin/clang"
+CXX_aarch64-apple-ios-sim = "/usr/bin/clang++"
+AR_aarch64-apple-ios-sim = "/usr/bin/ar"
+CC_x86_64-apple-ios = "/usr/bin/clang"
+CXX_x86_64-apple-ios = "/usr/bin/clang++"
+AR_x86_64-apple-ios = "/usr/bin/ar"

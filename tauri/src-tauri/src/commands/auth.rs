@@ -1,8 +1,11 @@
 use super::AppStateArg;
 use crate::error::{AppError, Result};
 use crate::models::AuthStatus;
+use tauri::AppHandle;
+#[cfg(desktop)]
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+#[cfg(desktop)]
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[tauri::command]
 pub async fn auth_status(state: AppStateArg<'_>) -> Result<AuthStatus> {
@@ -46,6 +49,13 @@ pub async fn clear_auth(state: AppStateArg<'_>) -> Result<()> {
 /// the runtime cookie store for the auth pair (`d2lSessionVal` +
 /// `d2lSecureSessionVal`). When both arrive, persist them via
 /// `store_credentials`, emit `auth-captured`, and close the window.
+///
+/// Desktop-only: mobile Tauri runs a single webview and doesn't expose
+/// `set_focus` / `title` / `close` on `WebviewWindow`. The mobile sign-in
+/// flow needs to happen in-app or via the system browser, which is a
+/// separate piece of work — for now the mobile stub returns an error so
+/// the JS layer can route around it.
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn open_login_window(app: AppHandle, host: String) -> Result<()> {
     let host = host.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_string();
@@ -114,4 +124,12 @@ pub async fn open_login_window(app: AppHandle, host: String) -> Result<()> {
     });
 
     Ok(())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn open_login_window(_app: AppHandle, _host: String) -> Result<()> {
+    Err(AppError::Other(
+        "open_login_window is desktop-only — the mobile build needs an in-app sign-in flow".into(),
+    ))
 }
