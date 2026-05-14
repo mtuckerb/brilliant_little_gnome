@@ -16,6 +16,13 @@ let
   pkgs = import nixpkgsTarball { overlays = [ rustOverlay ]; };
   inherit (pkgs) lib stdenv;
 
+  # `xcodegen` only landed in nixpkgs unstable (not in 24.05 or 24.11), so
+  # we pin a separate unstable just for that single package and pull the
+  # rest of the toolchain from the stable pin above.
+  pkgsUnstable = import (fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/nixos-unstable.tar.gz";
+  }) {};
+
   # Mobile cross-compile targets. iOS targets only make sense on Darwin (need
   # Xcode at build time); Android targets are added on both hosts since the
   # NDK can be installed separately on either. rust-overlay just downloads
@@ -65,6 +72,16 @@ pkgs.mkShell {
     darwin.apple_sdk.frameworks.CoreServices
     darwin.apple_sdk.frameworks.CoreFoundation
     darwin.apple_sdk.frameworks.Carbon
+
+    # iOS mobile build helpers used by `tauri ios init/dev/build`. Tauri's
+    # mobile init shells out to each of these by name; if any are missing it
+    # tries to `brew install` them (which fails inside a Nix shell because
+    # `brew` isn't on PATH). xcodegen + ios-deploy live in unstable only.
+    pkgsUnstable.xcodegen
+    pkgsUnstable.ios-deploy
+    cocoapods
+    libimobiledevice
+    ideviceinstaller
   ];
 
   shellHook = ''
