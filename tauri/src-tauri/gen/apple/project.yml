@@ -68,11 +68,20 @@ targets:
       base:
         ENABLE_BITCODE: false
         ARCHS: [arm64]
-        VALID_ARCHS: arm64 
+        VALID_ARCHS: arm64
         LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
         LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
         EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+        # `system_configuration::network_configuration` (a transitive dep
+        # via iroh → hickory-resolver) declares extern "C" CFStringRef
+        # constants like `_kSCNetworkInterfaceTypeFireWire` that exist in
+        # macOS's SystemConfiguration.framework but not iOS's. The
+        # functions that reference them aren't called on iOS — hickory
+        # uses dynamic_store, not network_configuration — so we tell ld
+        # to leave unresolved symbols for runtime lookup. They'd only
+        # crash the app if actually invoked, which they aren't.
+        OTHER_LDFLAGS: $(inherited) -Wl,-undefined,dynamic_lookup
       groups: [app]
     dependencies:
       - framework: libapp.a
