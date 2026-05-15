@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:ios": "tauri ios dev --host 127.0.0.1",
+    "dev:ios:remote": "BRILLIANT_TAURI_REMOTE_DEV=1 tauri ios dev --force-ip-prompt",
+    "test:config": "node scripts/assert-dev-host-config.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
