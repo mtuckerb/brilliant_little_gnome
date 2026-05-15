@@ -31,6 +31,14 @@ npm install
 npm run tauri dev
 ```
 
+## iOS / iPadOS
+
+Use `npm run dev:ios` or `npm run dev:ios:remote` only for development; those commands intentionally load the WebView from the Vite dev server so hot module reload works.
+
+Use `npm run ios:build` for a standalone iPhone/iPad artifact, or `npm run ios:open` to open the generated Xcode project for signing, archiving, and installing a release-style build. Release builds embed `dist/` assets via `frontendDist` and do not contact the Vite dev server on launch.
+
+See [`../docs/ios.md`](../docs/ios.md) for the full dev-vs-release flow and offline validation checklist.
+
 ## Layout
 
 ```

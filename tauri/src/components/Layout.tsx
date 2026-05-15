@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { AuthStatus, SyncStatus } from "../types";
 import { useReauthenticate } from "../hooks/useReauthenticate";
+import { devServerHost } from "../buildInfo";
 
 interface Props {
   auth: AuthStatus;
@@ -14,6 +15,7 @@ export default function Layout({ auth, sync, onAuthChange, children }: Props) {
   const loc = useLocation();
   const tabActive = (path: string) => loc.pathname.startsWith(path) ? "has-text-primary" : "";
   const reauth = useReauthenticate(auth.host, onAuthChange);
+  const devHost = devServerHost();
   const authTitle = auth.degraded
     ? "Session expired — click to re-authenticate"
     : `Authenticated${auth.host ? ` to ${auth.host}` : ""}${auth.uid ? ` as ${auth.uid}` : ""}`;
@@ -51,6 +53,14 @@ export default function Layout({ auth, sync, onAuthChange, children }: Props) {
             </Link>
           </div>
           <div className="navbar-item">
+            {devHost && (
+              <span
+                className="tag is-warning is-light mr-3 dev-server-badge"
+                title={`This development build is loading its UI from ${devHost}`}
+              >
+                Dev server: {devHost}
+              </span>
+            )}
             <button
               type="button"
               className={`button is-white mr-3 ${reauth.busy ? "is-loading" : ""}`}
