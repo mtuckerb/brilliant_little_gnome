@@ -31,6 +31,22 @@ npm install
 npm run tauri dev
 ```
 
+## Fresh worktree frontend checks
+
+Fresh agent worktrees do not include `tauri/node_modules`, so React/Vite type
+resolution fails until the frontend dependencies are installed. The common npm
+scripts are self-healing: `npm run build`, `npm run dev`, and `npm run tauri`
+run `npm run ensure:deps` first, which installs dependencies when
+`node_modules` is missing.
+
+For explicit setup or CI verification, run:
+
+```sh
+cd tauri/
+npm install
+npm run build
+```
+
 ## Reproducible Rust verification
 
 Run Rust checks from the Nix shell so `pkg-config` can find the GTK/glib/pango/cairo/atk stack required by Tauri's Linux dependencies:
