@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import type {
-  Assignment,
-  AssignmentAttachment,
-  AssignmentDetailPayload,
-  Course,
+import {
+  displayCourseName,
+  type Assignment,
+  type AssignmentAttachment,
+  type AssignmentDetailPayload,
+  type Course,
 } from "../types";
 import { fmtNum } from "../lib/format";
 import CourseNav from "../components/CourseNav";
@@ -87,7 +88,7 @@ export default function AssignmentDetail() {
       <nav className="breadcrumb mb-3">
         <ul>
           <li><Link to="/dashboard">Dashboard</Link></li>
-          {course && <li><Link to={`/course/${course.org_unit_id}`}>{course.code || course.name}</Link></li>}
+          {course && <li><Link to={`/course/${course.org_unit_id}`}>{course.code || displayCourseName(course)}</Link></li>}
           <li><Link to={`/course/${id}/assignments`}>Assignments</Link></li>
           <li className="is-active"><a>{a.name}</a></li>
         </ul>

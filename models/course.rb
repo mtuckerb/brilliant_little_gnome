@@ -7,6 +7,10 @@ class Course < ActiveRecord::Base
   has_many :discussion_forums, foreign_key: :course_id, primary_key: :org_unit_id
   has_many :notifications, foreign_key: :course_id, primary_key: :org_unit_id
 
+  def display_name
+    custom_name.presence || name
+  end
+
   def end_of_week_date(reference_date = Time.current)
     # end_of_week_day is 0 for Sunday, 1 for Monday, etc.
     # ActiveSupport's end_of_week defaults to Sunday (0)
@@ -34,6 +38,7 @@ class Course < ActiveRecord::Base
       data['last_accessed_at'] = last_accessed_at.in_time_zone.iso8601
     end
     data['status'] = status
+    data['display_name'] = display_name
     data['is_dropped'] = dropped?
     data
   end

@@ -308,8 +308,8 @@
                     ${c.is_pinned ? `<div class="is-pulled-right"><span class="tag is-warning is-light is-small"><i class="fas fa-thumbtack"></i></span></div>` : ''}
                     
                     <div class="mb-2">
-                      <h3 class="title is-6 mb-1" style="line-height: 1.2;">${c.short_name || c.name}</h3>
-                      ${c.prefix ? `<div><span class="px-1" style="border-radius: 3px; font-size: 0.7rem; font-weight: bold; ${c.pill_style || getCoursePillStyle(c.name)}">${c.prefix}</span></div>` : ''}
+                      <h3 class="title is-6 mb-1" style="line-height: 1.2;">${c.short_name || c.display_name || c.name}</h3>
+                      ${c.prefix ? `<div><span class="px-1" style="border-radius: 3px; font-size: 0.7rem; font-weight: bold; ${c.pill_style || getCoursePillStyle(c.display_name || c.name)}">${c.prefix}</span></div>` : ''}
                     </div>
                     <div class="tags mb-1">
                       ${c.semester ? `<span class="tag is-white is-small has-text-grey" style="font-size: 0.65rem; padding-left: 0;">${c.semester}</span>` : ''}

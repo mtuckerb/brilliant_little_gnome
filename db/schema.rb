@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_02_17_000000) do
+ActiveRecord::Schema[7.2].define(version: 2026_05_15_163600) do
   create_table "api_caches", force: :cascade do |t|
     t.string "path"
     t.text "data"
@@ -88,6 +88,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_02_17_000000) do
   create_table "courses", force: :cascade do |t|
     t.string "org_unit_id"
     t.string "name"
+    t.string "custom_name"
     t.string "code"
     t.string "semester"
     t.datetime "last_accessed_at", precision: nil

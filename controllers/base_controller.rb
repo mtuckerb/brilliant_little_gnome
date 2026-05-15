@@ -147,7 +147,7 @@ class BaseController < Sinatra::Base
     if @course_id.present?
       @course_id = @course_id.to_s.gsub(/[^0-9]/, '') if @course_id.to_s.match?(/^\d+$/)
       @course ||= Course.find_by(org_unit_id: @course_id.to_s)
-      @course_name = @course&.name || "Course #{@course_id}"
+      @course_name = @course&.display_name || "Course #{@course_id}"
     end
 
     # Config Check

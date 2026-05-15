@@ -44,6 +44,8 @@ export const api = {
     invoke<void>("reorder_courses", { orderedIds }),
   updateCourseColor: (id: string, color: string) =>
     invoke<void>("update_course_color", { id, color }),
+  updateCourseName: (id: string, name: string) =>
+    invoke<Course>("update_course_name", { id, name }),
   updateCourseUnits: (id: string, units: number | null) =>
     invoke<void>("update_course_units", { id, units }),
   updateCourseTargetGrade: (id: string, target: number | null) =>
