@@ -211,6 +211,22 @@ pub async fn p2p_consume_pairing(
     }
 
     *state.sync.write() = Some(engine);
+
+    // Kick off a Brightspace sync immediately if we now have credentials
+    // (either pre-existing on this device, or just adopted via the
+    // BootstrapCredentials handshake). Without this, the joiner sits on
+    // an empty cache until the next periodic sync loop fires (~minutes).
+    // Detached so the command can return immediately and the UI shows
+    // the spinner via the regular sync_status_changed event.
+    if state.client.is_configured() {
+        let state_for_task = state.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = crate::sync::sync_all(state_for_task, false).await {
+                tracing::warn!("post-pairing sync failed: {e}");
+            }
+        });
+    }
+
     Ok(build_status(&state).await)
 }
 

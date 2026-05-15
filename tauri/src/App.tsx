@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+import { listen } from "@tauri-apps/api/event";
 import { api, onAppEvent } from "./api";
 import type { AuthStatus, SyncStatus } from "./types";
 import Layout from "./components/Layout";
@@ -39,6 +40,22 @@ function AppInner() {
       }
     });
 
+    // `auth-captured` fires from both the desktop login flow and the
+    // P2P joiner-side BootstrapCredentials adoption (mobile pairing).
+    // In both cases the auth state has just transitioned to good, but
+    // we have no Brightspace data yet — kick a sync immediately so the
+    // dashboard populates within seconds rather than waiting for the
+    // periodic loop.
+    const unlistenAuthCaptured = listen<string>("auth-captured", async () => {
+      try {
+        const a = await api.authStatus();
+        setAuth(a);
+      } catch {
+        // ignore — periodic poll will recover
+      }
+      api.syncAll(false).catch(() => {});
+    });
+
     const interval = setInterval(() => {
       api.syncStatus().then(setSync).catch(() => {});
     }, 4000);
@@ -46,6 +63,7 @@ function AppInner() {
     return () => {
       clearInterval(interval);
       unlistenP.then((fn) => fn()).catch(() => {});
+      unlistenAuthCaptured.then((fn) => fn()).catch(() => {});
     };
   }, []);
 
