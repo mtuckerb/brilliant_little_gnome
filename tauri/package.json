@@ -6,7 +6,9 @@
   "scripts": {
     "ensure:deps": "node scripts/ensure-frontend-deps.mjs",
     "dev": "npm run ensure:deps && vite",
-    "dev:ios": "npm run ensure:deps && tauri ios dev --host 127.0.0.1",
+    "dev:ios": "npm run ensure:deps && node scripts/ios-deploy.mjs",
+    "dev:ios:no-build": "npm run ensure:deps && node scripts/ios-deploy.mjs --no-build",
+    "dev:ios:tauri": "npm run ensure:deps && tauri ios dev --host 127.0.0.1",
     "dev:ios:remote": "npm run ensure:deps && BRILLIANT_TAURI_REMOTE_DEV=1 tauri ios dev --force-ip-prompt",
     "ios:build": "npm run ensure:deps && node scripts/ios-build.mjs development",
     "ios:build:dev": "npm run ensure:deps && node scripts/ios-build.mjs development",
