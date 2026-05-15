@@ -35,7 +35,7 @@
       "icons/icon.ico"
     ],
     "iOS": {
-      "developmentTeam": "QDWAV324SU"
+      "minimumSystemVersion": "13.0"
     }
   }
 }
