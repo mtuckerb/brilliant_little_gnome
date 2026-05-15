@@ -32,9 +32,8 @@ pub struct P2pStatus {
     /// This device's iroh `EndpointId` in z32 (display) form. `None`
     /// when the engine isn't running.
     pub node_id: Option<String>,
-    /// Other devices currently paired with this one. Empty in v1
-    /// (peer roster tracking lands in T-022); the field is in the
-    /// surface so the React UI can already render the slot.
+    /// Other devices currently paired with this one, loaded from the
+    /// durable paired_devices roster.
     pub paired_peers: Vec<PairedPeer>,
     /// RFC3339 timestamp of the most recent inbound apply, if any.
     /// `None` until the bridge logs an apply (T-022).
@@ -175,6 +174,8 @@ pub async fn p2p_consume_pairing(
         )));
     }
 
+    remember_paired_device(&state.pool, &payload.node, Some("Seed device")).await?;
+
     // Hydrate SQLite from the freshly-imported Loro doc. Composite-key
     // overlays whose Brightspace rows aren't fetched yet park into
     // pending_overlay_apply (T-011).
@@ -237,6 +238,12 @@ pub async fn p2p_rotate(state: AppStateArg<'_>) -> Result<P2pStatus> {
         .execute(&state.pool)
         .await?;
 
+    // Rotation invalidates all prior peers; clear the roster so the UI
+    // accurately communicates that every device must be re-paired.
+    sqlx::query("DELETE FROM paired_devices")
+        .execute(&state.pool)
+        .await?;
+
     // Bring the engine back up under the new secret.
     let engine = SyncEngine::start(state.inner().clone()).await?;
     *state.sync.write() = Some(engine);
@@ -262,10 +269,51 @@ async fn build_status(state: &AppStateArg<'_>) -> P2pStatus {
         .await
         .unwrap_or(0);
     let node_id = state.sync_engine().map(|e| e.endpoint_id().to_string());
+    let paired_peers = load_paired_peers(&state.pool).await.unwrap_or_else(|e| {
+        tracing::warn!("load paired_devices failed: {e}");
+        Vec::new()
+    });
     P2pStatus {
         enabled: enabled != 0,
         node_id,
-        paired_peers: Vec::new(),
+        paired_peers,
         last_apply_at: None,
     }
+}
+
+async fn remember_paired_device(
+    pool: &sqlx::SqlitePool,
+    node_id: &str,
+    label: Option<&str>,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO paired_devices (id, public_key, label, last_seen_at) \
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP) \
+         ON CONFLICT(id) DO UPDATE SET \
+           public_key = excluded.public_key, \
+           label = COALESCE(excluded.label, paired_devices.label), \
+           last_seen_at = CURRENT_TIMESTAMP, \
+           updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(node_id)
+    .bind(node_id)
+    .bind(label)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn load_paired_peers(pool: &sqlx::SqlitePool) -> Result<Vec<PairedPeer>> {
+    let rows = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, last_seen_at FROM paired_devices ORDER BY last_seen_at DESC, created_at DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(node_id, last_seen_at)| PairedPeer {
+            node_id,
+            last_seen_at,
+        })
+        .collect())
 }
