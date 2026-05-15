@@ -1,0 +1,19 @@
+name: tauri-checks
+
+on:
+  pull_request:
+    paths:
+      - "tauri/**"
+  push:
+    branches: [main]
+    paths:
+      - "tauri/**"
+
+jobs:
+  migration-numbers:
+    name: Migration prefix uniqueness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check migration prefixes are unique
+        run: bash tauri/scripts/check-migration-numbers.sh
