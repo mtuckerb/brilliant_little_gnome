@@ -499,6 +499,58 @@ fn unique_path(seen: &mut HashSet<String>, candidate: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{filename_with_extension, sanitize, unique_filesystem_path, unique_path};
+    use std::{collections::HashSet, fs};
+
+    #[test]
+    fn downloads_sanitize_replaces_filesystem_reserved_characters() {
+        assert_eq!(
+            sanitize(r#" unit/lesson\quiz:1*?"<>| .pdf "#),
+            "unit_lesson_quiz_1_______.pdf"
+        );
+    }
+
+    #[test]
+    fn downloads_sanitize_falls_back_for_empty_names() {
+        assert_eq!(sanitize("   \t\n"), "untitled");
+    }
+
+    #[test]
+    fn downloads_filename_with_extension_appends_fallback_only_when_missing() {
+        assert_eq!(filename_with_extension("Lecture Notes", Some(".pdf")), "Lecture Notes.pdf");
+        assert_eq!(filename_with_extension("Lecture Notes.docx", Some(".pdf")), "Lecture Notes.docx");
+        assert_eq!(filename_with_extension(" bad/name ", Some(".txt")), "bad_name.txt");
+    }
+
+    #[test]
+    fn downloads_unique_path_deduplicates_zip_entries_before_extension() {
+        let mut seen = HashSet::new();
+
+        assert_eq!(unique_path(&mut seen, "Module/Slides.pdf"), "Module/Slides.pdf");
+        assert_eq!(unique_path(&mut seen, "Module/Slides.pdf"), "Module/Slides_1.pdf");
+        assert_eq!(unique_path(&mut seen, "Module/Slides.pdf"), "Module/Slides_2.pdf");
+    }
+
+    #[test]
+    fn downloads_unique_path_handles_extensionless_entries() {
+        let mut seen = HashSet::new();
+
+        assert_eq!(unique_path(&mut seen, "Module/README"), "Module/README");
+        assert_eq!(unique_path(&mut seen, "Module/README"), "Module/README_1");
+    }
+
+    #[test]
+    fn downloads_unique_filesystem_path_skips_existing_collisions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("report.pdf"), b"existing").expect("seed first collision");
+        fs::write(dir.path().join("report_1.pdf"), b"existing").expect("seed second collision");
+
+        assert_eq!(unique_filesystem_path(dir.path(), "report.pdf"), dir.path().join("report_2.pdf"));
+    }
+}
+
 // ----- Minimal ZIP writer (STORED only) ----------------------------------
 
 mod zip_writer {
