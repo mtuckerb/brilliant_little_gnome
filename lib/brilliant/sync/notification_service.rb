@@ -178,15 +178,40 @@ module Brilliant
             course.last_accessed_at = (Time.zone.parse(c.dig('Access', 'LastAccessed')) rescue nil)
             course.semester = client.extract_semester_from_name(course.name)
             
-            img_url = c.dig('OrgUnit', 'ImageUrl') || c.dig('OrgUnit', 'Image', 'ViewUrl') || c.dig('OrgUnit', 'Image', 'DisplayUrl')
+            img_url = extract_banner_url(c['OrgUnit'])
             if img_url && !img_url.empty?
-              course.banner_url = img_url.start_with?("/") ? "https://#{client.host}#{img_url}" : img_url
+              course.banner_url = normalize_banner_url(img_url)
             end
             course.save!
             @course_model_cache[course.org_unit_id] = course
           end
         end
         client.archive_cache("/d2l/api/lp/1.40/enrollments/myenrollments/")
+      end
+
+      BANNER_URL_KEYS = %w[
+        ImageUrl
+        Image.Url
+        Image.ViewUrl
+        Image.DisplayUrl
+        Image.LargeUrl
+        Image.MediumUrl
+        Image.SmallUrl
+        Image.TileUrl
+        Image.ThumbnailUrl
+        Image.BannerUrl
+        Image.BannerImageUrl
+        Image.CardImageUrl
+      ].freeze
+
+      def extract_banner_url(org_unit)
+        BANNER_URL_KEYS.lazy.map do |key|
+          key.split('.').reduce(org_unit) { |value, part| value.respond_to?(:[]) ? value[part] : nil }
+        end.find { |value| value.is_a?(String) && !value.empty? }
+      end
+
+      def normalize_banner_url(raw_url)
+        raw_url.start_with?("/") ? "https://#{client.host}#{raw_url}" : raw_url
       end
 
       def sync_course_specific_notifications(courses, full_sync, last_sync_time)

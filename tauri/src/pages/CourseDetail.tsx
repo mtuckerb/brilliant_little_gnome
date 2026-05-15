@@ -94,57 +94,52 @@ export default function CourseDetail() {
       </nav>
       <CourseNav courseId={course.org_unit_id} />
 
-      {banner ? (
-        <section
-          className="hero is-small mb-5"
+      <section
+        className="hero is-small mb-5"
+        style={{
+          borderRadius: 12,
+          overflow: "hidden",
+          position: "relative",
+          backgroundImage: banner
+            ? `url(${banner})`
+            : "linear-gradient(135deg, #2f4f6f 0%, #739AC3 100%)",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          border: `1px solid ${accent}`,
+          boxShadow: "0 4px 15px rgba(0,0,0,0.1)",
+        }}
+      >
+        <div
+          className="hero-body"
           style={{
-            borderRadius: 12,
-            overflow: "hidden",
-            position: "relative",
-            backgroundImage: `url(${banner})`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-            border: `1px solid ${accent}`,
-            boxShadow: "0 4px 15px rgba(0,0,0,0.1)",
+            background:
+              "linear-gradient(to right, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.3) 50%, rgba(0,0,0,0.1) 100%)",
+            padding: "3rem 2rem",
           }}
         >
-          <div
-            className="hero-body"
-            style={{
-              background:
-                "linear-gradient(to right, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.3) 50%, rgba(0,0,0,0.1) 100%)",
-              padding: "3rem 2rem",
-            }}
+          <h1
+            className="title is-2 has-text-white"
+            style={{ textShadow: "0 2px 10px rgba(0,0,0,0.8)", lineHeight: 1.1 }}
           >
-            <h1
-              className="title is-2 has-text-white"
-              style={{ textShadow: "0 2px 10px rgba(0,0,0,0.8)", lineHeight: 1.1 }}
+            {course.name}
+          </h1>
+          {course.code && (
+            <p
+              className="is-size-7 has-text-white is-uppercase"
+              style={{
+                letterSpacing: 1.5,
+                textShadow: "0 1px 2px rgba(0,0,0,0.5)",
+                position: "absolute",
+                bottom: 10,
+                right: 20,
+                opacity: 0.75,
+              }}
             >
-              {course.name}
-            </h1>
-            {course.code && (
-              <p
-                className="is-size-7 has-text-white is-uppercase"
-                style={{
-                  letterSpacing: 1.5,
-                  textShadow: "0 1px 2px rgba(0,0,0,0.5)",
-                  position: "absolute",
-                  bottom: 10,
-                  right: 20,
-                  opacity: 0.6,
-                }}
-              >
-                {course.code}
-              </p>
-            )}
-          </div>
-        </section>
-      ) : (
-        <h1 className="title mb-4" style={{ color: accent }}>
-          {course.code && <span className="mr-3">{course.code}</span>}
-          {course.name}
-        </h1>
-      )}
+              {course.code}
+            </p>
+          )}
+        </div>
+      </section>
 
       <div className="is-flex is-align-items-center is-flex-wrap-wrap mb-4" style={{ gap: 12 }}>
         <label className="is-flex is-align-items-center" style={{ gap: 8 }}>
