@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { ContentItem, ContentModule } from "../types";
 import { triggerDownload } from "../lib/download";
-import CourseNav from "../components/CourseNav";
+import CourseHeader from "../components/CourseHeader";
 
 // Module detail — shows the module's instructor commentary (description),
 // child sub-modules as clickable links, and the list of items inside the
@@ -74,7 +74,7 @@ export default function ModuleDetail() {
   if (!current) {
     return (
       <div>
-        {courseId && <CourseNav courseId={courseId} />}
+        {courseId && <CourseHeader courseId={courseId} />}
         <div className="notification is-warning is-light">Module not found in this course.</div>
         <Link to={`/course/${courseId}/content`}>← back to modules</Link>
       </div>
@@ -83,7 +83,7 @@ export default function ModuleDetail() {
 
   return (
     <div>
-      {courseId && <CourseNav courseId={courseId} />}
+      {courseId && <CourseHeader courseId={courseId} />}
 
       <nav className="breadcrumb mb-3">
         <ul>

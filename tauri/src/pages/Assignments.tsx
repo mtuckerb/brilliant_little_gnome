@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
-import CourseNav from "../components/CourseNav";
+import CourseHeader from "../components/CourseHeader";
 
 const EXIT_MS = 280;
 
@@ -85,7 +85,7 @@ export default function Assignments() {
           <li className="is-active"><a>Assignments</a></li>
         </ul>
       </nav>
-      {id && <CourseNav courseId={id} />}
+      {id && <CourseHeader courseId={id} />}
       <div className="box">
         <div className="level">
           <div className="level-left"><h2 className="title is-4"><i className="fas fa-tasks mr-2"></i>Assignments</h2></div>

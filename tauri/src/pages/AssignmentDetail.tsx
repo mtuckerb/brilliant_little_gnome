@@ -9,7 +9,7 @@ import {
   type Course,
 } from "../types";
 import { fmtNum } from "../lib/format";
-import CourseNav from "../components/CourseNav";
+import CourseHeader from "../components/CourseHeader";
 
 function AttachmentList({ items }: { items: AssignmentAttachment[] }) {
   if (items.length === 0) return null;
@@ -93,7 +93,7 @@ export default function AssignmentDetail() {
           <li className="is-active"><a>{a.name}</a></li>
         </ul>
       </nav>
-      {id && <CourseNav courseId={id} />}
+      {id && <CourseHeader courseId={id} />}
 
       <div className="box">
         <h1 className="title is-4" style={{ color: accent }}>{a.name}</h1>

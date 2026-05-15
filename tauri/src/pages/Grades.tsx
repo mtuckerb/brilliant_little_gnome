@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { GradeRow, GradeStats } from "../types";
 import { fmtNum, fmtPct } from "../lib/format";
-import CourseNav from "../components/CourseNav";
+import CourseHeader from "../components/CourseHeader";
 
 function gradeColor(score: number | null): string {
   if (score === null) return "is-light";
@@ -56,7 +56,7 @@ export default function Grades() {
           <li className="is-active"><a>Grades</a></li>
         </ul>
       </nav>
-      {id && <CourseNav courseId={id} />}
+      {id && <CourseHeader courseId={id} />}
 
       <div className="box">
         <div className="level mb-5">

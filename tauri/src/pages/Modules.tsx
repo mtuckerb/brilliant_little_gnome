@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { ContentModule } from "../types";
 import { triggerDownload } from "../lib/download";
-import CourseNav from "../components/CourseNav";
+import CourseHeader from "../components/CourseHeader";
 
 // Modules listing — clicking a module navigates to its detail page where
 // instructor commentary and downloadable items live. Child modules nest
@@ -69,7 +69,7 @@ export default function Modules() {
 
   return (
     <div>
-      {courseId && <CourseNav courseId={courseId} />}
+      {courseId && <CourseHeader courseId={courseId} />}
       <h1 className="title"><i className="fas fa-folder-tree mr-2"></i>Course content</h1>
       {error && <div className="notification is-danger is-light is-size-7">{error}</div>}
       <div className="box">
