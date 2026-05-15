@@ -12,16 +12,19 @@
 
 use super::AppStateArg;
 use crate::error::{AppError, Result};
-use base64::Engine;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, fs, path::PathBuf};
 
 #[derive(Debug, Serialize)]
 pub struct DownloadBytes {
-    pub bytes_base64: String,
+    /// Base64 payload retained as a browser fallback; desktop downloads are
+    /// written directly to disk so Tauri/WebView blob-download quirks do not
+    /// silently swallow the file.
+    pub bytes_base64: Option<String>,
     pub mime: Option<String>,
     pub filename: String,
+    pub saved_path: Option<String>,
 }
 
 #[tauri::command]
@@ -38,10 +41,12 @@ pub async fn download_topic_file(
     );
     let (bytes, mime, name) = state.client.fetch_bytes(&path).await?;
     let filename = name.unwrap_or_else(|| format!("topic_{}.bin", topic_id));
+    let saved_path = save_download_file(&filename, &bytes)?;
     Ok(DownloadBytes {
-        bytes_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        bytes_base64: None,
         mime,
         filename,
+        saved_path: Some(saved_path.display().to_string()),
     })
 }
 
@@ -81,10 +86,12 @@ pub async fn download_module_archive(
 
     let bytes = zip.finish();
     let filename = format!("Brilliant-{}-{}.zip", course_id, sanitize(&module_title));
+    let saved_path = save_download_file(&filename, &bytes)?;
     Ok(DownloadBytes {
-        bytes_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        bytes_base64: None,
         mime: Some("application/zip".to_string()),
         filename,
+        saved_path: Some(saved_path.display().to_string()),
     })
 }
 
@@ -140,10 +147,13 @@ pub async fn download_course_archive(
     add_download_warnings(&mut zip, &failures);
 
     let bytes = zip.finish();
+    let filename = format!("Brilliant-{}.zip", course_id);
+    let saved_path = save_download_file(&filename, &bytes)?;
     Ok(DownloadBytes {
-        bytes_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        bytes_base64: None,
         mime: Some("application/zip".to_string()),
-        filename: format!("Brilliant-{}.zip", course_id),
+        filename,
+        saved_path: Some(saved_path.display().to_string()),
     })
 }
 
@@ -429,6 +439,44 @@ fn sanitize(name: &str) -> String {
         .trim()
         .to_string();
     if cleaned.is_empty() { "untitled".to_string() } else { cleaned }
+}
+
+fn save_download_file(filename: &str, data: &[u8]) -> Result<PathBuf> {
+    let downloads_dir = dirs::download_dir()
+        .or_else(|| dirs::home_dir().map(|home| home.join("Downloads")))
+        .ok_or_else(|| AppError::Other("Could not determine a Downloads folder".to_string()))?;
+
+    fs::create_dir_all(&downloads_dir)?;
+    let mut path = unique_filesystem_path(&downloads_dir, &sanitize(filename));
+    fs::write(&path, data)?;
+
+    // Canonicalization is best-effort because some platforms/sandboxes may not
+    // allow resolving a user-visible Downloads location. Returning the original
+    // path is still more useful than failing after a successful write.
+    if let Ok(canonical) = path.canonicalize() {
+        path = canonical;
+    }
+    Ok(path)
+}
+
+fn unique_filesystem_path(dir: &std::path::Path, filename: &str) -> PathBuf {
+    let candidate = dir.join(filename);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let (stem, ext) = match filename.rfind('.') {
+        Some(i) if i > 0 => (&filename[..i], &filename[i..]),
+        _ => (filename, ""),
+    };
+    let mut n = 1;
+    loop {
+        let attempt = dir.join(format!("{}_{}{}", stem, n, ext));
+        if !attempt.exists() {
+            return attempt;
+        }
+        n += 1;
+    }
 }
 
 fn unique_path(seen: &mut HashSet<String>, candidate: &str) -> String {

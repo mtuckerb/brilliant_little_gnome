@@ -2,9 +2,10 @@
 // `#[tauri::command]`. Mirrors the pattern in `SyllabusPanel`.
 
 export interface DownloadPayload {
-  bytes_base64: string;
+  bytes_base64?: string | null;
   mime: string | null;
   filename: string;
+  saved_path?: string | null;
 }
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -15,6 +16,15 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 export function triggerDownload(payload: DownloadPayload) {
+  if (payload.saved_path) {
+    console.info(`Downloaded ${payload.filename} to ${payload.saved_path}`);
+    return;
+  }
+
+  if (!payload.bytes_base64) {
+    throw new Error(`Download did not return bytes or a saved path for ${payload.filename}`);
+  }
+
   const bytes = base64ToBytes(payload.bytes_base64);
   // Slice copies into a fresh ArrayBuffer (not SharedArrayBuffer) so the
   // BlobPart type-check is happy in strict mode.
