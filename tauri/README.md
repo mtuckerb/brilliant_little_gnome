@@ -31,6 +31,42 @@ npm install
 npm run tauri dev
 ```
 
+## Fresh worktree frontend checks
+
+Fresh agent worktrees do not include `tauri/node_modules`, so React/Vite type
+resolution fails until the frontend dependencies are installed. The common npm
+scripts are self-healing: `npm run build`, `npm run dev`, and `npm run tauri`
+run `npm run ensure:deps` first, which installs dependencies when
+`node_modules` is missing.
+
+For explicit setup or CI verification, run:
+
+```sh
+cd tauri/
+npm install
+npm run build
+```
+
+## Reproducible Rust verification
+
+Run Rust checks from the Nix shell so `pkg-config` can find the GTK/glib/pango/cairo/atk stack required by Tauri's Linux dependencies:
+
+```sh
+cd tauri/
+nix-shell --run 'npm run test:rust'   # focused downloads tests
+nix-shell --run 'npm run check:rust'  # full src-tauri cargo test suite
+```
+
+The npm scripts create the placeholder `dist/` directory that Tauri's compile-time config expects, then run Cargo from `src-tauri/`. The shell exports `PKG_CONFIG_PATH` for OpenSSL and the Linux Tauri libraries, avoiding host-specific setup or manually discovered Cargo/Rust paths.
+
+## iOS / iPadOS
+
+Use `npm run dev:ios` or `npm run dev:ios:remote` only for development; those commands intentionally load the WebView from the Vite dev server so hot module reload works.
+
+Use `npm run ios:build` for a standalone iPhone/iPad artifact, or `npm run ios:open` to open the generated Xcode project for signing, archiving, and installing a release-style build. Release builds embed `dist/` assets via `frontendDist` and do not contact the Vite dev server on launch.
+
+See [`../docs/ios.md`](../docs/ios.md) for the full dev-vs-release flow and offline validation checklist.
+
 ## Layout
 
 ```

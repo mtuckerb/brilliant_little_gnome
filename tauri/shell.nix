@@ -41,14 +41,35 @@ let
     extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
     targets = androidTargets ++ lib.optionals stdenv.isDarwin iosTargets;
   };
+
+  # Libraries with pkg-config metadata needed by cargo builds/tests. Keep this
+  # list separate from buildInputs so shellHook can publish deterministic
+  # PKG_CONFIG_PATH values even in non-interactive `nix-shell --run ...` checks.
+  pkgConfigDeps = with pkgs; [
+    openssl
+  ] ++ lib.optionals stdenv.isLinux [
+    webkitgtk_4_1
+    gtk3
+    cairo
+    gdk-pixbuf
+    glib
+    pango
+    harfbuzz
+    libsoup_3
+    librsvg
+    atk
+  ];
 in
 pkgs.mkShell {
+  nativeBuildInputs = with pkgs; [
+    pkg-config
+  ];
+
   buildInputs = with pkgs; [
     rustToolchain
 
     # Node + build tools (cross-platform)
     nodejs_20
-    pkg-config
     openssl
   ] ++ lib.optionals stdenv.isLinux [
     # Tauri Linux runtime deps (webkit2gtk + the GLib/GTK stack)
@@ -85,8 +106,9 @@ pkgs.mkShell {
   ];
 
   shellHook = ''
-    export PKG_CONFIG_PATH="${pkgs.openssl.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
+    export PKG_CONFIG_PATH="${lib.makeSearchPathOutput "dev" "lib/pkgconfig" pkgConfigDeps}:${lib.makeSearchPath "lib/pkgconfig" pkgConfigDeps}:$PKG_CONFIG_PATH"
     export RUST_BACKTRACE=1
     echo "brilliant-tauri dev shell — run: npm install && npm run tauri dev"
+    echo "Rust checks: nix-shell --run 'npm run test:rust'"
   '';
 }

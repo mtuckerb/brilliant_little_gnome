@@ -4,13 +4,19 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:ios": "tauri ios dev --host 127.0.0.1",
-    "dev:ios:remote": "BRILLIANT_TAURI_REMOTE_DEV=1 tauri ios dev --force-ip-prompt",
+    "ensure:deps": "node scripts/ensure-frontend-deps.mjs",
+    "dev": "npm run ensure:deps && vite",
+    "dev:ios": "npm run ensure:deps && tauri ios dev --host 127.0.0.1",
+    "dev:ios:remote": "npm run ensure:deps && BRILLIANT_TAURI_REMOTE_DEV=1 tauri ios dev --force-ip-prompt",
+    "ios:build": "npm run ensure:deps && tauri ios build",
+    "ios:open": "npm run ensure:deps && tauri ios open",
     "test:config": "node scripts/assert-dev-host-config.mjs",
+    "test:rust": "mkdir -p dist && cd src-tauri && cargo test downloads",
+    "check:rust": "mkdir -p dist && cd src-tauri && cargo test",
+    "prebuild": "npm run ensure:deps",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "npm run ensure:deps && tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -26,6 +32,6 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^6.0.2",
     "typescript": "^5.6.3",
-    "vite": "^8.0.13"
+    "vite": "^8.1.3"
   }
 }

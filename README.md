@@ -46,6 +46,7 @@ A lightweight, high-performance Brightspace companion that aggregates notificati
 Brilliant is built to be portable. 
 - **macOS (M-series)**: Fully vendored and optimized for Apple Silicon.
 - **Windows**: Support for portable ruby distributions (x64) and packaged as a standalone Electron application (`nsis`).
+- **iOS / iPadOS (Tauri)**: Development builds intentionally connect to the Mac's Vite dev server, while release builds embed the React bundle and run standalone. See [`docs/ios.md`](docs/ios.md).
 
 ## Setup
 
@@ -83,7 +84,9 @@ Brilliant includes a Rake-based build system to manage its portable Ruby environ
 | `bundle exec rake platforms:lock` | **Crucial** before pushing: ensures the lockfile supports Windows and Intel Macs. |
 | `bundle exec rake platforms:install` | Pre-bundles gems into the project for portable distribution. |
 | `npm run start` | Launches the Electron application and the Ruby sidecar. |
-| `npm run build` | Packages the application into a distributable `dist/` (DMG for Mac). |
+| `npm run build` | Packages the Electron application into a distributable `dist/` (DMG for Mac). |
+| `cd tauri && npm run ios:build` | Builds a standalone iOS/iPadOS Tauri artifact with the frontend embedded; no Vite dev server required. |
+| `cd tauri && npm run ios:open` | Opens the generated Xcode project for signing, archiving, or installing a release-style iOS build. |
 | `./brilliant rake db:migrate` | Runs database migrations using the portable environment. |
 | `ruby app.rb --headless` | Starts only the Ruby API server without the Electron UI. |
 | `xattr -cr /Applications/Brilliant.app` | Fixes "damaged app" errors on macOS after manual installation. |
