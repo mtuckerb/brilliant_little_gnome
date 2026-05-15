@@ -9,6 +9,7 @@ body { background: #fdfdfd; min-height: 100vh; margin: 0; }
 .button.is-primary { background-color: #739AC3 !important; border-color: transparent !important; color: #fff !important; }
 .button.is-primary.is-light { background-color: #f0f4f8 !important; color: #739AC3 !important; }
 .tag.is-primary { background-color: #739AC3 !important; color: #fff !important; }
+.dev-server-badge { font-weight: 700; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .menu-list a.is-active { background-color: #739AC3 !important; color: #fff !important; }
 .menu-list a.is-active .icon { color: #fff !important; }
 

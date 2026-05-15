@@ -8,6 +8,8 @@
     "dev": "npm run ensure:deps && vite",
     "dev:ios": "npm run ensure:deps && tauri ios dev --host 127.0.0.1",
     "dev:ios:remote": "npm run ensure:deps && BRILLIANT_TAURI_REMOTE_DEV=1 tauri ios dev --force-ip-prompt",
+    "ios:build": "npm run ensure:deps && tauri ios build",
+    "ios:open": "npm run ensure:deps && tauri ios open",
     "test:config": "node scripts/assert-dev-host-config.mjs",
     "test:rust": "mkdir -p dist && cd src-tauri && cargo test downloads",
     "check:rust": "mkdir -p dist && cd src-tauri && cargo test",
