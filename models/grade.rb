@@ -52,6 +52,8 @@ class Grade < ActiveRecord::Base
 
   def self._calculate_weighted_total(course_id)
     grades = where(course_id: course_id.to_s)
+    course = Course.find_by(org_unit_id: course_id)
+    completed_course = completed_past_semester_course?(course)
     graded_items = grades.select { |g| g.is_graded? && (g.effective_denominator || 0) > 0 }
     
     if graded_items.empty?
@@ -96,7 +98,9 @@ class Grade < ActiveRecord::Base
       max_potential_score = ((total_weight_earned + remaining_points) / all_possible_weight) * 100
       # ...
 
-      target_grade = Course.find_by(org_unit_id: course_id)&.target_grade || 93.0
+      confidence = 100.0 if completed_course
+
+      target_grade = course&.target_grade || 93.0
       points_needed = [ (target_grade / 100.0 * all_possible_weight) - total_weight_earned, 0 ].max
       required_avg = remaining_points > 0 ? (points_needed / remaining_points) * 100 : nil
       
@@ -140,7 +144,9 @@ class Grade < ActiveRecord::Base
     remaining_points = all_possible_points - total_points_possible
     max_potential_score = all_possible_points > 0 ? ((total_points_earned + remaining_points) / all_possible_points) * 100 : 100.0
 
-    target_grade = Course.find_by(org_unit_id: course_id)&.target_grade || 93.0
+    confidence = 100.0 if completed_course
+
+    target_grade = course&.target_grade || 93.0
     required_points_to_hit_target = (target_grade / 100.0) * all_possible_points
     points_needed = [required_points_to_hit_target - total_points_earned, 0].max
     
@@ -161,6 +167,33 @@ class Grade < ActiveRecord::Base
       points_needed: points_needed.round(2),
       item_count: graded_items.count
     }
+  end
+
+  def self.completed_past_semester_course?(course)
+    return false unless course&.semester
+    return false if course.dropped?
+
+    latest_semester = Course.where.not(semester: [nil, '']).pluck(:semester).max_by { |semester| semester_weight(semester) }
+    return false unless latest_semester
+
+    semester_weight(course.semester) < semester_weight(latest_semester)
+  end
+
+  def self.semester_weight(semester)
+    return 0 unless semester
+
+    year_match = semester.match(/\d{4}/)
+    return 0 unless year_match
+
+    season_weight = case semester
+                    when /Winter/i then 1
+                    when /Spring/i then 2
+                    when /Summer/i then 3
+                    when /Fall/i then 4
+                    else 0
+                    end
+
+    (year_match[0].to_i * 10) + season_weight
   end
 
   def self.to_gpa(score)

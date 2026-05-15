@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export BRILLIANT_DATA_DIR="${BRILLIANT_DATA_DIR:-/tmp/brilliant-test}"
+export DATABASE_URL="${DATABASE_URL:-sqlite3://${BRILLIANT_DATA_DIR}/test.sqlite3}"
+mkdir -p "$BRILLIANT_DATA_DIR"
+bundle exec ruby test_past_semester_confidence.rb
