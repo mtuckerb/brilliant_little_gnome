@@ -71,7 +71,13 @@ pub async fn download_module_archive(
 
     let mut zip = zip_writer::Builder::new();
     let mut seen = HashSet::new();
-    collect_module(&mut zip, &state, &course_id, &module_node, "", &mut seen).await?;
+    let mut failures = Vec::new();
+    collect_module(&mut zip, &state, &course_id, &module_node, "", &mut seen, &mut failures).await?;
+
+    if zip.entry_count() == 0 {
+        return Err(AppError::Other("No downloadable files found in this module.".to_string()));
+    }
+    add_download_warnings(&mut zip, &failures);
 
     let bytes = zip.finish();
     let filename = format!("Brilliant-{}-{}.zip", course_id, sanitize(&module_title));
@@ -92,11 +98,16 @@ pub async fn download_course_archive(
 
     let mut zip = zip_writer::Builder::new();
     let mut seen = HashSet::new();
+    let mut failures = Vec::new();
     for m in &modules {
-        if let Err(e) = collect_module(&mut zip, &state, &course_id, m, "Table_of_Contents/", &mut seen).await {
+        if let Err(e) = collect_module(&mut zip, &state, &course_id, m, "Table_of_Contents/", &mut seen, &mut failures).await {
             tracing::warn!("module skipped during course archive: {}", e);
+            failures.push(format!("module {} skipped: {}", module_title(m), e));
         }
     }
+
+    collect_assignment_files(&mut zip, &state, &course_id, &mut seen, &mut failures).await;
+    collect_overview_attachments(&mut zip, &state, &course_id, &mut seen, &mut failures).await;
 
     // Best-effort: fetch the course overview attachment if one exists.
     let overview_path = format!("/d2l/api/le/{}/{}/overview", crate::client::API_VERSION, course_id);
@@ -106,19 +117,27 @@ pub async fn download_course_archive(
             .and_then(|v| v.as_str())
             .or_else(|| ov.pointer("/Attachment/Href").and_then(|v| v.as_str()))
         {
-            if let Ok((bytes, _mime, name)) = state.client.fetch_bytes(att_url).await {
-                let fname = name
-                    .or_else(|| {
-                        ov.pointer("/Attachment/Name")
-                            .and_then(|v| v.as_str())
-                            .map(String::from)
-                    })
-                    .unwrap_or_else(|| "syllabus".to_string());
-                let path = unique_path(&mut seen, &format!("Syllabus_Overview/{}", sanitize(&fname)));
-                zip.add_file(&path, &bytes);
+            match state.client.fetch_bytes(att_url).await {
+                Ok((bytes, _mime, name)) => {
+                    let fname = name
+                        .or_else(|| {
+                            ov.pointer("/Attachment/Name")
+                                .and_then(|v| v.as_str())
+                                .map(String::from)
+                        })
+                        .unwrap_or_else(|| "syllabus".to_string());
+                    let path = unique_path(&mut seen, &format!("Syllabus_Overview/{}", sanitize(&fname)));
+                    zip.add_file(&path, &bytes);
+                }
+                Err(e) => failures.push(format!("overview attachment skipped: {}", e)),
             }
         }
     }
+
+    if zip.entry_count() == 0 {
+        return Err(AppError::Other("No downloadable files found in this course.".to_string()));
+    }
+    add_download_warnings(&mut zip, &failures);
 
     let bytes = zip.finish();
     Ok(DownloadBytes {
@@ -155,9 +174,33 @@ fn find_module_recursive(node: &Value, target: &str) -> Option<Value> {
 }
 
 fn module_id_str(m: &Value) -> Option<String> {
-    m.get("ModuleId")
+    m.get("Identifier")
+        .or_else(|| m.get("ModuleId"))
         .or_else(|| m.get("Id"))
         .and_then(|v| v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string())))
+}
+
+fn module_title(m: &Value) -> String {
+    m.get("Title")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| module_id_str(m).unwrap_or_else(|| "unknown".to_string()))
+}
+
+fn topic_id_str(t: &Value) -> Option<String> {
+    t.get("Identifier")
+        .or_else(|| t.get("TopicId"))
+        .or_else(|| t.get("Id"))
+        .and_then(|v| v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string())))
+}
+
+fn topic_download_path(course_id: &str, topic_id: &str) -> String {
+    format!(
+        "/d2l/api/le/{}/{}/content/topics/{}/file",
+        crate::client::API_VERSION,
+        course_id,
+        topic_id
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -168,6 +211,7 @@ async fn collect_module(
     node: &Value,
     parent_prefix: &str,
     seen: &mut HashSet<String>,
+    failures: &mut Vec<String>,
 ) -> Result<()> {
     let title = node
         .get("Title")
@@ -178,9 +222,7 @@ async fn collect_module(
 
     if let Some(topics) = node.get("Topics").and_then(|t| t.as_array()) {
         for t in topics {
-            let topic_id = match module_id_str(&serde_json::json!({
-                "Id": t.get("TopicId").or_else(|| t.get("Id")).cloned().unwrap_or(Value::Null)
-            })) {
+            let topic_id = match topic_id_str(t) {
                 Some(id) => id,
                 None => continue,
             };
@@ -189,20 +231,24 @@ async fn collect_module(
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .unwrap_or_else(|| format!("topic_{}", topic_id));
-            let path = format!(
-                "/d2l/api/le/{}/{}/content/topics/{}/file",
-                crate::client::API_VERSION,
-                course_id,
-                topic_id
-            );
+            let url = t.get("Url").and_then(|v| v.as_str());
+            if is_external_link_topic(t, url) {
+                if let Some(url) = url {
+                    let entry = unique_path(seen, &format!("{}{}.url", folder, sanitize(&topic_title)));
+                    zip.add_file(&entry, internet_shortcut(url).as_bytes());
+                    continue;
+                }
+            }
+            let path = topic_download_path(course_id, &topic_id);
             match state.client.fetch_bytes(&path).await {
                 Ok((bytes, _mime, name)) => {
-                    let fname = name.unwrap_or_else(|| sanitize(&topic_title));
+                    let fname = name.unwrap_or_else(|| filename_with_extension(&topic_title, None));
                     let entry = unique_path(seen, &format!("{}{}", folder, fname));
                     zip.add_file(&entry, &bytes);
                 }
                 Err(e) => {
                     tracing::debug!("topic {} skipped: {}", topic_id, e);
+                    failures.push(format!("topic '{}' ({}) skipped: {}", topic_title, topic_id, e));
                 }
             }
         }
@@ -210,22 +256,179 @@ async fn collect_module(
 
     if let Some(subs) = node.get("Modules").and_then(|m| m.as_array()) {
         for sub in subs {
-            Box::pin(collect_module(zip, state, course_id, sub, &folder, seen)).await?;
+            Box::pin(collect_module(zip, state, course_id, sub, &folder, seen, failures)).await?;
         }
     }
 
     Ok(())
 }
 
+async fn collect_assignment_files(
+    zip: &mut zip_writer::Builder,
+    state: &AppStateArg<'_>,
+    course_id: &str,
+    seen: &mut HashSet<String>,
+    failures: &mut Vec<String>,
+) {
+    let Ok(assignments) = state.client.get_assignments(&state.pool, course_id, false).await else {
+        return;
+    };
+
+    for assignment in assignments {
+        let Some(assignment_id) = value_id(&assignment, &["Id", "FolderId"]) else { continue; };
+        let assignment_name = assignment
+            .get("Name")
+            .or_else(|| assignment.get("Title"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Assignment");
+        let folder = format!("Assignments/{}/", sanitize(assignment_name));
+
+        match state.client.get_assignment_folder(&state.pool, course_id, &assignment_id, false).await {
+            Ok(detail) => add_attachments(zip, state, seen, failures, &folder, &detail, &["Attachments", "AttachedResources"]).await,
+            Err(e) => failures.push(format!("assignment '{}' detail skipped: {}", assignment_name, e)),
+        }
+
+        if let Ok(feedback) = state.client.get_assignment_feedback(&state.pool, course_id, &assignment_id, false).await {
+            add_attachments(zip, state, seen, failures, &format!("{}Feedback/", folder), &feedback, &["Attachments", "AttachedResources"]).await;
+        }
+    }
+}
+
+async fn collect_overview_attachments(
+    zip: &mut zip_writer::Builder,
+    state: &AppStateArg<'_>,
+    course_id: &str,
+    seen: &mut HashSet<String>,
+    failures: &mut Vec<String>,
+) {
+    let Ok(overview) = state.client.get_overview(&state.pool, course_id, false).await else {
+        return;
+    };
+    add_attachments(zip, state, seen, failures, "Syllabus_Overview/", &overview, &["Attachments", "LinkAttachments"]).await;
+}
+
+async fn add_attachments(
+    zip: &mut zip_writer::Builder,
+    state: &AppStateArg<'_>,
+    seen: &mut HashSet<String>,
+    failures: &mut Vec<String>,
+    folder: &str,
+    owner: &Value,
+    keys: &[&str],
+) {
+    for key in keys {
+        if let Some(items) = owner.get(*key).and_then(|v| v.as_array()) {
+            let shortcut_links = key.to_ascii_lowercase().contains("link");
+            for item in items {
+                add_attachment(zip, state, seen, failures, folder, item, shortcut_links).await;
+            }
+        }
+    }
+}
+
+async fn add_attachment(
+    zip: &mut zip_writer::Builder,
+    state: &AppStateArg<'_>,
+    seen: &mut HashSet<String>,
+    failures: &mut Vec<String>,
+    folder: &str,
+    attachment: &Value,
+    shortcut_link: bool,
+) {
+    let name = attachment_name(attachment);
+    let url = attachment_url(attachment);
+    let Some(url) = url else { return; };
+
+    if shortcut_link {
+        let entry = unique_path(seen, &format!("{}{}.url", folder, sanitize(&name)));
+        zip.add_file(&entry, internet_shortcut(&url).as_bytes());
+        return;
+    }
+
+    match state.client.fetch_bytes(&url).await {
+        Ok((bytes, _mime, response_name)) => {
+            let fname = response_name.unwrap_or_else(|| filename_with_extension(&name, None));
+            let entry = unique_path(seen, &format!("{}{}", folder, sanitize(&fname)));
+            zip.add_file(&entry, &bytes);
+        }
+        Err(e) => failures.push(format!("attachment '{}' skipped: {}", name, e)),
+    }
+}
+
+fn is_external_link_topic(topic: &Value, url: Option<&str>) -> bool {
+    let type_hint = topic
+        .get("TypeIdentifier")
+        .or_else(|| topic.get("Type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    type_hint.contains("link")
+        || type_hint == "3"
+        || url.map(|u| u.starts_with("http://") || u.starts_with("https://")).unwrap_or(false)
+}
+
+fn attachment_name(attachment: &Value) -> String {
+    attachment
+        .get("FileName")
+        .or_else(|| attachment.get("Name"))
+        .or_else(|| attachment.get("Title"))
+        .or_else(|| attachment.get("LinkName"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| "attachment".to_string())
+}
+
+fn attachment_url(attachment: &Value) -> Option<String> {
+    attachment
+        .get("Href")
+        .or_else(|| attachment.get("Link"))
+        .or_else(|| attachment.get("Url"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+fn value_id(v: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|k| v.get(*k))
+        .and_then(|v| v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string())))
+}
+
+fn filename_with_extension(name: &str, fallback_ext: Option<&str>) -> String {
+    let safe = sanitize(name);
+    if safe.contains('.') || fallback_ext.is_none() {
+        safe
+    } else {
+        format!("{}{}", safe, fallback_ext.unwrap_or(""))
+    }
+}
+
+fn internet_shortcut(url: &str) -> String {
+    format!("[InternetShortcut]\r\nURL={}\r\n", url)
+}
+
+fn add_download_warnings(zip: &mut zip_writer::Builder, failures: &[String]) {
+    if failures.is_empty() {
+        return;
+    }
+    let mut body = String::from("Some files could not be included in this archive.\n\n");
+    for failure in failures {
+        body.push_str("- ");
+        body.push_str(failure);
+        body.push('\n');
+    }
+    zip.add_file("DOWNLOAD_WARNINGS.txt", body.as_bytes());
+}
+
 fn sanitize(name: &str) -> String {
-    name.chars()
+    let cleaned = name.chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
             _ => c,
         })
         .collect::<String>()
         .trim()
-        .to_string()
+        .to_string();
+    if cleaned.is_empty() { "untitled".to_string() } else { cleaned }
 }
 
 fn unique_path(seen: &mut HashSet<String>, candidate: &str) -> String {
@@ -280,6 +483,10 @@ mod zip_writer {
     impl Builder {
         pub fn new() -> Self {
             Self { body: Vec::new(), entries: Vec::new() }
+        }
+
+        pub fn entry_count(&self) -> usize {
+            self.entries.len()
         }
 
         pub fn add_file(&mut self, path: &str, data: &[u8]) {
