@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 
+// Maps the user-facing alias we accept on the CLI to the value tauri-cli
+// expects via `--export-method`. Recent tauri-cli renamed these:
+//   "development"  →  "debugging"
+//   "ad-hoc"       →  "release-testing"
+//   "app-store"    →  "app-store-connect"
+// Keeping the old aliases so existing `npm run ios:build:*` scripts and
+// muscle memory continue to work.
 const methodAliases = new Map([
-  ['dev', 'development'],
-  ['development', 'development'],
-  ['adhoc', 'ad-hoc'],
-  ['ad-hoc', 'ad-hoc'],
-  ['app-store', 'app-store'],
-  ['appstore', 'app-store'],
+  ['dev', 'debugging'],
+  ['development', 'debugging'],
+  ['debug', 'debugging'],
+  ['debugging', 'debugging'],
+  ['adhoc', 'release-testing'],
+  ['ad-hoc', 'release-testing'],
+  ['release-testing', 'release-testing'],
+  ['app-store', 'app-store-connect'],
+  ['appstore', 'app-store-connect'],
+  ['app-store-connect', 'app-store-connect'],
 ]);
 
 const requestedMethod = process.argv[2] ?? 'development';
@@ -15,7 +26,7 @@ const exportMethod = methodAliases.get(requestedMethod);
 
 if (!exportMethod) {
   console.error(`Unsupported iOS export method: ${requestedMethod}`);
-  console.error('Expected one of: development, ad-hoc, app-store');
+  console.error('Expected one of: debugging (alias: development), release-testing (alias: ad-hoc), app-store-connect (alias: app-store)');
   process.exit(2);
 }
 
