@@ -211,15 +211,28 @@ mod tests {
     }
 }
 
-/// Banner image lookup mirrors the Ruby `notification_service.rb`:
-/// `OrgUnit.ImageUrl` → `OrgUnit.Image.ViewUrl` → `OrgUnit.Image.DisplayUrl`.
-/// A relative path is rewritten with the configured Brightspace host so the
-/// frontend can load it directly without needing a host-aware proxy.
+/// Banner image lookup mirrors the Ruby `notification_service.rb` and covers
+/// the image URL variants Brightspace has returned from enrollment/course-tile
+/// payloads. A relative path is rewritten with the configured Brightspace host.
 fn extract_banner(org_unit: &Value, host: Option<&str>) -> Option<String> {
-    let raw = org_unit.get("ImageUrl").and_then(|v| v.as_str())
-        .or_else(|| org_unit.pointer("/Image/ViewUrl").and_then(|v| v.as_str()))
-        .or_else(|| org_unit.pointer("/Image/DisplayUrl").and_then(|v| v.as_str()))?;
-    if raw.is_empty() { return None; }
+    let raw = [
+        "/ImageUrl",
+        "/Image/Url",
+        "/Image/ViewUrl",
+        "/Image/DisplayUrl",
+        "/Image/LargeUrl",
+        "/Image/MediumUrl",
+        "/Image/SmallUrl",
+        "/Image/TileUrl",
+        "/Image/ThumbnailUrl",
+        "/Image/BannerUrl",
+        "/Image/BannerImageUrl",
+        "/Image/CardImageUrl",
+    ]
+    .iter()
+    .filter_map(|path| org_unit.pointer(path).and_then(|v| v.as_str()))
+    .find(|url| !url.is_empty())?;
+
     if raw.starts_with("http://") || raw.starts_with("https://") {
         return Some(raw.to_string());
     }
