@@ -6,12 +6,12 @@ use crate::models::Notification;
 pub async fn list_notifications(state: AppStateArg<'_>, unread_only: Option<bool>) -> Result<Vec<Notification>> {
     let rows = if unread_only.unwrap_or(false) {
         sqlx::query_as::<_, Notification>(
-            "SELECT id, external_id, notification_type, title, body, date, course_id, course_name, urgency, is_personal, is_read, url FROM notifications WHERE is_read = 0 ORDER BY date DESC NULLS LAST",
+            "SELECT n.id, n.external_id, n.notification_type, n.title, n.body, n.date, n.course_id, COALESCE(c.custom_name, c.name, n.course_name) AS course_name, n.urgency, n.is_personal, n.is_read, n.url FROM notifications n LEFT JOIN courses c ON c.org_unit_id = n.course_id WHERE n.is_read = 0 ORDER BY n.date DESC NULLS LAST",
         )
         .fetch_all(&state.pool).await?
     } else {
         sqlx::query_as::<_, Notification>(
-            "SELECT id, external_id, notification_type, title, body, date, course_id, course_name, urgency, is_personal, is_read, url FROM notifications ORDER BY date DESC NULLS LAST LIMIT 200",
+            "SELECT n.id, n.external_id, n.notification_type, n.title, n.body, n.date, n.course_id, COALESCE(c.custom_name, c.name, n.course_name) AS course_name, n.urgency, n.is_personal, n.is_read, n.url FROM notifications n LEFT JOIN courses c ON c.org_unit_id = n.course_id ORDER BY n.date DESC NULLS LAST LIMIT 200",
         )
         .fetch_all(&state.pool).await?
     };

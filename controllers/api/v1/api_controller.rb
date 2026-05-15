@@ -524,7 +524,7 @@ module Api
 
         notifications = query.limit(limit).offset(offset).map do |n|
           course = course_map[n.course_id.to_s]
-          course_name_to_use = n.course_name
+          course_name_to_use = course&.display_name.presence || n.course_name
           if (course_name_to_use.nil? || course_name_to_use.match?(/^\d+$/)) && course
             course_name_to_use = course.display_name
           end
@@ -606,7 +606,7 @@ module Api
           },
           recent_notifications: Notification.where(is_read: false).order(date: :desc).limit(10).map { |n|
             course = Course.find_by(org_unit_id: n.course_id.to_s)
-            c_name = n.course_name
+            c_name = course&.display_name.presence || n.course_name
             if (c_name.to_s.empty? || c_name.to_s.match?(/^\d+$/)) && course
               c_name = course.display_name if course.display_name.present? && !course.display_name.to_s.match?(/^\d+$/)
             end

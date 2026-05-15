@@ -415,7 +415,7 @@ module CourseHelpers
     results = []
 
     # 1. Courses
-    ::Course.where("lower(name) LIKE ? OR lower(code) LIKE ?", q, q).limit(5).each do |c|
+    ::Course.where("lower(name) LIKE ? OR lower(custom_name) LIKE ? OR lower(code) LIKE ?", q, q, q).limit(5).each do |c|
       results << { type: 'course', title: c.display_name, url: "/course/#{c.org_unit_id}", subtitle: c.code, icon: 'fas fa-graduation-cap' }
     end
 

@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 CREATE TABLE IF NOT EXISTS courses (
   org_unit_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  custom_name TEXT,
   code TEXT,
   semester TEXT,
   is_pinned INTEGER NOT NULL DEFAULT 0,

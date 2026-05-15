@@ -394,10 +394,10 @@ async fn notifications(
     let show_read = q.get("show_read").map(|s| s == "true").unwrap_or(false);
 
     let mut clauses: Vec<&str> = Vec::new();
-    if !show_read { clauses.push("is_read = 0"); }
+    if !show_read { clauses.push("n.is_read = 0"); }
     let where_clause = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
 
-    let total_sql = format!("SELECT COUNT(*) FROM notifications {}", where_clause);
+    let total_sql = format!("SELECT COUNT(*) FROM notifications n {}", where_clause);
     let total: i64 = sqlx::query_scalar(&total_sql).fetch_one(&state.pool).await
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -405,10 +405,10 @@ async fn notifications(
         "SELECT json_object(
             'id', id, 'external_id', external_id, 'notification_type', notification_type,
             'title', title, 'body', body, 'date', date,
-            'course_id', course_id, 'course_name', course_name,
-            'urgency', urgency, 'is_personal', is_personal != 0,
-            'is_read', is_read != 0, 'url', url
-         ) FROM notifications {} ORDER BY date DESC NULLS LAST, id DESC LIMIT ? OFFSET ?",
+            'course_id', n.course_id, 'course_name', COALESCE(c.custom_name, c.name, n.course_name),
+            'urgency', n.urgency, 'is_personal', n.is_personal != 0,
+            'is_read', n.is_read != 0, 'url', n.url
+         ) FROM notifications n LEFT JOIN courses c ON c.org_unit_id = n.course_id {} ORDER BY n.date DESC NULLS LAST, n.id DESC LIMIT ? OFFSET ?",
         where_clause
     );
     let rows: Vec<(String,)> = sqlx::query_as(&list_sql)
@@ -449,9 +449,9 @@ async fn dashboard_summary(AxState(state): AxState<Arc<AppState>>) -> std::resul
 
     let recent: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
-            'id', id, 'title', title, 'body', body, 'date', date,
-            'course_id', course_id, 'course_name', course_name, 'url', url
-         ) FROM notifications WHERE is_read = 0 ORDER BY date DESC LIMIT 10",
+            'id', n.id, 'title', n.title, 'body', n.body, 'date', n.date,
+            'course_id', n.course_id, 'course_name', COALESCE(c.custom_name, c.name, n.course_name), 'url', n.url
+         ) FROM notifications n LEFT JOIN courses c ON c.org_unit_id = n.course_id WHERE n.is_read = 0 ORDER BY n.date DESC LIMIT 10",
     )
     .fetch_all(&state.pool).await
     .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
