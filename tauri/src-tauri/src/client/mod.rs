@@ -169,7 +169,11 @@ impl BrightspaceClient {
             }
             Err(e) => {
                 if let Some((v, _)) = cached {
-                    tracing::warn!("fetch {} failed, using cache: {}", path, e);
+                    // Cache fall-back is an expected, recoverable path — demoted
+                    // from warn so a clean sync prints zero WARN lines under
+                    // default RUST_LOG. Bump to RUST_LOG=debug if you need to
+                    // see which paths fell back.
+                    tracing::debug!("fetch {} failed, using cache: {}", path, e);
                     Ok(v)
                 } else {
                     Err(e)
@@ -212,7 +216,15 @@ impl BrightspaceClient {
             // do not force global re-auth for those unless an independent auth
             // validation call fails elsewhere.
             if Self::is_resource_scoped_auth_failure(path, status) {
-                tracing::warn!("resource-scoped Brightspace auth failure for {}: {}", path, status);
+                // Discussion forum/topic 403s are expected for areas the user
+                // doesn't have permission to read (instructor-only forums,
+                // restricted topics). Demoted from warn to keep clean syncs
+                // free of recurring noise.
+                tracing::debug!(
+                    "resource-scoped Brightspace auth failure for {}: {}",
+                    path,
+                    status
+                );
             } else {
                 self.mark_auth_failure(status);
             }
