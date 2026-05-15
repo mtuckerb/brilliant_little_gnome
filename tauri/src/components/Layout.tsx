@@ -1,16 +1,28 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { AuthStatus, SyncStatus } from "../types";
+import { useReauthenticate } from "../hooks/useReauthenticate";
 
 interface Props {
   auth: AuthStatus;
   sync: SyncStatus | null;
+  onAuthChange: (auth: AuthStatus) => void;
   children: ReactNode;
 }
 
-export default function Layout({ auth, sync, children }: Props) {
+export default function Layout({ auth, sync, onAuthChange, children }: Props) {
   const loc = useLocation();
   const tabActive = (path: string) => loc.pathname.startsWith(path) ? "has-text-primary" : "";
+  const reauth = useReauthenticate(auth.host, onAuthChange);
+  const authTitle = auth.degraded
+    ? "Session expired — click to re-authenticate"
+    : `Authenticated${auth.host ? ` to ${auth.host}` : ""}${auth.uid ? ` as ${auth.uid}` : ""}`;
+
+  async function handleAuthDotClick() {
+    if (auth.degraded) {
+      await reauth.reauthenticate();
+    }
+  }
 
   return (
     <>
@@ -39,9 +51,19 @@ export default function Layout({ auth, sync, children }: Props) {
             </Link>
           </div>
           <div className="navbar-item">
-            <span className="icon mr-3" title={auth.degraded ? "Session Expired" : "Authenticated"}>
-              <i className={`fas fa-circle ${auth.degraded ? "has-text-danger" : "has-text-success"}`} style={{ fontSize: "0.75rem" }}></i>
-            </span>
+            <button
+              type="button"
+              className={`button is-white mr-3 ${reauth.busy ? "is-loading" : ""}`}
+              title={authTitle}
+              aria-label={authTitle}
+              onClick={handleAuthDotClick}
+              disabled={reauth.busy || !auth.degraded}
+              style={{ paddingLeft: "0.5rem", paddingRight: "0.5rem" }}
+            >
+              <span className="icon">
+                <i className={`fas fa-circle ${auth.degraded ? "has-text-danger" : "has-text-success"}`} style={{ fontSize: "0.75rem" }}></i>
+              </span>
+            </button>
             <Link to="/settings" className="button is-primary is-light" style={{ border: "2px solid #739AC3", fontWeight: "bold" }} title="Settings" aria-label="Settings">
               <span className="icon"><i className="fas fa-cog"></i></span>
             </Link>

@@ -32,7 +32,7 @@ pub struct AppState {
 impl AppState {
     pub async fn initialize(app: AppHandle) -> Result<Self> {
         let pool = db::init(&app).await?;
-        let client = BrightspaceClient::from_db(&pool).await?;
+        let client = BrightspaceClient::from_db(&pool, app.clone()).await?;
         Ok(Self {
             pool,
             client: Arc::new(client),

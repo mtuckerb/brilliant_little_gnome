@@ -6,10 +6,11 @@ use crate::error::{AppError, Result};
 use parking_lot::RwLock;
 use reqwest::{header, Client, StatusCode};
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 
 pub const API_VERSION: &str = "1.40";
 const FRESH_CACHE_SECONDS: i64 = 600;
@@ -22,10 +23,11 @@ pub struct BrightspaceClient {
     pub user_id: RwLock<Option<String>>,
     pub degraded: RwLock<bool>,
     pub http: Client,
+    app: AppHandle,
 }
 
 impl BrightspaceClient {
-    pub async fn from_db(pool: &SqlitePool) -> Result<Self> {
+    pub async fn from_db(pool: &SqlitePool, app: AppHandle) -> Result<Self> {
         let row: Option<(Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT brightspace_host, brightspace_cookie, brightspace_uid, brightspace_user_id FROM user_preferences LIMIT 1",
         )
@@ -45,6 +47,7 @@ impl BrightspaceClient {
             user_id: RwLock::new(user_id),
             degraded: RwLock::new(false),
             http,
+            app,
         })
     }
 
@@ -104,6 +107,21 @@ impl BrightspaceClient {
     pub fn cookie_clone(&self) -> Option<String> { self.cookie.read().clone() }
     pub fn uid_clone(&self) -> Option<String> { self.uid.read().clone() }
     pub fn user_id_clone(&self) -> Option<String> { self.user_id.read().clone() }
+
+    fn mark_auth_failure(&self, status: StatusCode) {
+        *self.degraded.write() = true;
+        let host = self.host.read().clone().unwrap_or_default();
+        if let Err(e) = self.app.emit(
+            "app-event",
+            json!({
+                "kind": "authentication_failure",
+                "code": status.as_u16(),
+                "host": host,
+            }),
+        ) {
+            tracing::warn!("event emit failed for authentication_failure: {}", e);
+        }
+    }
 
     /// GET a JSON path with cache-aware semantics. Returns `Value` so callers can
     /// decide whether the payload is an array, an Objects-wrapped page, etc.
@@ -177,8 +195,8 @@ impl BrightspaceClient {
             }
             Ok(value)
         } else if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-            // Mark degraded; caller falls back to cache.
-            *self.degraded.write() = true;
+            // Mark degraded and notify the UI before caller falls back to cache.
+            self.mark_auth_failure(status);
             let body = resp.text().await.unwrap_or_default();
             Err(AppError::BrightspaceApi { status: status.as_u16(), body })
         } else {
@@ -241,11 +259,12 @@ impl BrightspaceClient {
         let status = resp.status();
         if !status.is_success() {
             if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                *self.degraded.write() = true;
+                self.mark_auth_failure(status);
             }
             let body = resp.text().await.unwrap_or_default();
             return Err(AppError::BrightspaceApi { status: status.as_u16(), body });
         }
+        *self.degraded.write() = false;
         Ok(resp.text().await?)
     }
 
@@ -272,10 +291,11 @@ impl BrightspaceClient {
         let status = resp.status();
         if !status.is_success() {
             if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                *self.degraded.write() = true;
+                self.mark_auth_failure(status);
             }
             return Err(AppError::BrightspaceApi { status: status.as_u16(), body: format!("GET {} -> {}", url, status) });
         }
+        *self.degraded.write() = false;
         let content_type = resp.headers().get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
