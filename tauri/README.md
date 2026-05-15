@@ -59,6 +59,14 @@ nix-shell --run 'npm run check:rust'  # full src-tauri cargo test suite
 
 The npm scripts create the placeholder `dist/` directory that Tauri's compile-time config expects, then run Cargo from `src-tauri/`. The shell exports `PKG_CONFIG_PATH` for OpenSSL and the Linux Tauri libraries, avoiding host-specific setup or manually discovered Cargo/Rust paths.
 
+## iOS / iPadOS
+
+Use `npm run dev:ios` or `npm run dev:ios:remote` only for development; those commands intentionally load the WebView from the Vite dev server so hot module reload works.
+
+Use `npm run ios:build` for a standalone iPhone/iPad artifact, or `npm run ios:open` to open the generated Xcode project for signing, archiving, and installing a release-style build. Release builds embed `dist/` assets via `frontendDist` and do not contact the Vite dev server on launch.
+
+See [`../docs/ios.md`](../docs/ios.md) for the full dev-vs-release flow and offline validation checklist.
+
 ## Layout
 
 ```

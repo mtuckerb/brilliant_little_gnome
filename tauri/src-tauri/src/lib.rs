@@ -17,6 +17,25 @@ pub mod p2p;
 use state::AppState;
 use std::sync::Arc;
 use tauri::Manager;
+
+#[cfg(not(debug_assertions))]
+fn release_webview_uses_embedded_assets(app: &tauri::App) -> anyhow::Result<()> {
+    let Some(main_window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+
+    let url = main_window.url()?;
+    let is_http = url.scheme() == "http" || url.scheme() == "https";
+    let is_tauri_embedded_origin = url.host_str() == Some("tauri.localhost");
+    if is_http && !is_tauri_embedded_origin {
+        anyhow::bail!(
+            "release build refused to start with external WebView origin: {url}. \
+             iOS release builds must load embedded assets from frontendDist, not the Vite dev server."
+        );
+    }
+
+    Ok(())
+}
 #[cfg(feature = "p2p")]
 use tauri::{RunEvent, WindowEvent};
 
@@ -48,6 +67,9 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            #[cfg(not(debug_assertions))]
+            release_webview_uses_embedded_assets(app)?;
+
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
                 let state = AppState::initialize(handle.clone()).await?;
