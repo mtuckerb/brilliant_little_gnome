@@ -12,7 +12,7 @@ pub async fn auth_status(state: AppStateArg<'_>) -> Result<AuthStatus> {
     let c = &state.client;
     Ok(AuthStatus {
         authenticated: c.is_configured(),
-        degraded: false,
+        degraded: c.is_degraded(),
         host: c.host_clone(),
         user_id: c.user_id_clone(),
         uid: c.uid_clone(),
