@@ -1,27 +1,28 @@
 #!/usr/bin/env node
 // Build the iOS app and install it on a connected iPhone/iPad, bypassing
-// `tauri ios dev`. Tauri 2's mobile CLI has an `xcodebuild -exportArchive
-// -exportOptionsPlist <tempfile>` step that intermittently hands xcodebuild
-// a temp path it can't open, exiting 70:
+// `tauri ios dev` (which hits an `-exportOptionsPlist` race in tauri-cli
+// that exits 70 on this project). Uses `tauri ios build` to produce a
+// signed IPA, extracts the .app, and installs via `ios-deploy`.
 //
-//     Error: Couldn't load -exportOptionsPlist The file "…" couldn't be opened
-//
-// `npm run ios:build` produces a valid `.ipa`; we extract the inner `.app`
-// and hand it to `ios-deploy`, which installs and launches on the device.
+// Install speedup: passes `--app_deltas <dir>` so ios-deploy only ships
+// changed files to the device on subsequent installs. First install is
+// the full ~1 GB transfer (~30s); later installs of debug builds are
+// closer to ~5s because the Rust dylib's modified pieces are tiny next
+// to the unchanged majority.
 //
 // Usage:
-//   node scripts/ios-deploy.mjs                  # build then install
+//   node scripts/ios-deploy.mjs                  # build + install
 //   node scripts/ios-deploy.mjs --no-build       # install most recent IPA
 //   node scripts/ios-deploy.mjs --device <udid>  # target a specific device
 //
 // Requires:
-//   - APPLE_DEVELOPMENT_TEAM env var (same as scripts/ios-build.mjs)
-//   - `ios-deploy` on PATH (in shell.nix)
+//   - APPLE_DEVELOPMENT_TEAM env var (set by shell.nix)
+//   - `ios-deploy` and `xcodebuild` on PATH
 //   - device connected via USB and trusted
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
@@ -80,10 +81,20 @@ if (!appName) {
 const appPath = join(payloadDir, appName);
 console.log(`==> Found ${appName}`);
 
-const deployArgs = ['--bundle', appPath, '--justlaunch', '--noninteractive'];
-if (deviceId) deployArgs.push('--id', deviceId);
+// `--app_deltas` lets ios-deploy transfer only changed files on subsequent
+// installs. First install is the full bundle copy; later runs are seconds.
+// The deltas dir is per-project so multiple devices share one cache.
+const deltasDir = resolve(projectDir, 'src-tauri/gen/apple/build/app-deltas');
+mkdirSync(deltasDir, { recursive: true });
 
-console.log('==> Installing on device…');
+console.log('==> Installing on device (incremental via --app_deltas)…');
+const deployArgs = [
+  '--bundle', appPath,
+  '--app_deltas', deltasDir,
+  '--justlaunch',
+  '--noninteractive',
+];
+if (deviceId) deployArgs.push('--id', deviceId);
 const deploy = spawnSync('ios-deploy', deployArgs, { stdio: 'inherit' });
 if (deploy.error && deploy.error.code === 'ENOENT') {
   console.error('ios-deploy not found on PATH. It is in shell.nix — run inside the dev shell.');
