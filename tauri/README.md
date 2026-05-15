@@ -31,6 +31,18 @@ npm install
 npm run tauri dev
 ```
 
+## Reproducible Rust verification
+
+Run Rust checks from the Nix shell so `pkg-config` can find the GTK/glib/pango/cairo/atk stack required by Tauri's Linux dependencies:
+
+```sh
+cd tauri/
+nix-shell --run 'npm run test:rust'   # focused downloads tests
+nix-shell --run 'npm run check:rust'  # full src-tauri cargo test suite
+```
+
+The npm scripts create the placeholder `dist/` directory that Tauri's compile-time config expects, then run Cargo from `src-tauri/`. The shell exports `PKG_CONFIG_PATH` for OpenSSL and the Linux Tauri libraries, avoiding host-specific setup or manually discovered Cargo/Rust paths.
+
 ## Layout
 
 ```
