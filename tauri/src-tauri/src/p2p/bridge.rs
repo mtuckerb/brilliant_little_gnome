@@ -98,6 +98,11 @@ pub struct Bridge {
     doc: Arc<SyncDoc>,
     pool: Option<SqlitePool>,
     events: Option<Arc<dyn BridgeEventSink>>,
+    // Optional reference to the Brightspace client. Only used by the
+    // joiner-side `BootstrapCredentials` path in the engine inbox, so
+    // tests that build a bare `Bridge::new(doc)` can leave it None
+    // without affecting Loro replication behaviour.
+    client: parking_lot::RwLock<Option<Arc<crate::client::BrightspaceClient>>>,
     // Pauses the apply_remote diff callback while `hydrate_from_doc`
     // is walking the doc. Without this, a peer's gossip Update can
     // race with hydrate and apply twice (or out of order). The flag
@@ -120,6 +125,7 @@ impl Bridge {
             doc,
             pool: None,
             events: None,
+            client: parking_lot::RwLock::new(None),
             paused: Arc::new(AtomicBool::new(false)),
             _sub: None,
             _pump: None,
@@ -180,10 +186,25 @@ impl Bridge {
             doc,
             pool: Some(pool),
             events: Some(events),
+            client: parking_lot::RwLock::new(None),
             paused,
             _sub: Some(sub),
             _pump: Some(pump),
         })
+    }
+
+    /// Inject the Brightspace `Client` so the engine's inbox handler can
+    /// persist credentials received via `WireMsg::BootstrapCredentials`.
+    /// Production callers (SyncEngine::start_with_bootstrap) wire this
+    /// immediately after construction; tests skip it.
+    pub fn set_client(&self, client: Arc<crate::client::BrightspaceClient>) {
+        *self.client.write() = Some(client);
+    }
+
+    /// Borrow the configured client. Returns `None` for tests built via
+    /// `Bridge::new(doc)` or when production hasn't called set_client yet.
+    pub fn client(&self) -> Option<Arc<crate::client::BrightspaceClient>> {
+        self.client.read().clone()
     }
 
     /// Borrow the SQLite pool the bridge writes through, if any.

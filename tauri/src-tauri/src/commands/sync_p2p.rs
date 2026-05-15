@@ -146,16 +146,23 @@ pub async fn p2p_consume_pairing(
     state: AppStateArg<'_>,
     args: ConsumePairingArgs,
 ) -> Result<P2pStatus> {
-    if state.sync_engine().is_some() {
-        return Err(AppError::BadRequest(
-            "engine already running — disable before pairing this device".into(),
-        ));
-    }
-
     // Validate + record the nonce locally. (The seed's
     // consumed_pairing_nonces is a separate DB; this one defends
     // against double-pair on the same joiner.)
     let payload = pairing::consume_payload(&state.pool, &args.encoded).await?;
+
+    // If an engine is already running with this device's prior secret
+    // (typical iOS flow: user enables P2P first, which spins up an
+    // engine with a fresh random secret, then taps Scan QR), shut it
+    // down before re-pairing. Otherwise `pair_via_payload`'s
+    // `secrets::store` would overwrite the in-memory secret while the
+    // running engine is still using the old one for its transport.
+    let prior = state.sync.write().take();
+    if let Some(engine) = prior {
+        if let Err(e) = engine.shutdown().await {
+            tracing::warn!("shutting down prior engine before re-pair: {e}");
+        }
+    }
 
     // Persist enabled flag BEFORE bringing up the engine, so a crash
     // mid-pairing still presents as "enabled, restart the app" rather

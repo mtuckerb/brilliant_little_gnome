@@ -70,6 +70,22 @@ pub enum WireMsg {
     /// nonce-check side effect only fires for the QR-pairing path —
     /// ongoing resync between already-paired devices uses StateRequest.
     PairingRequest { nonce: String },
+    /// Seed→joiner one-shot Brightspace credential bootstrap. Sent right
+    /// after the pairing `Snapshot` so a fresh device (e.g. iOS, which
+    /// can't run the desktop child-webview login flow) can adopt the
+    /// seed's already-authenticated session and skip first-time sign-in.
+    ///
+    /// Joiner persists these only if it isn't already authenticated,
+    /// which makes the message safely no-op on re-pairs and prevents an
+    /// older paired device from clobbering a freshly-rotated cookie.
+    /// Credentials never enter the Loro doc, so they don't replicate
+    /// onward beyond this one handshake.
+    BootstrapCredentials {
+        host: String,
+        cookie: String,
+        uid: Option<String>,
+        user_id: Option<String>,
+    },
 }
 
 impl WireMsg {

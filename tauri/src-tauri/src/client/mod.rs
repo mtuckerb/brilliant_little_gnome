@@ -108,6 +108,14 @@ impl BrightspaceClient {
     pub fn uid_clone(&self) -> Option<String> { self.uid.read().clone() }
     pub fn user_id_clone(&self) -> Option<String> { self.user_id.read().clone() }
 
+    /// Emit the same `auth-captured` event the desktop login flow does.
+    /// Used by the P2P bootstrap path to wake up the React layer (which
+    /// re-fetches auth-status and starts a sync) after the joiner adopts
+    /// a paired device's credentials.
+    pub fn emit_auth_captured(&self, host: &str) -> std::result::Result<(), tauri::Error> {
+        self.app.emit("auth-captured", host)
+    }
+
     fn mark_auth_failure(&self, status: StatusCode) {
         *self.degraded.write() = true;
         let host = self.host.read().clone().unwrap_or_default();

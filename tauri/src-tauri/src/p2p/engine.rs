@@ -103,6 +103,9 @@ impl SyncEngine {
         let events: Arc<dyn crate::p2p::bridge::BridgeEventSink> =
             Arc::new(state.events.clone());
         let bridge = Bridge::with_sql(doc.clone(), state.pool.clone(), events);
+        // Inject the live Brightspace client so the joiner-side of
+        // BootstrapCredentials can call `store_credentials` directly.
+        bridge.set_client(state.client.clone());
 
         Self::start_with_parts(store, doc, transport, bridge).await
     }
@@ -264,6 +267,9 @@ impl SyncEngine {
             // built via `Bridge::new` get None and skip nonce checks —
             // the gate is meaningful only when there's a real DB.
             let pool = bridge.pool().cloned();
+            // Client is needed for the joiner-side BootstrapCredentials
+            // path. Same story: tests skip, production has one.
+            let client = bridge.client();
             async move {
                 loop {
                     tokio::select! {
@@ -271,7 +277,15 @@ impl SyncEngine {
                         _ = cancel.cancelled() => break,
                         ev = rx.recv() => match ev {
                             Ok(TransportEvent::Message { from, payload }) => {
-                                handle_inbound(&doc, &transport, pool.as_ref(), &from, payload).await;
+                                handle_inbound(
+                                    &doc,
+                                    &transport,
+                                    pool.as_ref(),
+                                    client.as_ref(),
+                                    &from,
+                                    payload,
+                                )
+                                .await;
                             }
                             Ok(TransportEvent::PeerConnected(id)) => {
                                 info!("peer connected: {id}");
@@ -397,6 +411,7 @@ async fn handle_inbound(
     doc: &SyncDoc,
     transport: &Transport,
     pool: Option<&sqlx::SqlitePool>,
+    client: Option<&Arc<crate::client::BrightspaceClient>>,
     from: &str,
     msg: WireMsg,
 ) {
@@ -454,9 +469,105 @@ async fn handle_inbound(
             };
             if let Err(e) = transport.broadcast(WireMsg::Snapshot { bytes }).await {
                 warn!("pairing snapshot broadcast to {from} failed: {e}");
+                return;
+            }
+            // One-shot credential bootstrap so the joining device (often
+            // a fresh iOS install with no way to drive Brightspace
+            // sign-in) can skip first-time login. Sent after the
+            // snapshot so the joiner already has its overlay data
+            // imported by the time the credentials land. No-op if the
+            // seed itself isn't authenticated, or if we lack a pool
+            // (test wiring).
+            if let Some(pool) = pool {
+                match fetch_bootstrap_credentials(pool).await {
+                    Ok(Some(creds)) => {
+                        if let Err(e) = transport.broadcast(creds).await {
+                            warn!("bootstrap credentials broadcast to {from} failed: {e}");
+                        }
+                    }
+                    Ok(None) => {
+                        // Seed not authenticated — silently skip. Joiner
+                        // will fall back to the manual sign-in flow.
+                    }
+                    Err(e) => warn!("read bootstrap credentials failed: {e}"),
+                }
+            }
+        }
+        WireMsg::BootstrapCredentials { host, cookie, uid, user_id } => {
+            // Joiner-side: persist the seed's session if (and only if)
+            // we don't already have one. The "no clobber" check makes
+            // re-pairing safe and prevents a stale paired device from
+            // overwriting a freshly-rotated cookie on this one.
+            let Some(client) = client else {
+                warn!("ignoring BootstrapCredentials: no client wired");
+                return;
+            };
+            let Some(pool) = pool else {
+                warn!("ignoring BootstrapCredentials: no pool wired");
+                return;
+            };
+            if client.is_configured() {
+                tracing::debug!(
+                    "ignoring BootstrapCredentials from {from}: already authenticated"
+                );
+                return;
+            }
+            match client
+                .store_credentials(
+                    pool,
+                    &host,
+                    &cookie,
+                    uid.as_deref(),
+                    user_id.as_deref(),
+                )
+                .await
+            {
+                Ok(()) => {
+                    tracing::info!(
+                        "adopted Brightspace credentials from paired device ({})",
+                        from
+                    );
+                    // Same app-event the desktop login flow emits on
+                    // success; the React layer already listens for it
+                    // and refreshes auth status / kicks off a sync.
+                    let _ = client.emit_auth_captured(&host);
+                }
+                Err(e) => warn!("store_credentials from {from} failed: {e}"),
             }
         }
     }
+}
+
+/// Read the seed's current Brightspace credentials out of
+/// `user_preferences` for a `BootstrapCredentials` push. Returns
+/// `Ok(None)` if the seed isn't currently authenticated, so the seed
+/// can quietly skip the push for that joiner.
+async fn fetch_bootstrap_credentials(
+    pool: &sqlx::SqlitePool,
+) -> Result<Option<WireMsg>> {
+    let row: Option<(
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT brightspace_host, brightspace_cookie, brightspace_uid, brightspace_user_id \
+         FROM user_preferences LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let Some((Some(host), Some(cookie), uid, user_id)) = row else {
+        return Ok(None);
+    };
+    if host.trim().is_empty() || cookie.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(WireMsg::BootstrapCredentials {
+        host,
+        cookie,
+        uid,
+        user_id,
+    }))
 }
 
 /// Read the iroh node secret + shared sync_doc_secret, generating
