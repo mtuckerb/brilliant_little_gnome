@@ -10,14 +10,20 @@ use super::AppStateArg;
 use crate::error::{AppError, Result};
 use crate::p2p::pairing::{self, PairingPayload};
 use crate::p2p::SyncEngine;
+use crate::state::AppState;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// How long the joiner waits for the seed's snapshot reply before
 /// giving up. The QR is one-shot anyway — a hung handshake means
 /// network failure or replay rejection, both of which the user needs
 /// surfaced.
-const PAIR_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(15);
+///
+/// 30s is comfortably more than the time iroh needs for first-time
+/// dial + relay handshake on a cold WAN connection. The original 15s
+/// was tight enough to fail intermittently on mobile networks.
+const PAIR_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Status payload returned by `p2p_status` / `p2p_enable` / `p2p_consume_pairing`
 /// / `p2p_rotate`. Mirrors design.md §8.
@@ -169,13 +175,27 @@ pub async fn p2p_consume_pairing(
     // than silently rolling back.
     set_enabled_flag(&state, true).await?;
 
-    let engine = SyncEngine::pair_via_payload(state.inner().clone(), &payload).await?;
+    let engine = match SyncEngine::pair_via_payload(state.inner().clone(), &payload).await {
+        Ok(e) => e,
+        Err(err) => {
+            // Engine couldn't even start (transport failure etc). Bring
+            // up a regular non-pairing engine so storage stats and the
+            // Settings page don't display "engine not running" until the
+            // next app restart.
+            recover_engine(state.inner().clone()).await;
+            return Err(err);
+        }
+    };
 
     // Wait for the seed's snapshot reply; if it never comes, the
-    // pairing failed (network / replay / wrong topic). Surface to
-    // the user rather than silently leaving an empty engine running.
+    // pairing failed (network / replay / wrong topic). Surface to the
+    // user — but ALSO leave a regular engine running, otherwise the
+    // iPad is stuck with `p2p_enabled = 1` but no engine, every
+    // storage-stats poll surfaces as a confusing "engine not running"
+    // error to the user.
     if let Err(e) = engine.await_initial_snapshot(PAIR_SNAPSHOT_TIMEOUT).await {
         engine.shutdown().await.ok();
+        recover_engine(state.inner().clone()).await;
         return Err(AppError::Other(format!(
             "pairing handshake failed: {e}"
         )));
@@ -192,6 +212,25 @@ pub async fn p2p_consume_pairing(
 
     *state.sync.write() = Some(engine);
     Ok(build_status(&state).await)
+}
+
+/// Best-effort restart of a regular (non-pairing) engine after a failed
+/// pairing handshake. The previous engine was shut down and its secret
+/// overwritten in `secrets::store`, so the new engine uses the seed's
+/// shared secret. Future connectivity attempts can still pick the
+/// session up via relay discovery if the seed comes online later.
+///
+/// Logs and swallows errors: this is recovery for an already-failed
+/// flow, so we don't want to turn one error into two.
+async fn recover_engine(state: Arc<AppState>) {
+    match SyncEngine::start(state.clone()).await {
+        Ok(e) => {
+            *state.sync.write() = Some(e);
+        }
+        Err(e) => {
+            tracing::warn!("post-pair-failure engine restart failed: {e}");
+        }
+    }
 }
 
 /// On-disk sync persistence numbers, surfaced in Settings → Sync.
