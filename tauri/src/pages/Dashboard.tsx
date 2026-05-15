@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import type { Course } from "../types";
+import { displayCourseName, type Course } from "../types";
 
 export default function Dashboard() {
   const [courses, setCourses] = useState<Course[] | null>(null);
@@ -57,7 +57,7 @@ export default function Dashboard() {
                       style={{ color: c.custom_color || undefined }}
                     >
                       {c.is_pinned && <i className="fas fa-thumbtack has-text-warning mr-2"></i>}
-                      {c.code ? `${c.code} - ${c.name}` : c.name}
+                      {c.code ? `${c.code} - ${displayCourseName(c)}` : displayCourseName(c)}
                     </Link>
                   </td>
                   <td className="has-text-right">

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import type { Course } from "../types";
+import { displayCourseName, type Course } from "../types";
 
 export default function Archive() {
   const [courses, setCourses] = useState<Course[] | null>(null);
@@ -28,7 +28,7 @@ export default function Archive() {
           <div key={c.org_unit_id} className="is-flex is-justify-content-space-between py-2" style={{ borderBottom: "1px solid #eee" }}>
             <div>
               <Link to={`/course/${c.org_unit_id}/grades`} style={{ color: c.custom_color || undefined }}>
-                <strong>{c.code || c.name}</strong>
+                <strong>{c.code || displayCourseName(c)}</strong>
               </Link>
               <span className="ml-2 has-text-grey is-size-7">{c.semester} · {c.status}</span>
             </div>

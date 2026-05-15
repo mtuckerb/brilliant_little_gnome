@@ -201,6 +201,33 @@ class CourseController < BaseController
     redirect back
   end
 
+  post '/course/:id/update_name' do
+    halt 404, "Course not found" unless @course
+
+    requested_name = params[:name].to_s.strip
+    previous_code = @course.code
+    @course.custom_name = requested_name.empty? ? nil : requested_name
+
+    source_name = @course.custom_name.presence || @course.name
+    extracted_code = source_name.present? ? $client.extract_course_code(source_name) : nil
+    @course.code = extracted_code.presence || previous_code
+    @course.save!
+
+    if request.xhr?
+      content_type :json
+      {
+        status: 'ok',
+        name: @course.name,
+        custom_name: @course.custom_name,
+        display_name: @course.display_name,
+        code: @course.code
+      }.to_json
+    else
+      flash[:success] = "Course title saved. Code updated to #{@course.code}."
+      redirect back
+    end
+  end
+
   post '/course/:id/update_target_grade' do
     @course.update(target_grade: params[:target_grade]) if @course
     redirect back

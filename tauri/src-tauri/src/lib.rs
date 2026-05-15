@@ -79,6 +79,7 @@ pub fn run() {
             commands::courses::get_course,
             commands::courses::reorder_courses,
             commands::courses::update_course_color,
+            commands::courses::update_course_name,
             commands::courses::update_course_units,
             commands::courses::update_course_target_grade,
             commands::courses::update_course_end_of_week,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import type { Course } from "../types";
+import { displayCourseName, type Course } from "../types";
 import SyllabusPanel from "../components/SyllabusPanel";
 import { triggerDownload } from "../lib/download";
 import CourseNav from "../components/CourseNav";
@@ -14,6 +14,8 @@ export default function CourseDetail() {
   const [err, setErr] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -55,6 +57,20 @@ export default function CourseDetail() {
     await api.updateCourseEndOfWeek(course.org_unit_id, n).catch(() => {});
   }
 
+  async function onTitleSave() {
+    if (!course) return;
+    const previous = course;
+    setCourse({ ...course, custom_name: titleDraft.trim() === "" ? null : titleDraft.trim() });
+    setEditingTitle(false);
+    try {
+      const updated = await api.updateCourseName(course.org_unit_id, titleDraft);
+      setCourse(updated);
+    } catch (e) {
+      setCourse(previous);
+      alert(`Title save failed: ${String((e as { message?: string })?.message ?? e)}`);
+    }
+  }
+
   async function onDownloadEverything() {
     if (!course || downloading) return;
     if (!confirm("Download every file in this course? This may take a while for large courses.")) return;
@@ -83,13 +99,14 @@ export default function CourseDetail() {
 
   const accent = course.custom_color || "#739AC3";
   const banner = course.banner_url;
+  const courseTitle = displayCourseName(course);
 
   return (
     <div>
       <nav className="breadcrumb mb-3">
         <ul>
           <li><Link to="/dashboard">Dashboard</Link></li>
-          <li className="is-active"><a>{course.name}</a></li>
+          <li className="is-active"><a>{courseTitle}</a></li>
         </ul>
       </nav>
       <CourseNav courseId={course.org_unit_id} />
@@ -117,12 +134,35 @@ export default function CourseDetail() {
             padding: "3rem 2rem",
           }}
         >
-          <h1
-            className="title is-2 has-text-white"
-            style={{ textShadow: "0 2px 10px rgba(0,0,0,0.8)", lineHeight: 1.1 }}
-          >
-            {course.name}
-          </h1>
+          {editingTitle ? (
+            <div className="field has-addons" style={{ maxWidth: 900 }}>
+              <div className="control is-expanded">
+                <input
+                  className="input is-large"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") onTitleSave(); if (e.key === "Escape") setEditingTitle(false); }}
+                  autoFocus
+                />
+              </div>
+              <div className="control"><button className="button is-light is-large" onClick={onTitleSave}>Save</button></div>
+              <div className="control"><button className="button is-dark is-large" onClick={() => setEditingTitle(false)}>Cancel</button></div>
+            </div>
+          ) : (
+            <h1
+              className="title is-2 has-text-white is-flex is-align-items-center"
+              style={{ textShadow: "0 2px 10px rgba(0,0,0,0.8)", lineHeight: 1.1, gap: 10 }}
+            >
+              <span>{courseTitle}</span>
+              <button
+                className="button is-small is-light is-outlined"
+                title="Edit course title"
+                onClick={() => { setTitleDraft(courseTitle); setEditingTitle(true); }}
+              >
+                <span className="icon"><i className="fas fa-pencil-alt"></i></span>
+              </button>
+            </h1>
+          )}
           {course.code && (
             <p
               className="is-size-7 has-text-white is-uppercase"

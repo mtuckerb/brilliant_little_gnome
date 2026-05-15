@@ -172,11 +172,14 @@ module Brilliant
           courses.each do |c|
             next if c.nil? || c['OrgUnit'].nil?
             course = Course.find_or_initialize_by(org_unit_id: c['OrgUnit']['Id'].to_s)
-            course.name = c['OrgUnit']['Name'] if c['OrgUnit']['Name'].present? && !c['OrgUnit']['Name'].match?(/^\d+$/)
-            course.code = c['OrgUnit']['Code']
+            incoming_name = c['OrgUnit']['Name']
+            course.name = incoming_name if incoming_name.present? && !incoming_name.match?(/^\d+$/)
+            unless course.custom_name.present?
+              course.code = client.extract_course_code(course.name).presence || c['OrgUnit']['Code']
+            end
             course.is_pinned = !c['PinDate'].nil?
             course.last_accessed_at = (Time.zone.parse(c.dig('Access', 'LastAccessed')) rescue nil)
-            course.semester = client.extract_semester_from_name(course.name)
+            course.semester = client.extract_semester_from_name(course.display_name)
             
             img_url = extract_banner_url(c['OrgUnit'])
             if img_url && !img_url.empty?

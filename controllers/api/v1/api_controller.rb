@@ -45,7 +45,7 @@ module Api
       # Course Discovery
       get '/api/v1/courses' do
         $client.sync_all_courses_proactively
-        Course.all.order(is_pinned: :desc, sort_order: :asc, last_accessed_at: :desc).to_json
+        Course.all.order(is_pinned: :desc, sort_order: :asc, last_accessed_at: :desc).map(&:as_json).to_json
       end
 
       post '/api/v1/assignments' do
@@ -87,7 +87,7 @@ module Api
         course = Course.find_by(org_unit_id: params[:id])
         halt 404, { error: "Course not found" }.to_json unless course
 
-        info = extract_course_info(course.name || "", course&.org_unit_id)
+        info = extract_course_info(course.display_name || "", course&.org_unit_id)
         toc = build_toc_tree(params[:id])
 
         # Proactively background sync the most important parts of the course
@@ -403,7 +403,7 @@ module Api
         halt 404, { error: "Module not found" }.to_json unless module_obj
 
         # Sync tasks
-        tasks = synthesize_tasks(module_obj, course.name)
+        tasks = synthesize_tasks(module_obj, course.display_name)
         tasks.each { |t| t[:name_html] = render_markdown_inline(t[:name]) }
 
         # Enrich module topics with description_html
@@ -413,7 +413,7 @@ module Api
           course: course,
           module: module_obj,
           synthetic_tasks: tasks,
-          course_info: extract_course_info(course.name, course&.org_unit_id),
+          course_info: extract_course_info(course.display_name, course&.org_unit_id),
           download_count: (module_obj['Topics'] || []).select { |t| t['Url'] && t['Url'].start_with?('/content/enforced/') }.size
         }.to_json
       end
@@ -526,7 +526,7 @@ module Api
           course = course_map[n.course_id.to_s]
           course_name_to_use = n.course_name
           if (course_name_to_use.nil? || course_name_to_use.match?(/^\d+$/)) && course
-            course_name_to_use = course.name
+            course_name_to_use = course.display_name
           end
 
           info = extract_course_info(course_name_to_use || "", course&.org_unit_id)
@@ -534,7 +534,7 @@ module Api
           # Force the pill_style to use the custom_color from the actual course handle if available
           pill_style = info[:pill_style]
           if course && course.custom_color.present?
-            pill_style = CourseHelpers.course_pill_style(course.name, info[:semester], course.org_unit_id)
+            pill_style = CourseHelpers.course_pill_style(course.display_name, info[:semester], course.org_unit_id)
           end
 
           n.as_json.merge({
@@ -567,10 +567,10 @@ module Api
           show_recent_updates: @user_prefs.show_recent_updates,
           semester_grades: summary_data[:semester_grades].map { |sg|
              c = sg[:course]
-             info = extract_course_info(c.name || "", c.org_unit_id)
+             info = extract_course_info(c.display_name || "", c.org_unit_id)
              {
                org_unit_id: c.org_unit_id,
-               name: c.name,
+               name: c.display_name,
                short_name: info[:short_name],
                prefix: info[:prefix],
                pill_style: info[:pill_style],
@@ -580,10 +580,10 @@ module Api
              }
           },
           courses: Course.all.order(is_pinned: :desc, sort_order: :asc, last_accessed_at: :desc).limit(100).map { |c|
-             info = extract_course_info(c.name || "", c.org_unit_id)
+             info = extract_course_info(c.display_name || "", c.org_unit_id)
              {
                org_unit_id: c.org_unit_id,
-               name: c.name,
+               name: c.display_name,
                short_name: info[:short_name],
                prefix: info[:prefix],
                pill_style: info[:pill_style],
@@ -594,7 +594,7 @@ module Api
              }
           },
           upcoming_assignments: Assignment.where(completed: false).where("due_date > ? AND due_date <= ?", Time.current, Time.current + 14.days).order(optional: :asc, due_date: :asc).limit(15).map { |a|
-            c_name = a.course&.name || ""
+            c_name = a.course&.display_name || ""
             info = extract_course_info(c_name, a.course_id)
             a.as_json.merge(
               'course_name' => c_name,
@@ -608,7 +608,7 @@ module Api
             course = Course.find_by(org_unit_id: n.course_id.to_s)
             c_name = n.course_name
             if (c_name.to_s.empty? || c_name.to_s.match?(/^\d+$/)) && course
-              c_name = course.name if course.name.present? && !course.name.to_s.match?(/^\d+$/)
+              c_name = course.display_name if course.display_name.present? && !course.display_name.to_s.match?(/^\d+$/)
             end
 
             info = extract_course_info(c_name || "", n.course_id)
@@ -616,7 +616,7 @@ module Api
             # Use custom color if available
             pill_style = info[:pill_style]
             if course && course.respond_to?(:custom_color) && course.custom_color.present?
-              pill_style = CourseHelpers.course_pill_style(course.name, info[:semester], course&.org_unit_id)
+              pill_style = CourseHelpers.course_pill_style(course.display_name, info[:semester], course&.org_unit_id)
             end
 
             n.as_json.merge(
@@ -757,8 +757,8 @@ module Api
         assignments.each do |a|
           date_key = a.due_date.in_time_zone(tz_name).to_date.to_s
           items_by_date[date_key] ||= []
-          c_name = a.course&.name
-          info = extract_course_info(a.course&.name || "", a.course&.org_unit_id)
+          c_name = a.course&.display_name
+          info = extract_course_info(a.course&.display_name || "", a.course&.org_unit_id)
 
           items_by_date[date_key] << {
             type: 'assignment', id: a.brightspace_id, db_id: a.id, course_id: a.course_id,
@@ -776,8 +776,8 @@ module Api
           items_by_date[date_key] ||= []
           next if items_by_date[date_key].any? { |e| e[:name] == g.name }
 
-          c_name = g.course&.name
-          info = extract_course_info(g.course&.name || "", g.course&.org_unit_id)
+          c_name = g.course&.display_name
+          info = extract_course_info(g.course&.display_name || "", g.course&.org_unit_id)
 
           items_by_date[date_key] << {
             type: 'grade', id: g.brightspace_id, db_id: g.id, course_id: g.course_id,

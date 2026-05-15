@@ -4,6 +4,7 @@
 export interface Course {
   org_unit_id: string;
   name: string;
+  custom_name: string | null;
   code: string | null;
   semester: string | null;
   is_pinned: boolean;
@@ -15,6 +16,10 @@ export interface Course {
   sort_order: number | null;
   end_of_week_day: number | null;
   last_accessed_at: string | null;
+}
+
+export function displayCourseName(course: Course): string {
+  return course.custom_name || course.name;
 }
 
 export interface Grade {

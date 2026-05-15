@@ -1,6 +1,6 @@
 // Course/enrollment sync. Pulls /enrollments/myenrollments and upserts into
-// `courses` while preserving user-edited fields (custom_color, units, target_grade,
-// is_pinned, sort_order).
+// `courses` while preserving user-edited fields (custom_name, custom_color, units,
+// target_grade, is_pinned, sort_order).
 
 use crate::error::Result;
 use crate::state::AppState;
@@ -42,7 +42,7 @@ pub async fn sync_enrollments(state: &AppState) -> Result<Vec<String>> {
              VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
              ON CONFLICT(org_unit_id) DO UPDATE SET
                 name = excluded.name,
-                code = excluded.code,
+                code = CASE WHEN courses.custom_name IS NULL OR courses.custom_name = '' THEN excluded.code ELSE courses.code END,
                 semester = COALESCE(excluded.semester, courses.semester),
                 is_pinned = excluded.is_pinned,
                 banner_url = COALESCE(excluded.banner_url, courses.banner_url),

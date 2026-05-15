@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import type { Assignment, Course } from "../types";
+import { displayCourseName, type Assignment, type Course } from "../types";
 
 // Single-row presentation used by both Calendar and Assignments. Caller owns
 // "show completed" state and the leaving-animation set; this component is just
@@ -30,7 +30,7 @@ export default function AssignmentRow({ assignment: a, course: c, leaving, onTog
         {showCourse && c && (
           <>
             <Link to={`/course/${c.org_unit_id}/assignments`} style={{ color: c.custom_color || undefined }}>
-              <strong>{c.code ? `${c.code} - ${c.name}` : c.name}</strong>
+              <strong>{c.code ? `${c.code} - ${displayCourseName(c)}` : displayCourseName(c)}</strong>
             </Link>
             <span className="mx-2 has-text-grey-light">·</span>
           </>

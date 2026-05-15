@@ -25,7 +25,7 @@
   <div id="course-grid" class="columns is-multiline">
     <!-- Rendered via JS for consistency or statically if needed -->
     <% locals[:courses].each do |c| %>
-      <% info = extract_course_info(c.name) %>
+      <% info = extract_course_info(c.display_name) %>
       <div class="column is-6 course-item-box" data-semester="<%= c.semester %>">
         <div class="box p-0 course-card-wide is-clickable" 
              onclick="window.location='/course/<%= c.org_unit_id %>'"
@@ -44,7 +44,7 @@
               <% end %>
               
               <div class="mb-2">
-                <h3 class="title is-6 mb-1" style="line-height: 1.2;"><%= info[:short_name] || c.name %></h3>
+                <h3 class="title is-6 mb-1" style="line-height: 1.2;"><%= info[:short_name] || c.display_name %></h3>
                 <% if info[:prefix] %>
                   <div><span class="px-1" style="border-radius: 3px; font-size: 0.7rem; font-weight: bold; <%= info[:pill_style] %>"><%= info[:prefix] %></span></div>
                 <% end %>

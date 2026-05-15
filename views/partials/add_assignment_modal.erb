@@ -76,7 +76,7 @@ async function openAddAssignmentModal() {
       courses.forEach(course => {
         const option = document.createElement('option');
         option.value = course.org_unit_id;
-        option.textContent = course.name;
+        option.textContent = course.display_name || course.name;
         courseSelect.appendChild(option);
       });
       coursesLoaded = true;

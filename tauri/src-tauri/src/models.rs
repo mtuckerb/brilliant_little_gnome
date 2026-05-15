@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Course {
     pub org_unit_id: String,
     pub name: String,
+    pub custom_name: Option<String>,
     pub code: Option<String>,
     pub semester: Option<String>,
     #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]

@@ -330,7 +330,7 @@ module CourseHelpers
     if full_name.to_s.match?(/^\d+$/)
       org_unit_id ||= full_name.to_s
       course = Course.find_by(org_unit_id: org_unit_id)
-      full_name = course.name if course && course.name.present? && !course.name.to_s.match?(/^\d+$/)
+      full_name = course.display_name if course && course.display_name.present? && !course.display_name.to_s.match?(/^\d+$/)
     end
 
     # Pattern: SWO 370:0001-Human Behav (Online) (2026 Spring)
@@ -416,12 +416,12 @@ module CourseHelpers
 
     # 1. Courses
     ::Course.where("lower(name) LIKE ? OR lower(code) LIKE ?", q, q).limit(5).each do |c|
-      results << { type: 'course', title: c.name, url: "/course/#{c.org_unit_id}", subtitle: c.code, icon: 'fas fa-graduation-cap' }
+      results << { type: 'course', title: c.display_name, url: "/course/#{c.org_unit_id}", subtitle: c.code, icon: 'fas fa-graduation-cap' }
     end
 
     # 2. Assignments
     ::Assignment.includes(:course).where("lower(assignments.name) LIKE ? OR lower(description) LIKE ?", q, q).limit(10).each do |a|
-      results << { type: 'assignment', title: a.name, url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}", subtitle: a.course&.name, icon: 'fas fa-tasks' }
+      results << { type: 'assignment', title: a.name, url: "/course/#{a.course_id}/assignments/#{a.brightspace_id}", subtitle: a.course&.display_name, icon: 'fas fa-tasks' }
     end
 
     # 3. Content Items (Files/Modules)

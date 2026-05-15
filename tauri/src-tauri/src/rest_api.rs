@@ -219,7 +219,7 @@ async fn token(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Js
 async fn list_courses(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
-            'org_unit_id', org_unit_id, 'name', name, 'code', code, 'semester', semester,
+            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'semester', semester,
             'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url,
             'units', units, 'target_grade', target_grade, 'status', status,
             'sort_order', sort_order, 'last_accessed_at', last_accessed_at
@@ -240,7 +240,7 @@ async fn get_course(
 ) -> std::result::Result<Json<Value>, Response> {
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT json_object(
-            'org_unit_id', org_unit_id, 'name', name, 'code', code, 'semester', semester,
+            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'semester', semester,
             'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url,
             'units', units, 'target_grade', target_grade, 'status', status,
             'sort_order', sort_order, 'last_accessed_at', last_accessed_at
@@ -425,7 +425,7 @@ async fn notifications(
 async fn dashboard_summary(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
     let courses: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
-            'org_unit_id', org_unit_id, 'name', name, 'code', code, 'semester', semester,
+            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'semester', semester,
             'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url
          ) FROM courses ORDER BY is_pinned DESC, sort_order ASC, last_accessed_at DESC LIMIT 100",
     )
