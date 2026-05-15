@@ -152,6 +152,10 @@ impl SyncEngine {
         // Send the pairing request now. Gossip won't have a neighbor
         // yet — the broadcast queues into the iroh send buffer and
         // ships once the dial completes (typically <1s in practice).
+        info!(
+            "sending pairing request to seed {seed} with nonce {}",
+            payload.nonce
+        );
         engine
             .transport
             .broadcast(WireMsg::PairingRequest {
@@ -415,6 +419,7 @@ async fn handle_inbound(
     from: &str,
     msg: WireMsg,
 ) {
+    info!("inbound from {from}: {}", wire_kind(&msg));
     match msg {
         WireMsg::Update { bytes } | WireMsg::Snapshot { bytes } => {
             if let Err(e) = doc.doc().import(&bytes) {
@@ -535,6 +540,17 @@ async fn handle_inbound(
                 Err(e) => warn!("store_credentials from {from} failed: {e}"),
             }
         }
+    }
+}
+
+fn wire_kind(msg: &WireMsg) -> &'static str {
+    match msg {
+        WireMsg::Update { .. } => "Update",
+        WireMsg::Snapshot { .. } => "Snapshot",
+        WireMsg::StateRequest { .. } => "StateRequest",
+        WireMsg::StateResponse { .. } => "StateResponse",
+        WireMsg::PairingRequest { .. } => "PairingRequest",
+        WireMsg::BootstrapCredentials { .. } => "BootstrapCredentials",
     }
 }
 
@@ -1379,5 +1395,100 @@ mod tests {
         timeout(Duration::from_secs(60), body)
             .await
             .expect("three-engine convergence test exceeded 60s");
+    }
+
+    /// Bootstrap-credentials seed-side reads: when there's no
+    /// authenticated session in `user_preferences`, we must return
+    /// Ok(None) so the seed silently skips the credential push.
+    /// Joiner falls back to its own sign-in flow in that case.
+    mod bootstrap_credentials {
+        use super::super::{fetch_bootstrap_credentials, WireMsg};
+        use sqlx::sqlite::SqlitePoolOptions;
+        use sqlx::SqlitePool;
+
+        async fn mem_pool() -> SqlitePool {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+            sqlx::query("INSERT INTO user_preferences (api_port) VALUES (4567)")
+                .execute(&pool)
+                .await
+                .unwrap();
+            pool
+        }
+
+        #[tokio::test]
+        async fn returns_none_when_no_user_prefs_row() {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+            // Note: did NOT insert a user_preferences row.
+            let res = fetch_bootstrap_credentials(&pool).await.unwrap();
+            assert!(res.is_none(), "no row → no credentials to bootstrap");
+        }
+
+        #[tokio::test]
+        async fn returns_none_when_host_or_cookie_missing() {
+            let pool = mem_pool().await;
+            // Default-inserted row has both host and cookie NULL.
+            let res = fetch_bootstrap_credentials(&pool).await.unwrap();
+            assert!(res.is_none(), "NULL host/cookie → no creds");
+
+            // Set host but leave cookie NULL.
+            sqlx::query("UPDATE user_preferences SET brightspace_host = 'courses.example.edu'")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let res = fetch_bootstrap_credentials(&pool).await.unwrap();
+            assert!(res.is_none(), "NULL cookie → no creds");
+
+            // Set both, but cookie is blank.
+            sqlx::query("UPDATE user_preferences SET brightspace_cookie = '   '")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let res = fetch_bootstrap_credentials(&pool).await.unwrap();
+            assert!(res.is_none(), "whitespace-only cookie → no creds");
+        }
+
+        #[tokio::test]
+        async fn returns_full_payload_when_authenticated() {
+            let pool = mem_pool().await;
+            sqlx::query(
+                "UPDATE user_preferences SET \
+                 brightspace_host = 'courses.example.edu', \
+                 brightspace_cookie = 'd2lSessionVal=abc123; d2lSecureSessionVal=xyz789', \
+                 brightspace_uid = 'tucker-uid-001', \
+                 brightspace_user_id = '987654'",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            let msg = fetch_bootstrap_credentials(&pool)
+                .await
+                .unwrap()
+                .expect("should yield credentials");
+            match msg {
+                WireMsg::BootstrapCredentials {
+                    host,
+                    cookie,
+                    uid,
+                    user_id,
+                } => {
+                    assert_eq!(host, "courses.example.edu");
+                    assert_eq!(cookie, "d2lSessionVal=abc123; d2lSecureSessionVal=xyz789");
+                    assert_eq!(uid.as_deref(), Some("tucker-uid-001"));
+                    assert_eq!(user_id.as_deref(), Some("987654"));
+                }
+                other => panic!("unexpected wire kind: {other:?}"),
+            }
+        }
     }
 }
