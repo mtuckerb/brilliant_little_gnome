@@ -68,7 +68,7 @@ function AppInner() {
   }
 
   return (
-    <Layout auth={auth} sync={sync}>
+    <Layout auth={auth} sync={sync} onAuthChange={setAuth}>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useState } from "react";
 import { api } from "../api";
+import { useReauthenticate } from "../hooks/useReauthenticate";
 import type { AuthStatus } from "../types";
 
 interface Props {
@@ -12,6 +12,7 @@ export default function Setup({ onComplete }: Props) {
   const [cookies, setCookies] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const browserLogin = useReauthenticate(host, onComplete);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -32,35 +33,9 @@ export default function Setup({ onComplete }: Props) {
   // d2lSessionVal + d2lSecureSessionVal arrive it persists them and emits
   // `auth-captured`.
   async function loginWithBrowser() {
-    setBusy(true);
     setErr(null);
-    try {
-      await api.openLoginWindow(host);
-      // wait for backend to confirm capture
-    } catch (e: any) {
-      setErr(String(e?.message ?? e));
-      setBusy(false);
-    }
+    await browserLogin.reauthenticate();
   }
-
-  useEffect(() => {
-    const unlistenCaptured = listen<string>("auth-captured", async () => {
-      try {
-        const auth = await api.authStatus();
-        onComplete(auth);
-      } finally {
-        setBusy(false);
-      }
-    });
-    const unlistenTimeout = listen<string>("auth-capture-timeout", () => {
-      setErr("Login timed out. Please try again.");
-      setBusy(false);
-    });
-    return () => {
-      unlistenCaptured.then((u) => u());
-      unlistenTimeout.then((u) => u());
-    };
-  }, [onComplete]);
 
   return (
     <div className="main-content container" style={{ maxWidth: 640 }}>
@@ -80,13 +55,13 @@ export default function Setup({ onComplete }: Props) {
           </div>
           <p className="help">Either paste your cookies directly, or use the login button below to capture them in a Brightspace browser window.</p>
         </div>
-        {err && <div className="notification is-danger is-light">{err}</div>}
+        {(err || browserLogin.error) && <div className="notification is-danger is-light">{err || browserLogin.error}</div>}
         <div className="field is-grouped">
           <div className="control">
             <button type="submit" className={`button is-primary ${busy ? "is-loading" : ""}`} disabled={busy || !host}>Save</button>
           </div>
           <div className="control">
-            <button type="button" className="button is-link is-light" onClick={loginWithBrowser} disabled={busy || !host}>
+            <button type="button" className={`button is-link is-light ${browserLogin.busy ? "is-loading" : ""}`} onClick={loginWithBrowser} disabled={busy || browserLogin.busy || !host}>
               Log in with browser
             </button>
           </div>
