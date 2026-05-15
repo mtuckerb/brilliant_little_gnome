@@ -103,6 +103,13 @@ tempfile = "=3.14.0"
 # Cargo's feature unification adds these only at test time.
 iroh = { version = "=0.98.2", features = ["test-utils"] }
 
+[profile.release]
+debug = false
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
 [features]
 default = ["custom-protocol", "p2p"]
 custom-protocol = ["tauri/custom-protocol"]
