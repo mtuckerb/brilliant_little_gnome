@@ -108,6 +108,11 @@ pkgs.mkShell {
   shellHook = ''
     export PKG_CONFIG_PATH="${lib.makeSearchPathOutput "dev" "lib/pkgconfig" pkgConfigDeps}:${lib.makeSearchPath "lib/pkgconfig" pkgConfigDeps}:$PKG_CONFIG_PATH"
     export RUST_BACKTRACE=1
+    # Apple Team ID for iOS code-signing (consumed by scripts/ios-build.mjs
+    # and `tauri ios build`). Matches the `developmentTeam` already set in
+    # tauri.conf.json. Override locally if a different signing identity is
+    # available — e.g. `APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX npm run dev:ios`.
+    export APPLE_DEVELOPMENT_TEAM="''${APPLE_DEVELOPMENT_TEAM:-QDWAV324SU}"
     echo "brilliant-tauri dev shell — run: npm install && npm run tauri dev"
     echo "Rust checks: nix-shell --run 'npm run test:rust'"
   '';
