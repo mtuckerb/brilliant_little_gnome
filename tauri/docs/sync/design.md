@@ -239,8 +239,9 @@ takes care of ordering.
      identity.
    - `sync_doc_secret` (32 random bytes) — shared across all paired devices.
 2. Persist both into `app_state` (new migration `0005_sync.sql`).
-3. Topic ID = `blake3(sync_doc_secret || "brilliant-sync-v1")`.
-4. The first device is now the implicit "seed"; its current Loro doc is the
+3. Maintain the durable peer roster in `paired_devices(id, public_key, last_seen_at, label)` (migration `0008_paired_devices.sql`). In Phase 2, `id` and `public_key` are both the iroh EndpointId/NodeId string because that value is the public-key-derived stable dial/display identity; no shared secrets or Brightspace credentials are stored there.
+4. Topic ID = `blake3(sync_doc_secret || "brilliant-sync-v1")`.
+5. The first device is now the implicit "seed"; its current Loro doc is the
    initial state.
 
 ### Add a device (QR pairing)
