@@ -123,6 +123,10 @@ impl BrightspaceClient {
         }
     }
 
+    fn is_resource_scoped_auth_failure(path: &str, status: StatusCode) -> bool {
+        status == StatusCode::FORBIDDEN && is_discussion_resource_path(path)
+    }
+
     /// GET a JSON path with cache-aware semantics. Returns `Value` so callers can
     /// decide whether the payload is an array, an Objects-wrapped page, etc.
     ///
@@ -195,8 +199,15 @@ impl BrightspaceClient {
             }
             Ok(value)
         } else if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-            // Mark degraded and notify the UI before caller falls back to cache.
-            self.mark_auth_failure(status);
+            // 401s and most 403s are treated as global auth failures. Discussion
+            // API 403s are often course/forum/topic-scoped permissions problems;
+            // do not force global re-auth for those unless an independent auth
+            // validation call fails elsewhere.
+            if Self::is_resource_scoped_auth_failure(path, status) {
+                tracing::warn!("resource-scoped Brightspace auth failure for {}: {}", path, status);
+            } else {
+                self.mark_auth_failure(status);
+            }
             let body = resp.text().await.unwrap_or_default();
             Err(AppError::BrightspaceApi { status: status.as_u16(), body })
         } else {
@@ -454,6 +465,18 @@ pub fn ensure_array(data: &Value) -> Vec<Value> {
     }
 }
 
+fn is_discussion_resource_path(path: &str) -> bool {
+    let path_only = path.split('?').next().unwrap_or(path);
+    let Some(idx) = path_only.find("/discussions/") else { return false; };
+    let rest = &path_only[idx + "/discussions/".len()..];
+    rest == "topics/"
+        || rest == "topics"
+        || rest.starts_with("topics/")
+        || rest == "forums/"
+        || rest == "forums"
+        || rest.starts_with("forums/")
+}
+
 fn normalize_path(p: &str) -> String {
     // Collapse double slashes inside the path (Ruby `gsub('//', '/')`).
     let mut out = String::with_capacity(p.len());
@@ -590,5 +613,37 @@ fn age_seconds(updated_at: &str) -> i64 {
     match dt {
         Some(t) => (Utc::now() - t).num_seconds(),
         None => i64::MAX,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_discussion_resource_path, BrightspaceClient};
+    use reqwest::StatusCode;
+
+    #[test]
+    fn discussion_forum_and_topic_403s_are_resource_scoped() {
+        let paths = [
+            "/d2l/api/le/1.40/447090/discussions/forums/",
+            "/d2l/api/le/1.40/447090/discussions/forums/375900/topics/",
+            "/d2l/api/le/1.40/447090/discussions/forums/375900/topics/123/posts/",
+            "/d2l/api/le/1.40/447090/discussions/topics/",
+        ];
+        for path in paths {
+            assert!(is_discussion_resource_path(path), "{path}");
+            assert!(BrightspaceClient::is_resource_scoped_auth_failure(path, StatusCode::FORBIDDEN), "{path}");
+        }
+    }
+
+    #[test]
+    fn non_discussion_or_401_auth_failures_remain_global() {
+        assert!(!BrightspaceClient::is_resource_scoped_auth_failure(
+            "/d2l/api/lp/1.40/users/whoami",
+            StatusCode::FORBIDDEN,
+        ));
+        assert!(!BrightspaceClient::is_resource_scoped_auth_failure(
+            "/d2l/api/le/1.40/447090/discussions/forums/375900/topics/",
+            StatusCode::UNAUTHORIZED,
+        ));
     }
 }
