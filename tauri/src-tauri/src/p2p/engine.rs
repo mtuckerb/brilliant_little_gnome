@@ -89,13 +89,17 @@ impl SyncEngine {
         state: Arc<AppState>,
         bootstrap_peers: Vec<EndpointId>,
     ) -> Result<Arc<Self>> {
+        info!("start_with_bootstrap: loading secrets");
         let (node_secret, doc_secret) = load_or_init_secrets(&state.pool).await?;
-
+        info!("start_with_bootstrap: opening SyncStore");
         let store = Arc::new(SyncStore::open(&state.app)?);
+        info!("start_with_bootstrap: loading SyncDoc");
         let doc = Arc::new(SyncDoc::from_doc(store.load()?));
+        info!("start_with_bootstrap: bringing up transport ({} bootstrap peers)", bootstrap_peers.len());
         let transport = Arc::new(
             Transport::start_with_bootstrap(node_secret, &doc_secret, bootstrap_peers).await?,
         );
+        info!("start_with_bootstrap: wiring bridge");
         // Production wiring: Bridge::with_sql installs the Loro→SQLite
         // subscription so remote diffs land in the local DB and emit
         // matching Tauri events (T-010). The wrapping Arc<EventBus>
@@ -103,11 +107,12 @@ impl SyncEngine {
         let events: Arc<dyn crate::p2p::bridge::BridgeEventSink> =
             Arc::new(state.events.clone());
         let bridge = Bridge::with_sql(doc.clone(), state.pool.clone(), events);
-        // Inject the live Brightspace client so the joiner-side of
-        // BootstrapCredentials can call `store_credentials` directly.
         bridge.set_client(state.client.clone());
 
-        Self::start_with_parts(store, doc, transport, bridge).await
+        info!("start_with_bootstrap: starting engine parts");
+        let result = Self::start_with_parts(store, doc, transport, bridge).await;
+        info!("start_with_bootstrap: done ok={}", result.is_ok());
+        result
     }
 
     /// Joiner-side QR-pairing entry point (T-013). Persists the
@@ -131,11 +136,7 @@ impl SyncEngine {
         state: Arc<AppState>,
         payload: &crate::p2p::pairing::PairingPayload,
     ) -> Result<Arc<Self>> {
-        // Persist the shared secret BEFORE the engine starts so
-        // load_or_init_secrets picks up this value rather than
-        // generating a new random one. Goes through the same backend
-        // (keychain primary, app_state fallback) so a re-pair lands
-        // in the same place future loads will read from.
+        info!("pair_via_payload: storing shared secret");
         crate::p2p::secrets::store(
             &state.pool,
             crate::p2p::secrets::SecretKind::SyncDocSecret,
@@ -147,21 +148,24 @@ impl SyncEngine {
             .node
             .parse()
             .map_err(|e| AppError::BadRequest(format!("pairing payload node id: {e}")))?;
+        info!("pair_via_payload: starting engine with bootstrap peer {seed}");
         let engine = Self::start_with_bootstrap(state, vec![seed]).await?;
 
-        // Send the pairing request now. Gossip won't have a neighbor
-        // yet — the broadcast queues into the iroh send buffer and
-        // ships once the dial completes (typically <1s in practice).
         info!(
-            "sending pairing request to seed {seed} with nonce {}",
+            "pair_via_payload: broadcasting PairingRequest nonce={}",
             payload.nonce
         );
-        engine
+        let send_result = engine
             .transport
             .broadcast(WireMsg::PairingRequest {
                 nonce: payload.nonce.clone(),
             })
-            .await?;
+            .await;
+        match &send_result {
+            Ok(()) => info!("pair_via_payload: PairingRequest queued for delivery"),
+            Err(e) => warn!("pair_via_payload: PairingRequest broadcast failed: {e}"),
+        }
+        send_result?;
 
         Ok(engine)
     }
