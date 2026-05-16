@@ -329,7 +329,7 @@ async fn build_status(state: &AppStateArg<'_>) -> P2pStatus {
     }
 }
 
-async fn remember_paired_device(
+pub(crate) async fn remember_paired_device(
     pool: &sqlx::SqlitePool,
     node_id: &str,
     label: Option<&str>,

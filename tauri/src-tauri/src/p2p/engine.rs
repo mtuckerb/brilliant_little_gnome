@@ -536,7 +536,21 @@ async fn handle_inbound(
                     warn!("rejecting pairing request from {from}: {e}");
                     return;
                 }
-                info!("seed: nonce accepted, exporting snapshot");
+                info!("seed: nonce accepted, recording paired joiner");
+                // Symmetric persistence: the joiner records the seed via
+                // `p2p_consume_pairing::remember_paired_device(seed_id)`.
+                // The seed has to record the joiner here, otherwise the
+                // Settings panel on this side shows "0 paired peers"
+                // forever even after a successful handshake.
+                if let Err(e) = crate::commands::sync_p2p::remember_paired_device(
+                    pool,
+                    from,
+                    Some("Joined device"),
+                )
+                .await
+                {
+                    warn!("seed: failed to persist paired joiner {from}: {e}");
+                }
             } else {
                 info!("seed: no pool (test wiring), exporting snapshot");
             }
