@@ -151,6 +151,41 @@ impl SyncEngine {
         info!("pair_via_payload: starting engine with bootstrap peer {seed}");
         let engine = Self::start_with_bootstrap(state, vec![seed]).await?;
 
+        // Wait for the seed to actually join the gossip mesh before
+        // broadcasting. iroh-gossip drops broadcasts that fire before
+        // any peer is in the swarm; on initial pair the joiner often
+        // broadcasts within milliseconds of `start_with_bootstrap`
+        // returning, but the peer-connected event lags by hundreds of
+        // ms while iroh dials and the gossip JOIN handshake completes.
+        // Without this wait, the PairingRequest is silently lost and
+        // the seed never replies with a snapshot.
+        const PEER_JOIN_WAIT: Duration = Duration::from_secs(10);
+        let seed_str = seed.to_string();
+        let mut rx = engine.transport.subscribe();
+        info!("pair_via_payload: awaiting peer-connected for {seed_str}");
+        let joined = tokio::time::timeout(PEER_JOIN_WAIT, async {
+            loop {
+                match rx.recv().await {
+                    Ok(TransportEvent::PeerConnected(id)) if id == seed_str => {
+                        return true;
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return false,
+                }
+            }
+        })
+        .await
+        .unwrap_or(false);
+        if joined {
+            info!("pair_via_payload: seed joined mesh — broadcasting now");
+        } else {
+            warn!(
+                "pair_via_payload: peer-connected timeout after {}s; broadcasting anyway (gossip may drop)",
+                PEER_JOIN_WAIT.as_secs()
+            );
+        }
+
         info!(
             "pair_via_payload: broadcasting PairingRequest nonce={}",
             payload.nonce
