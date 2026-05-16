@@ -181,7 +181,18 @@ impl Transport {
         sync_doc_secret: &[u8],
         bootstrap: Vec<iroh::EndpointId>,
     ) -> Result<Self> {
-        let gossip = Gossip::builder().spawn(endpoint.clone());
+        // iroh-gossip's default max_message_size is 4 KB, which silently
+        // drops any wire payload larger than that — fine for tiny
+        // PairingRequest pings but our pairing Snapshot can be tens to
+        // hundreds of KB once a real semester's overlays land in the doc.
+        // The seed broadcasts the snapshot, `Sender::broadcast` returns
+        // Ok, but the message is rejected in the protocol layer and the
+        // joiner times out. Bumping to 4 MiB covers any realistic snapshot
+        // size and is well within the 8 MiB QUIC stream window.
+        const MAX_GOSSIP_PAYLOAD: usize = 4 * 1024 * 1024;
+        let gossip = Gossip::builder()
+            .max_message_size(MAX_GOSSIP_PAYLOAD)
+            .spawn(endpoint.clone());
         let topic_id = Self::topic_id_for(sync_doc_secret);
         info!(
             "transport up: endpoint={} topic={} bootstrap_peers={}",
