@@ -1,27 +1,26 @@
-# Dev shell for the Tauri port. Usage: `nix-shell` from this directory.
-# Cross-platform: NixOS (Linux) + nix-darwin (macOS). Pulls a fixed recent
-# stable Rust via oxalica/rust-overlay so both machines agree on the
-# toolchain regardless of which channel the host nixpkgs is on.
+# Dev shell for the Tauri port. Usage: `nix-shell` from this directory or
+# `nix develop` from the repository root. Cross-platform: NixOS (Linux) +
+# nix-darwin (macOS). Pulls a fixed recent stable Rust via oxalica/rust-overlay
+# so both machines agree on the toolchain regardless of which channel the host
+# nixpkgs is on.
+
+{ system ? builtins.currentSystem
+, nixpkgsSrc ? fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz";
+  }
+, rustOverlaySrc ? fetchTarball {
+    url = "https://github.com/oxalica/rust-overlay/archive/master.tar.gz";
+  }
+, unstableNixpkgsSrc ? fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/nixos-unstable.tar.gz";
+  }
+, rustOverlay ? import rustOverlaySrc
+, pkgs ? import nixpkgsSrc { inherit system; overlays = [ rustOverlay ]; }
+, pkgsUnstable ? import unstableNixpkgsSrc { inherit system; }
+}:
 
 let
-  # Pin nixpkgs explicitly so we don't depend on the host having a
-  # `nixpkgs` channel registered (the macOS multi-user installer skips
-  # that step by default, which makes `<nixpkgs>` resolution fail).
-  nixpkgsTarball = fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz";
-  };
-  rustOverlay = import (fetchTarball {
-    url = "https://github.com/oxalica/rust-overlay/archive/master.tar.gz";
-  });
-  pkgs = import nixpkgsTarball { overlays = [ rustOverlay ]; };
   inherit (pkgs) lib stdenv;
-
-  # `xcodegen` only landed in nixpkgs unstable (not in 24.05 or 24.11), so
-  # we pin a separate unstable just for that single package and pull the
-  # rest of the toolchain from the stable pin above.
-  pkgsUnstable = import (fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/nixos-unstable.tar.gz";
-  }) {};
 
   # Mobile cross-compile targets. iOS targets only make sense on Darwin (need
   # Xcode at build time); Android targets are added on both hosts since the
@@ -44,7 +43,8 @@ let
 
   # Libraries with pkg-config metadata needed by cargo builds/tests. Keep this
   # list separate from buildInputs so shellHook can publish deterministic
-  # PKG_CONFIG_PATH values even in non-interactive `nix-shell --run ...` checks.
+  # PKG_CONFIG_PATH values even in non-interactive `nix-shell --run ...` and
+  # `nix develop --command ...` checks.
   pkgConfigDeps = with pkgs; [
     openssl
   ] ++ lib.optionals stdenv.isLinux [
@@ -114,6 +114,6 @@ pkgs.mkShell {
     # available — e.g. `APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX npm run dev:ios`.
     export APPLE_DEVELOPMENT_TEAM="''${APPLE_DEVELOPMENT_TEAM:-QDWAV324SU}"
     echo "brilliant-tauri dev shell — run: npm install && npm run tauri dev"
-    echo "Rust checks: nix-shell --run 'npm run test:rust'"
+    echo "Rust checks: nix-shell --run 'npm run test:rust' or nix develop .. --command cargo test --manifest-path src-tauri/Cargo.toml"
   '';
 }
