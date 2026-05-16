@@ -43,7 +43,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
-use tracing::warn;
+use tracing::{info, warn};
 
 const TOPIC_DOMAIN: &[u8] = b"brilliant-sync-v1";
 
@@ -183,6 +183,12 @@ impl Transport {
     ) -> Result<Self> {
         let gossip = Gossip::builder().spawn(endpoint.clone());
         let topic_id = Self::topic_id_for(sync_doc_secret);
+        info!(
+            "transport up: endpoint={} topic={} bootstrap_peers={}",
+            endpoint.id(),
+            topic_id,
+            bootstrap.len()
+        );
 
         let topic = gossip
             .subscribe(topic_id, bootstrap)
