@@ -580,10 +580,14 @@ async fn handle_inbound(
             }
         }
         WireMsg::BootstrapCredentials { host, cookie, uid, user_id } => {
-            // Joiner-side: persist the seed's session if (and only if)
-            // we don't already have one. The "no clobber" check makes
-            // re-pairing safe and prevents a stale paired device from
-            // overwriting a freshly-rotated cookie on this one.
+            // Joiner-side: persist the seed's session. We unconditionally
+            // overwrite any existing credentials — an explicit user
+            // re-pair (scanning a fresh QR) is the user saying "use
+            // these creds", and a previous failed pair often leaves
+            // stale cookies behind that would otherwise make the post-
+            // pair sync hit a "session expired" error immediately. The
+            // QR is one-shot via the seed's nonce table, so this can't
+            // be abused by a passive observer.
             let Some(client) = client else {
                 warn!("ignoring BootstrapCredentials: no client wired");
                 return;
@@ -592,12 +596,6 @@ async fn handle_inbound(
                 warn!("ignoring BootstrapCredentials: no pool wired");
                 return;
             };
-            if client.is_configured() {
-                tracing::debug!(
-                    "ignoring BootstrapCredentials from {from}: already authenticated"
-                );
-                return;
-            }
             match client
                 .store_credentials(
                     pool,
