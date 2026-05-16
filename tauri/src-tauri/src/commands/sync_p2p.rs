@@ -263,6 +263,15 @@ pub async fn p2p_storage_stats(
     Ok(engine.store().storage_stats())
 }
 
+/// Return the in-memory debug log buffer (last ~500 tracing events).
+/// Exists because iOS stopped routing our Rust tracing stderr into the
+/// device syslog, leaving us blind during pairing debugging. Surfaced
+/// via a "Show log" disclosure in Settings → Sync.
+#[tauri::command]
+pub async fn p2p_debug_log() -> Result<Vec<String>> {
+    Ok(crate::debug_log::snapshot())
+}
+
 /// Generate a fresh `sync_doc_secret`, restart the engine. Old peers
 /// remain on the previous gossip topic and see no new traffic; they
 /// effectively drop off the sync group. The user has to re-pair every

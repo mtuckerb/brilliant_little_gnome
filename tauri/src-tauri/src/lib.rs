@@ -4,6 +4,7 @@ pub mod auth;
 pub mod client;
 pub mod commands;
 pub mod db;
+pub mod debug_log;
 pub mod error;
 pub mod events;
 pub mod models;
@@ -41,11 +42,14 @@ use tauri::{RunEvent, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,brilliant_tauri_lib=debug")),
-        )
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,brilliant_tauri_lib=debug"));
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(debug_log::RingLayer)
         .init();
 
     // rustls 0.23 (used by reqwest 0.13 via iroh + tauri) refuses to make
@@ -163,6 +167,8 @@ pub fn run() {
             commands::sync_p2p::p2p_rotate,
             #[cfg(feature = "p2p")]
             commands::sync_p2p::p2p_storage_stats,
+            #[cfg(feature = "p2p")]
+            commands::sync_p2p::p2p_debug_log,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

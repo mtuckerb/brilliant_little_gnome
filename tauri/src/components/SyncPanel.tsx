@@ -408,6 +408,8 @@ export default function SyncPanel() {
             </div>
           )}
 
+          <DebugLogDisclosure />
+
           <hr />
           <div>
             <button
@@ -422,6 +424,71 @@ export default function SyncPanel() {
         </>
       )}
     </div>
+  );
+}
+
+// On iOS the device syslog no longer reliably carries our Rust tracing
+// output, so we keep an in-memory ring buffer on the backend and let
+// the UI pull it. Exists so pairing failures can be diagnosed without
+// USB log capture. Filter input keeps the on-screen wall of text
+// manageable on a 10" iPad screen.
+function DebugLogDisclosure() {
+  const [lines, setLines] = useState<string[] | null>(null);
+  const [filter, setFilter] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = async () => {
+    setRefreshing(true);
+    try {
+      const out = await api.p2pDebugLog();
+      setLines(out);
+    } catch {
+      setLines([]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const filtered = (lines ?? []).filter((l) =>
+    filter.trim() === "" ? true : l.toLowerCase().includes(filter.toLowerCase()),
+  );
+
+  return (
+    <details className="mt-3" onToggle={(e) => {
+      if ((e.currentTarget as HTMLDetailsElement).open && lines === null) load();
+    }}>
+      <summary className="is-size-7 has-text-grey">Show log</summary>
+      <div className="mt-2">
+        <div className="field has-addons mb-2">
+          <div className="control is-expanded">
+            <input
+              className="input is-small"
+              placeholder="filter (e.g. pairing, transport, peer)"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          </div>
+          <div className="control">
+            <button
+              className={`button is-small ${refreshing ? "is-loading" : ""}`}
+              onClick={load}
+              disabled={refreshing}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+        <pre style={{ maxHeight: 280, overflow: "auto", fontSize: 11, padding: 8, background: "#f5f5f5" }}>
+          {filtered.length === 0
+            ? lines === null
+              ? "(loading…)"
+              : filter
+                ? "(no lines match)"
+                : "(buffer empty)"
+            : filtered.join("\n")}
+        </pre>
+      </div>
+    </details>
   );
 }
 

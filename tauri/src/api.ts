@@ -180,6 +180,11 @@ export const api = {
     invoke<P2pStatus>("p2p_consume_pairing", { args: { encoded } }),
   p2pRotate: () => invoke<P2pStatus>("p2p_rotate"),
   p2pStorageStats: () => invoke<StorageStats>("p2p_storage_stats"),
+  // Mobile log capture: iOS doesn't reliably route our Rust tracing
+  // output to the device syslog, so we keep our own in-memory ring and
+  // hand it out via this command. Surfaced as a "Show log" disclosure in
+  // Settings → Sync for on-device pairing debugging.
+  p2pDebugLog: () => invoke<string[]>("p2p_debug_log"),
 };
 
 // Tauri-event subscriptions (replacing the Ruby SSE stream).
