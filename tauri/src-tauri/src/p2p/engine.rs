@@ -499,10 +499,14 @@ async fn handle_inbound(
             // still reply — that lets the integration test exercise
             // the snapshot path without bringing up a real DB.
             if let Some(pool) = pool {
+                info!("seed: checking nonce for pair from {from}");
                 if let Err(e) = crate::p2p::pairing::consume_nonce(pool, &nonce).await {
                     warn!("rejecting pairing request from {from}: {e}");
                     return;
                 }
+                info!("seed: nonce accepted, exporting snapshot");
+            } else {
+                info!("seed: no pool (test wiring), exporting snapshot");
             }
             let bytes = match doc.doc().export(loro::ExportMode::Snapshot) {
                 Ok(b) => b,
@@ -511,9 +515,13 @@ async fn handle_inbound(
                     return;
                 }
             };
-            if let Err(e) = transport.broadcast(WireMsg::Snapshot { bytes }).await {
-                warn!("pairing snapshot broadcast to {from} failed: {e}");
-                return;
+            info!("seed: broadcasting snapshot ({} bytes) to {from}", bytes.len());
+            match transport.broadcast(WireMsg::Snapshot { bytes }).await {
+                Ok(()) => info!("seed: snapshot broadcast queued"),
+                Err(e) => {
+                    warn!("pairing snapshot broadcast to {from} failed: {e}");
+                    return;
+                }
             }
             // One-shot credential bootstrap so the joining device (often
             // a fresh iOS install with no way to drive Brightspace
@@ -525,13 +533,15 @@ async fn handle_inbound(
             if let Some(pool) = pool {
                 match fetch_bootstrap_credentials(pool).await {
                     Ok(Some(creds)) => {
+                        info!("seed: broadcasting bootstrap credentials to {from}");
                         if let Err(e) = transport.broadcast(creds).await {
                             warn!("bootstrap credentials broadcast to {from} failed: {e}");
+                        } else {
+                            info!("seed: bootstrap credentials broadcast queued");
                         }
                     }
                     Ok(None) => {
-                        // Seed not authenticated — silently skip. Joiner
-                        // will fall back to the manual sign-in flow.
+                        info!("seed: skipping credential bootstrap (not authenticated)");
                     }
                     Err(e) => warn!("read bootstrap credentials failed: {e}"),
                 }
