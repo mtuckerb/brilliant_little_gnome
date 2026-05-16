@@ -13,17 +13,6 @@ use crate::p2p::SyncEngine;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
-
-/// How long the joiner waits for the seed's snapshot reply before
-/// giving up. The QR is one-shot anyway — a hung handshake means
-/// network failure or replay rejection, both of which the user needs
-/// surfaced.
-///
-/// 30s is comfortably more than the time iroh needs for first-time
-/// dial + relay handshake on a cold WAN connection. The original 15s
-/// was tight enough to fail intermittently on mobile networks.
-const PAIR_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Status payload returned by `p2p_status` / `p2p_enable` / `p2p_consume_pairing`
 /// / `p2p_rotate`. Mirrors design.md §8.
@@ -175,31 +164,19 @@ pub async fn p2p_consume_pairing(
     // than silently rolling back.
     set_enabled_flag(&state, true).await?;
 
+    // `pair_via_payload` now awaits the Snapshot reply inline (using the
+    // same subscriber it created for the peer-connect wait — sidesteps
+    // the race where a fresh subscriber would miss the snapshot if it
+    // arrived between broadcast and subscribe). On failure we restart a
+    // plain engine so the Settings page isn't stuck "engine not running"
+    // until the next app restart.
     let engine = match SyncEngine::pair_via_payload(state.inner().clone(), &payload).await {
         Ok(e) => e,
         Err(err) => {
-            // Engine couldn't even start (transport failure etc). Bring
-            // up a regular non-pairing engine so storage stats and the
-            // Settings page don't display "engine not running" until the
-            // next app restart.
             recover_engine(state.inner().clone()).await;
-            return Err(err);
+            return Err(AppError::Other(format!("pairing handshake failed: {err}")));
         }
     };
-
-    // Wait for the seed's snapshot reply; if it never comes, the
-    // pairing failed (network / replay / wrong topic). Surface to the
-    // user — but ALSO leave a regular engine running, otherwise the
-    // iPad is stuck with `p2p_enabled = 1` but no engine, every
-    // storage-stats poll surfaces as a confusing "engine not running"
-    // error to the user.
-    if let Err(e) = engine.await_initial_snapshot(PAIR_SNAPSHOT_TIMEOUT).await {
-        engine.shutdown().await.ok();
-        recover_engine(state.inner().clone()).await;
-        return Err(AppError::Other(format!(
-            "pairing handshake failed: {e}"
-        )));
-    }
 
     remember_paired_device(&state.pool, &payload.node, Some("Seed device")).await?;
 

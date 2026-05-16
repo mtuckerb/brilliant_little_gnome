@@ -202,6 +202,38 @@ impl SyncEngine {
         }
         send_result?;
 
+        // Snapshot wait runs on the SAME receiver we created for the
+        // peer-connect wait, so it's been subscribed since BEFORE we
+        // broadcast the PairingRequest. Subscribing AFTER the broadcast
+        // (the old await_initial_snapshot path) raced with the Snapshot
+        // arriving in the channel — the engine's main inbox task imported
+        // it into the doc, but tokio broadcast channels don't replay, so
+        // a fresh subscriber missed the event and timed out at 30s.
+        const SNAPSHOT_WAIT: Duration = Duration::from_secs(30);
+        info!("pair_via_payload: awaiting Snapshot reply");
+        let snapshot_received = tokio::time::timeout(SNAPSHOT_WAIT, async {
+            loop {
+                match rx.recv().await {
+                    Ok(TransportEvent::Message {
+                        payload: WireMsg::Snapshot { .. },
+                        ..
+                    }) => return true,
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return false,
+                }
+            }
+        })
+        .await
+        .unwrap_or(false);
+        if !snapshot_received {
+            return Err(AppError::Other(format!(
+                "no Snapshot reply from seed within {}s",
+                SNAPSHOT_WAIT.as_secs()
+            )));
+        }
+        info!("pair_via_payload: Snapshot received");
+
         Ok(engine)
     }
 
