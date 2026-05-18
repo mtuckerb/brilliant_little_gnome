@@ -1,151 +1,87 @@
 # Brilliant
 
-A lightweight, high-performance Brightspace companion that aggregates notifications, grades, and course content into a clean, unified dashboard. Designed specifically for University of Southern Maine students, Brilliant simplifies the complex Brightspace interface into a fast, desktop-priority experience.
+A fast, private Brightspace companion for students who actually want to *use* their LMS.
 
-## Features
-
-- **Visual Dashboard**: Integrated course banners and normalized semestrial layouts.
-- **Unified Notification Feed**: Newest items first, across all your courses.
-- **Hero-Style Course Headers**: Clean, high-impact headers with integrated banner images for every course.
-- **Local Asset Caching**: Persistent local storage for banners and resources to maintain speed and reliability.
-- **Magic Login**: Connect to Brightspace instantly without manually hunting for cookies.
-- **Global Linkification**: All course descriptions and task instructions automatically detect and enable clickable URLs for resources, videos, and external tools.
-- **Degraded Mode & Proactive UI**: Automatically detects expired sessions (403 Forbidden) and provides a global notification banner to guide re-authentication, allowing you to stay in sync with zero friction.
-- **Advanced Analytics & GPA**: 
-  - Real-time GPA calculation (USM-weighted).
-  - "Max Potential" cumulative GPA tracking.
-  - "Confidence Shields" (metric-driven data reliability scores).
-- **External REST API**:
-  - Full CRUD access to local data via a modern JSON API.
-  - Secure authentication using JWT (JSON Web Tokens) or custom API keys.
-  - Support for multi-interface listening (0.0.0.0) for remote access from mobile apps or other computers.
-- **Remote Server Integration**:
-  - Connect your local Brilliant client to a remote "Brilliant Server" instance.
-  - Seamlessly use a centralized database while maintaining a native local experience.
-- **High-Performance Synchronization**:
-  - **Request Coalescing**: Intelligent path-based locking prevents duplicate API calls.
-  - **Delta-First Sync**: Periodically fetches only new notifications using Global Alerts/Feed APIs.
-  - **N+1 Optimization**: In-memory model caching ensures thousands of items can be processed in seconds.
-  - **Smooth UI**: SSE event batching and frontend debouncing eliminate flicker during live updates.
-  - **Scalable Notifications**: Intelligent pagination and database indexing allow the app to handle thousands of alerts without slow-down.
-- **Security & Privacy**:
-  - Optional Web Access Passcode to gate the application when running in a browser.
-  - All local data stays local; remote connections are secured via JWT.
-- **Customizable Dashboard**:
-  - Toggle visibility of "My Course List", "Upcoming Assignments", and "Recent Updates".
-  - Smart Layouts: Dashboard automatically centers and expands content when the sidebar is disabled.
-- **Intelligent Synchronization**: Protecting historical data (archived courses/grades) even when instructor data on Brightspace thins.
-- **Interactive Course View**: 
-  - Collapsible instructions, feedback, and rubrics.
-  - Consolidated Announcements & Notifications within the course sidebar.
-- **Resource Export**: Download syllabus, module files, or entire course modules as ZIP archives.
-- **Calendar Support**: Export assignment due dates to ICS/iCal format.
-- **Manual Overrides & Sync Protection**: Customize assignment names, descriptions, and due dates directly in the app. Edits are intelligently protected during LMS syncs, and you'll be notified when your custom data is preserved over server updates.
-
-## Portability & Multi-platform
-Brilliant is built to be portable. 
-- **macOS (M-series)**: Fully vendored and optimized for Apple Silicon.
-- **Windows**: Support for portable ruby distributions (x64) and packaged as a standalone Electron application (`nsis`).
-- **iOS / iPadOS (Tauri)**: Development builds intentionally connect to the Mac's Vite dev server, while release builds embed the React bundle and run standalone. See [`docs/ios.md`](docs/ios.md).
-
-## Setup
-
-### 1. Prerequisites
-- Ruby 2.6+
-- SQLite3
-- Chrome or Chromium (required for Magic Login)
-- Bundler
-
-### 2. Running the App
-1. Install dependencies:
-   ```bash
-   bundle install
-   ```
-2. Start the server (Migrations will run automatically):
-   ```bash
-   ruby app.rb
-   ```
-3. Visit `http://localhost:4567` in your browser.
-
-### 3. Build & Portability (Developer Tools)
-Brilliant includes a Rake-based build system to manage its portable Ruby environment and cross-platform dependencies.
-
-#### Rake Tasks
-- `rake platforms:check`: Audits the current environment to see if portable Ruby and vendor gems are correctly mapped.
-- `rake platforms:lock`: Updates `Gemfile.lock` to include all supported platforms (macOS arm64/x64, Windows x64).
-- `rake platforms:install`: Installs all gems into `vendor/bundle` using the portable Ruby environment (or system fallback) in deployment mode.
-
-#### Essential Command Lines
-
-| Command | Purpose |
-| :--- | :--- |
-| `npm install` | Install Electron and build-balancing dependencies. |
-| `bundle install` | Install Ruby dependencies for local development. |
-| `bundle exec rake platforms:lock` | **Crucial** before pushing: ensures the lockfile supports Windows and Intel Macs. |
-| `bundle exec rake platforms:install` | Pre-bundles gems into the project for portable distribution. |
-| `npm run start` | Launches the Electron application and the Ruby sidecar. |
-| `npm run build` | Packages the Electron application into a distributable `dist/` (DMG for Mac). |
-| `cd tauri && npm run ios:build` | Builds a standalone iOS/iPadOS Tauri artifact with the frontend embedded; no Vite dev server required. |
-| `cd tauri && npm run ios:open` | Opens the generated Xcode project for signing, archiving, or installing a release-style iOS build. |
-| `./brilliant rake db:migrate` | Runs database migrations using the portable environment. |
-| `ruby app.rb --headless` | Starts only the Ruby API server without the Electron UI. |
-| `xattr -cr /Applications/Brilliant.app` | Fixes "damaged app" errors on macOS after manual installation. |
-| `rm db/development.sqlite3` | Resets the local development database (clears all settings/data). |
+Built originally for University of Southern Maine, but works with any D2L Brightspace instance. Brilliant turns the Brightspace web portal into a clean desktop app that puts grades, assignments, modules, and announcements one click away — and quietly keeps a personal record of your entire academic history.
 
 ---
 
-## Architecture
-Brilliant consists of two primary components:
-1.  **Ruby Sidecar (API)**: A Sinatra application that handles all Brightspace communication, SQLite persistence, and heavy data processing.
-2.  **Electron Frontend**: A thin wrapper that provides a native window, "Magic Login" cookie capture, and manages the lifecycle of the Ruby process.
+## Why Brilliant
+
+### Your courses, on every device you own
+Pair your laptop, desktop, and phone with a QR code. Pinned courses, custom colors, target grades, completion ticks, manual due-date overrides, synthetic assignments — all of it stays in sync across your devices automatically. No central server, no account to sign up for. Your devices talk directly to each other over an encrypted peer-to-peer channel.
+
+If you lose a device, rotate the shared secret in **Settings → Device Sync** and re-pair the others. The lost device falls off the network silently and never sees another byte of your data.
+
+### Private by design
+- **Your Brightspace cookies never leave your machine.** Magic Login captures them in a local browser window; nothing is sent anywhere except Brightspace itself.
+- **Your data stays on your devices.** P2P sync uses iroh's QUIC transport with NAT hole-punching; traffic between your devices is end-to-end encrypted. The data never touches a third-party server.
+- **Secrets live in the OS keychain** (macOS Keychain, Windows Credential Manager, Linux keyutils) — not in a config file someone can grep through.
+- **Optional Web Access Passcode** if you run Brilliant in a browser tab.
+
+### A permanent personal archive of your academic history
+Universities run Brightspace as a rental. When you graduate, USM gives you a choice: pay an alumni fee to keep accessing your old courses, or manually export everything yourself before they cut you off. Most students just lose it all.
+
+Brilliant snapshots everything as you go — every assignment, every grade, every module file, every instructor comment — into a local SQLite database you fully own. Years later, you still have it.
+
+> One of my professors closed our course in Brightspace before all the grades were entered. By the time I noticed, the page was just gone. **My local Brilliant database still had the last known state of every grade**, including the ones that were never posted. Crisis averted.
+
+If an instructor's API response goes "thin" mid-semester (missing descriptions, missing banners, missing rubrics), Brilliant refuses to overwrite the good data it already has. Your history is protected even when the LMS isn't.
 
 ---
 
-## Authentication & Sync
+## What it actually does
 
-### 1. Authentication
-Brilliant offers two ways to connect:
+- **Unified dashboard** — every course's notifications, grades, and upcoming work in one place, newest first
+- **Real grade math** — USM-weighted GPA, cumulative tracking, "max potential" projection, expected-score scenarios for ungraded items, and a confidence shield so you know when the number is solid
+- **Hide grades you don't care about** (e.g. that one optional extra-credit weekly survey) so your average reflects reality
+- **Course content browser** with collapsible modules, rubrics, instructor feedback, and direct download for syllabi or entire module ZIPs
+- **Calendar export** to ICS for due dates
+- **Manual overrides** for assignment names, descriptions, and due dates — and Brilliant tells you when it preserved your edits during a sync
+- **Degraded mode** when your Brightspace session expires: keep reading everything you've cached, with a one-click re-login banner
 
-#### Option 1: Magic Login (Recommended)
-1. On the setup screen, click **"Launch Magic Login"**.
-2. A browser window will open. Log in to your school's Brightspace portal normally (MFA/SSO supported).
-3. Once you reach the Brightspace home page, the window will close and Brilliant will automatically capture and securely store your session.
+---
 
-#### Option 2: Manual Cookie Entry
-If you prefer not to use the automated tool:
-1. Open DevTools (F12) in your browser on any Brightspace page.
-2. Copy the `Cookie` request header value.
-3. Paste it into the "Manual Setup" field in Brilliant.
+## Get started
 
-### 2. Degraded Mode & Refreshes
-When Brightspace session cookies tokens expire, the sync engine enters **Degraded Mode**.
-- A red notification banner appears in the app.
-- You can continue viewing all cached data (grades, course content, banners).
-- Clicking "Update Session" in the banner triggers a Magic Login refresh to resume background synchronization.
-
-### 3. Refresh & Sync (Maintenance)
-The **Settings** menu contains a dedicated maintenance section:
-- **Reset & Sync Notifications**: Rebuilds your entire notification history and clears the API cache.
-- **Re-Sync Courses**: Pulls fresh metadata (names, banners, codes) for all courses while intelligently protecting existing local data from degradation.
-
-### 4. Caching
-Banners and assets are cached locally in the `public/banners` folder after the first successful authenticated fetch. This reduces network dependency and ensures your dashboard remains beautiful even in low-bandwidth situations.
-
-## Maintenance
-
-### Troubleshooting (macOS)
-If you encounter a message stating that the app is **"damaged"** or **"cannot be opened because Apple cannot check it for malicious software"**, follow these steps:
-
-**Option 1: Right-Click Open (Easiest)**
-1. Locate Brilliant in your **Applications** folder.
-2. **Right-click** (or Control-click) the app icon and select **Open**.
-3. In the dialog box that appears, click **Open** again to confirm.
-
-**Option 2: Terminal Fix**
-Run the following command in your Terminal:
 ```bash
-xattr -cr /Applications/Brilliant.app
+# Tauri desktop app (v2.0+)
+cd tauri/
+npm install
+npm run tauri dev
 ```
 
-## Design
-Built with **Sinatra**, **ActiveRecord**, and **Bulma**. Managed as a high-performance sidecar for an **Electron** frontend.
+Pre-built signed installers for macOS (universal) and Windows are on the [Releases page](https://github.com/mtuckerb/brilliant_little_gnome/releases).
+
+First launch:
+1. Click **Launch Magic Login**.
+2. Sign in to your school's Brightspace portal normally — SSO and MFA work fine.
+3. The window closes. You're in.
+
+To pair a second device: **Settings → Device Sync → Show pairing QR**, then scan it from the other device.
+
+---
+
+## Platforms
+
+- **macOS** — universal binary (Apple Silicon + Intel), signed and notarized
+- **Windows** — x64 MSI/NSIS installers, signed
+- **Linux** — runs from source via Nix shell or system Rust+Node
+- **iOS / iPadOS** — Tauri build (see [`tauri/docs/ios.md`](tauri/docs/ios.md))
+
+---
+
+## Deeper reading
+
+If you want to know how the sausage is made:
+
+- **[`docs/system_design.md`](docs/system_design.md)** — overall architecture, sync engine, persistence model
+- **[`tauri/docs/sync/design.md`](tauri/docs/sync/design.md)** — P2P sync architecture, threat model, CRDT mapping
+- **[`tauri/README.md`](tauri/README.md)** — Tauri development notes, layout, feature flags
+- **[`docs/openapi.yaml`](docs/openapi.yaml)** — REST API surface for the embedded server
+
+---
+
+## License & contact
+
+Built by [@mtuckerb](https://github.com/mtuckerb). Issues and pull requests welcome.
