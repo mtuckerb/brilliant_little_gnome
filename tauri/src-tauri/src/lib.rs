@@ -76,8 +76,39 @@ pub fn run() {
 
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
-                let state = AppState::initialize(handle.clone()).await?;
-                handle.manage(Arc::new(state));
+                let state = Arc::new(AppState::initialize(handle.clone()).await?);
+                handle.manage(state.clone());
+
+                // Resume the P2P engine if the user previously had it
+                // enabled. Without this, after a restart the SyncPanel
+                // sees the persisted `p2p_enabled = 1` flag and renders
+                // the "enabled" view, but `build_status()` returns
+                // `node_id = None` because the engine isn't running —
+                // which keeps "Show pairing QR" disabled. The user
+                // would have to toggle the checkbox off and back on
+                // before they could pair another device.
+                #[cfg(feature = "p2p")]
+                {
+                    let enabled: i64 = sqlx::query_scalar(
+                        "SELECT p2p_enabled FROM user_preferences LIMIT 1",
+                    )
+                    .fetch_one(&state.pool)
+                    .await
+                    .unwrap_or(0);
+                    if enabled != 0 {
+                        match crate::p2p::SyncEngine::start(state.clone()).await {
+                            Ok(engine) => {
+                                *state.sync.write() = Some(engine);
+                                tracing::info!("p2p: engine auto-resumed at launch");
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "p2p: auto-resume failed; user can re-toggle in Settings: {e}"
+                                );
+                            }
+                        }
+                    }
+                }
                 anyhow::Ok(())
             })?;
 
