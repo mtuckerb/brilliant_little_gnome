@@ -260,6 +260,32 @@ class CourseController < BaseController
     end
   end
 
+  post '/course/:id/grades/:grade_id/set_expected' do
+    grade = Grade.find_by(id: params[:grade_id], course_id: params[:id])
+    if grade
+      raw = params[:expected_score].to_s.strip
+      val = raw.empty? ? nil : raw.to_f.clamp(0, 200)
+      grade.update(expected_score: val)
+    end
+    if request.xhr?
+      content_type :json
+      { status: 'ok', expected_score: grade&.expected_score }.to_json
+    else
+      redirect back
+    end
+  end
+
+  post '/course/:id/grades/:grade_id/toggle_hidden' do
+    grade = Grade.find_by(id: params[:grade_id], course_id: params[:id])
+    grade.update(hidden: !grade.hidden) if grade
+    if request.xhr?
+      content_type :json
+      { status: 'ok', hidden: grade.hidden }.to_json
+    else
+      redirect back
+    end
+  end
+
   post '/course/:id/assignments/bulk_optional' do
     ids = params[:ids]
     optional_value = params[:optional] == 'true'

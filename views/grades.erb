@@ -1,5 +1,5 @@
 <%= erb :'partials/course_detail_header' %>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/vendor/js/chart.min.js"></script>
 
 <div class="columns">
   <div class="column is-3">
@@ -20,10 +20,12 @@
 <script>
   const COURSE_ID = "<%= @course_id %>";
 
+  let SHOW_HIDDEN = false;
+
   async function loadGrades() {
     const root = document.getElementById('grades-root');
     try {
-      const response = await fetch(`/api/v1/courses/${COURSE_ID}/grades/summary`);
+      const response = await fetch(`/api/v1/courses/${COURSE_ID}/grades/summary${SHOW_HIDDEN ? '?show_hidden=true' : ''}`);
       if (!response.ok) throw new Error("Failed to fetch grades");
       const data = await response.json();
       renderGrades(data);
@@ -68,6 +70,12 @@
               </div>
             ` : ''}
             <div class="level-item ml-4">
+              <button class="button is-small" onclick="toggleShowHidden()" title="Toggle visibility of hidden grade items">
+                <span class="icon is-small"><i class="fas ${SHOW_HIDDEN ? 'fa-eye-slash' : 'fa-eye'}"></i></span>
+                <span>${SHOW_HIDDEN ? 'Hide Hidden' : 'Show Hidden'}</span>
+              </button>
+            </div>
+            <div class="level-item ml-2">
               <div class="dropdown is-right" id="course-actions-dropdown">
                 <div class="dropdown-trigger">
                   <button class="button is-small" aria-haspopup="true" aria-controls="dropdown-menu" onclick="document.getElementById('course-actions-dropdown').classList.toggle('is-active')">
@@ -157,13 +165,55 @@
 
   function renderGradeRow(g) {
     const isGraded = g.numerator !== null && !g.manually_marked_ungraded;
+    const isExpected = !!g.is_expected;
+    const isActuallyGraded = isGraded && !isExpected;
+    let submissionTag = '';
+    if (g.submitted === true) {
+      const dateStr = g.submitted_at ? ` ${new Date(g.submitted_at).toLocaleDateString([], {month:'short', day:'numeric'})}` : '';
+      submissionTag = `<span class="tag is-small is-success is-light ml-2" title="Marked submitted in Brightspace${dateStr ? ' on' + dateStr : ''}"><i class="fas fa-check mr-1"></i>Submitted${dateStr}</span>`;
+    } else if (g.submitted === false) {
+      submissionTag = '<span class="tag is-small is-danger is-light ml-2" title="Linked assignment is not yet submitted"><i class="fas fa-exclamation-circle mr-1"></i>Not Submitted</span>';
+    }
+    const rowClass = g.hidden ? 'has-background-white-ter has-text-grey-light' : (isActuallyGraded ? '' : 'has-background-white-ter has-text-grey-light');
+    const hiddenTag = g.hidden ? '<span class="tag is-small is-dark is-light ml-2"><i class="fas fa-eye-slash mr-1"></i>Hidden</span>' : '';
+    let statusTag = '';
+    if (g.manually_marked_ungraded) {
+      statusTag = '<span class="tag is-small is-warning is-light ml-2">Manually Ungraded</span>';
+    } else if (isExpected) {
+      statusTag = ''; // The italic result cell already signals "expected"
+    } else if (!isGraded) {
+      statusTag = '<span class="tag is-small is-light ml-2">Ungraded</span>';
+    }
+
+    let resultCell;
+    if (isActuallyGraded && g.perc !== null) {
+      resultCell = `<span class="tag ${getGradeColor(g.perc)} is-light" style="font-weight: bold;">${g.perc}%</span>`;
+    } else if (isExpected) {
+      resultCell = `<a onclick="editExpected(${g.id}, ${g.expected_score})" title="Expected score (click to edit)" style="font-style: italic; color: #888; text-decoration: none; border-bottom: 1px dotted #bbb;">~${g.expected_score}%</a>`;
+    } else if (!g.manually_marked_ungraded) {
+      resultCell = `<a onclick="editExpected(${g.id}, null)" title="Set an expected score" class="has-text-grey-light">-</a>`;
+    } else {
+      resultCell = '-';
+    }
+
+    const pointsCell = isActuallyGraded
+      ? `${g.numerator} / ${g.denominator || '-'}`
+      : (isExpected
+          ? `<span style="font-style: italic; color: #999;">${(Math.round(g.numerator * 100) / 100)} / ${g.denominator || g.rel_weight || '-'}</span>`
+          : `- / ${g.denominator || '-'}`);
+
     return `
-      <tr class="${isGraded ? '' : 'has-background-white-ter has-text-grey-light'}">
+      <tr class="${rowClass}" style="${g.hidden ? 'opacity:0.55;' : ''}">
         <td>
           ${g.name_html}
-          ${g.manually_marked_ungraded ? '<span class="tag is-small is-warning is-light ml-2">Manually Ungraded</span>' : (!isGraded ? '<span class="tag is-small is-light ml-2">Ungraded</span>' : '')}
+          ${hiddenTag}
+          ${submissionTag}
+          ${statusTag}
           ${g.is_extra_credit ? '<span class="tag is-small is-warning ml-2">Extra Credit</span>' : ''}
           <div class="is-pulled-right">
+            <button class="button is-ghost is-small p-0 h-auto mr-2" onclick="toggleHidden(${g.id})" title="${g.hidden ? 'Unhide this grade item' : 'Hide this grade item from the list and totals'}">
+              <i class="fas ${g.hidden ? 'fa-eye' : 'fa-trash-alt'} ${g.hidden ? 'has-text-grey' : 'has-text-grey-lighter'}"></i>
+            </button>
             <button class="button is-ghost is-small p-0 h-auto mr-2" onclick="toggleUngraded(${g.id})" title="Toggle Ungraded Status">
               <i class="fas fa-eye-slash ${g.manually_marked_ungraded ? 'has-text-warning' : 'has-text-grey-lighter'}"></i>
             </button>
@@ -176,12 +226,8 @@
           ${g.due_date ? new Date(g.due_date).toLocaleDateString([], {month:'short', day:'numeric'}) : '-'}
         </td>
         <td class="has-text-centered is-size-7">${g.rel_weight}%</td>
-        <td class="has-text-centered is-size-7" style="font-family: monospace;">
-          ${isGraded ? g.numerator : '-'} / ${g.denominator || '-'}
-        </td>
-        <td class="has-text-right">
-          ${isGraded && g.perc !== null ? `<span class="tag ${getGradeColor(g.perc)} is-light" style="font-weight: bold;">${g.perc}%</span>` : '-'}
-        </td>
+        <td class="has-text-centered is-size-7" style="font-family: monospace;">${pointsCell}</td>
+        <td class="has-text-right">${resultCell}</td>
       </tr>
     `;
   }
@@ -241,6 +287,33 @@
     fetch(`/course/${COURSE_ID}/grades/${gradeId}/toggle_ungraded`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
     .then(res => res.json())
     .then(data => { if (data.status === 'ok') loadGrades(); });
+  }
+
+  function editExpected(gradeId, current) {
+    const msg = current === null
+      ? "Expected score (%):\n\nFor items like class participation that you reasonably expect to ace. Counts toward your current grade as a projection."
+      : "Expected score (%) — leave blank to clear:";
+    const val = prompt(msg, current === null ? '' : current);
+    if (val === null) return;
+    const trimmed = val.trim();
+    fetch(`/course/${COURSE_ID}/grades/${gradeId}/set_expected`, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `expected_score=${encodeURIComponent(trimmed)}`
+    })
+    .then(res => res.json())
+    .then(data => { if (data.status === 'ok') loadGrades(); });
+  }
+
+  function toggleHidden(gradeId) {
+    fetch(`/course/${COURSE_ID}/grades/${gradeId}/toggle_hidden`, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    .then(res => res.json())
+    .then(data => { if (data.status === 'ok') loadGrades(); });
+  }
+
+  function toggleShowHidden() {
+    SHOW_HIDDEN = !SHOW_HIDDEN;
+    loadGrades();
   }
 
   function getGradeColor(score) {

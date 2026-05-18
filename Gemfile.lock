@@ -54,6 +54,7 @@ GEM
     pg (1.6.3-arm64-darwin)
     pg (1.6.3-x64-mingw-ucrt)
     pg (1.6.3-x86_64-darwin)
+    pg (1.6.3-x86_64-linux)
     public_suffix (5.1.1)
     puma (6.6.1)
       nio4r (~> 2.0)
@@ -81,6 +82,7 @@ GEM
     sqlite3 (2.8.1-arm64-darwin)
     sqlite3 (2.8.1-x64-mingw-ucrt)
     sqlite3 (2.8.1-x86_64-darwin)
+    sqlite3 (2.8.1-x86_64-linux-gnu)
     tilt (2.7.0)
     timeout (0.6.0)
     tzinfo (2.0.6)
@@ -95,6 +97,7 @@ PLATFORMS
   arm64-darwin
   x64-mingw-ucrt
   x86_64-darwin
+  x86_64-linux
 
 DEPENDENCIES
   activerecord (~> 7.1)

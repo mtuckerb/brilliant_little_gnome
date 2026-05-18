@@ -450,11 +450,27 @@ module Api
           end
         end
 
-        grades = Grade.where(course_id: course_id).order(Arel.sql("due_date ASC NULLS LAST"), name: :asc).map do |g|
+        # Build a lookup of assignment submission status keyed by grade_item_id
+        assignment_submission = Assignment.where(course_id: course_id.to_s)
+                                          .where.not(grade_item_id: [nil, ''])
+                                          .pluck(:grade_item_id, :completed, :completed_at)
+                                          .each_with_object({}) { |(gid, comp, at), h| h[gid.to_s] = { completed: comp, completed_at: at } }
+
+        grades_scope = Grade.where(course_id: course_id)
+        grades_scope = grades_scope.where(hidden: false) unless params[:show_hidden] == 'true'
+        grades = grades_scope.order(Arel.sql("due_date ASC NULLS LAST"), name: :asc).map do |g|
           numerator = g.effective_numerator
           denominator = g.effective_denominator
           perc = (numerator && denominator && denominator > 0) ? ((numerator / denominator.to_f) * 100).round(1) : nil
           rel_weight = g.weight || 0
+
+          submission = assignment_submission[g.brightspace_id.to_s]
+          # submitted is true if a linked assignment is marked completed, false if linked but not completed,
+          # nil if there's no linked assignment (e.g. quiz, category total) so the UI can omit the indicator.
+          submitted = submission ? submission[:completed] : nil
+          # A graded item must have been submitted, regardless of what assignment.completed says
+          # (the completed flag from Brightspace is sometimes stale or never set for in-class work).
+          submitted = true if !perc.nil?
 
           g.as_json.merge({
             name_html: render_markdown_inline(g.name),
@@ -462,8 +478,13 @@ module Api
             denominator: denominator,
             perc: perc,
             completed: !perc.nil?,
+            submitted: submitted,
+            submitted_at: submission && submission[:completed_at],
             rel_weight: rel_weight,
-            manually_marked_ungraded: g.manually_marked_ungraded
+            manually_marked_ungraded: g.manually_marked_ungraded,
+            hidden: g.hidden,
+            expected_score: g.expected_score,
+            is_expected: g.is_expected?
           })
         end
 

@@ -13,36 +13,48 @@ class Grade < ActiveRecord::Base
   def is_graded?
     return false if manually_marked_ungraded
     return true unless numerator.nil?
+    return true if expected_score && (denominator || (weight && weight > 0))
     return false if displayed_grade.nil?
     displayed_grade.include?('%') || displayed_grade.include?('/')
   end
 
+  # True if the effective numerator comes from a user-supplied expected score
+  # rather than an actual recorded grade.
+  def is_expected?
+    numerator.nil? && !expected_score.nil? && (denominator || (weight && weight > 0))
+  end
+
   def effective_numerator
     return numerator if numerator
+    if expected_score
+      base = denominator || weight
+      return (expected_score / 100.0) * base if base && base > 0
+    end
     return nil if displayed_grade.nil?
-    
+
     # Try parsing "90 %"
     match = displayed_grade.match(/(\d+(\.\d+)?)\s*%/)
     return match[1].to_f if match
-    
+
     # Try parsing "18 / 20"
     match = displayed_grade.match(/(\d+(\.\d+)?)\s*\/\s*(\d+(\.\d+)?)/)
     return match[1].to_f if match
-    
+
     nil
   end
 
   def effective_denominator
     return denominator if denominator
+    return weight if expected_score && weight && weight > 0
     return nil if displayed_grade.nil?
-    
+
     # If it's a percentage, assume 100
     return 100.0 if displayed_grade.include?('%')
-    
+
     # Try parsing "18 / 20" - capture group 3 is the denominator
     match = displayed_grade.match(/(\d+(\.\d+)?)\s*\/\s*(\d+(\.\d+)?)/)
     return match[3].to_f if match
-    
+
     nil
   end
 
@@ -51,7 +63,7 @@ class Grade < ActiveRecord::Base
   end
 
   def self._calculate_weighted_total(course_id)
-    grades = where(course_id: course_id.to_s)
+    grades = where(course_id: course_id.to_s, hidden: false)
     course = Course.find_by(org_unit_id: course_id)
     completed_course = completed_past_semester_course?(course)
     graded_items = grades.select { |g| g.is_graded? && (g.effective_denominator || 0) > 0 }

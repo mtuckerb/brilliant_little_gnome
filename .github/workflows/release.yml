@@ -2,129 +2,80 @@ name: Build and Release
 
 on:
   push:
-    branches:
-      - release
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
+  publish-tauri:
+    permissions:
+      contents: write
     environment: production
-
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        include:
+          - platform: 'macos-14'
+            args: '--target universal-apple-darwin'
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Import Apple Certificates
-        if: matrix.os == 'macos-14'
-        env:
-          CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          P12_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
-          K_PASS: "buildpassword123"
-        run: |
-          KEYCHAIN="build_action.keychain"
-          echo "$CERTIFICATE_P12" | tr -d '\n ' | base64 --decode > certificate.p12
-          security create-keychain -p "$K_PASS" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$K_PASS" "$KEYCHAIN"
-          security import certificate.p12 -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | xargs)
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$K_PASS" "$KEYCHAIN"
-          rm -f certificate.p12
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
+          cache-dependency-path: tauri/package-lock.json
 
-      - name: Setup Ruby (System)
-        uses: ruby/setup-ruby@v1
+      - name: Install Rust toolchain (macOS universal)
+        if: matrix.platform == 'macos-14'
+        uses: dtolnay/rust-toolchain@stable
         with:
-          ruby-version: '3.4.1'
-          bundler-cache: true
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - name: Prepare Portable Ruby Distribution (macOS)
-        if: matrix.os == 'macos-14'
-        shell: bash
-        run: |
-          chmod +x scripts/setup-macos.sh
-          ./scripts/setup-macos.sh "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" | tee setup_macos.log
+      - name: Install Rust toolchain (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Prepare Portable Ruby Distribution (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          set -e
-          mkdir -p bin/ruby_dist/win-x64
-          URL="https://github.com/oneclick/rubyinstaller2/releases/download/RubyInstaller-3.4.1-1/rubyinstaller-3.4.1-1-x64.7z"
-          curl -L "$URL" -o ruby.7z
-          7z x ruby.7z -obin/ruby_dist/win-x64
-          if [ -d bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64 ]; then
-            mv bin/ruby_dist/win-x64/rubyinstaller-3.4.1-1-x64/* bin/ruby_dist/win-x64/
-          fi
-          bundle config set --local path 'vendor/bundle'
-          bundle install --deployment
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './tauri/src-tauri -> target'
 
-      - name: Install Dependencies
+      - name: Install frontend dependencies
+        working-directory: tauri
         run: npm ci
 
-      - name: Build, Sign and Notarize Electron App
-        run: npm run build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
-          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Brilliant-${{ matrix.os }}
-          path: |
-            dist/*.dmg
-            dist/*.exe
-            dist/*.zip
-          if-no-files-found: error
-      
-      - name: Debug Setup Logs (on failure)
-        if: failure() && matrix.os == 'macos-14'
-        run: cat setup_macos.log || true
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-      - name: Get version from package.json
+      - name: Get version from tag
         id: pkg_version
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*
-          tag_name: v${{ steps.pkg_version.outputs.version }}
-          name: Brilliant v${{ steps.pkg_version.outputs.version }}
-          body: |
-            ## Brilliant v${{ steps.pkg_version.outputs.version }}
-            Signed and Notarized production build.
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build and release Tauri app
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Brilliant ${{ github.ref_name }}'
+          releaseBody: |
+            ## Brilliant ${{ github.ref_name }}
+
+            Tauri-based desktop build. Signed & notarized on macOS.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
