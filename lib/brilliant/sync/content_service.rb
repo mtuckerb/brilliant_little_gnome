@@ -62,8 +62,24 @@ module Brilliant
             updated_at: Time.current,
             created_at: Time.current
           }
-          
-          (mod['Topics'] || []).each_with_index do |topic, t_index|
+
+          # If TOC returned a module with no Topics, try fetching the module structure directly
+          topics = mod['Topics'] || []
+          if topics.empty? && m_id.present?
+            begin
+              structure = client.get_module_structure(@course_id, m_id)
+              if structure.is_a?(Array)
+                # Structure endpoint returns ContentObject items; filter to topics only (Type 1)
+                # and exclude sub-modules (Type 0) which have a 'Structure' key
+                topics = structure.reject { |item| item['Type'].to_i == 0 || item.key?('Structure') }
+                puts "[Sync::ContentService] Backfilled #{topics.size} topics for module #{m_id} (#{mod['Title']})" if topics.any?
+              end
+            rescue => e
+              puts "[Sync::ContentService] Module structure fetch failed for #{m_id}: #{e.message}"
+            end
+          end
+
+          topics.each_with_index do |topic, t_index|
             t_id = (topic['Identifier'] || topic['TopicId'] || topic['Id']).to_s
             @all_items_to_upsert << {
               module_id: m_id,

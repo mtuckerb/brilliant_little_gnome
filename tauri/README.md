@@ -31,6 +31,13 @@ npm install
 npm run tauri dev
 ```
 
+The repository root also exposes the same shell as a flake for automation and
+fresh worktrees:
+
+```sh
+nix develop .
+```
+
 ## Fresh worktree frontend checks
 
 Fresh agent worktrees do not include `tauri/node_modules`, so React/Vite type
@@ -55,6 +62,16 @@ Run Rust checks from the Nix shell so `pkg-config` can find the GTK/glib/pango/c
 cd tauri/
 nix-shell --run 'npm run test:rust'   # focused downloads tests
 nix-shell --run 'npm run check:rust'  # full src-tauri cargo test suite
+```
+
+To validate the P2P feature path exactly from a fresh worktree root, run:
+
+```sh
+nix develop . --command cargo test \
+  --manifest-path tauri/src-tauri/Cargo.toml \
+  --no-default-features \
+  --features p2p \
+  --color never
 ```
 
 The npm scripts create the placeholder `dist/` directory that Tauri's compile-time config expects, then run Cargo from `src-tauri/`. The shell exports `PKG_CONFIG_PATH` for OpenSSL and the Linux Tauri libraries, avoiding host-specific setup or manually discovered Cargo/Rust paths.

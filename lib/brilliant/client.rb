@@ -277,7 +277,11 @@ class BrilliantClient
     
     # Special handling for PSY-220 which has hidden/ungraded items in the API
     if course_id.to_s == '446900'
-      @psy220_scraper.sync(course_id)
+      begin
+        @psy220_scraper.sync(course_id)
+      rescue => e
+        puts "[Client] PSY-220 scraper failed (non-fatal): #{e.message}"
+      end
     end
   end
 
@@ -575,6 +579,10 @@ class BrilliantClient
     end
   end
 
+  def get_module_structure(org_unit_id, module_id, force_refresh: false)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/content/modules/#{module_id}/structure/", force_refresh: force_refresh)
+  end
+
   def get_assignments(org_unit_id, force_refresh: false)
     get_all_pages("/d2l/api/le/#{@api_version}/#{org_unit_id}/dropbox/folders/", force_refresh: force_refresh)
   end
@@ -751,8 +759,8 @@ class BrilliantClient
     []
   end
 
-  def get_overview(org_unit_id)
-    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/overview")
+  def get_overview(org_unit_id, force_refresh: false)
+    do_get("/d2l/api/le/#{@api_version}/#{org_unit_id}/overview", force_refresh: force_refresh)
   end
 
   def download_file(path, limit = 5)

@@ -34,8 +34,10 @@ module Brilliant
         end
 
         # Map definitions by their ID
+        # Brightspace's GradeObject uses 'Id' (not 'Identifier'); fall back to 'Identifier' just in case
         definitions_map = definitions.each_with_object({}) do |d, h|
-          id = d['Identifier'].to_s
+          id = (d['Id'] || d['Identifier']).to_s
+          next if id.empty?
           h[id] = d
         end
 
