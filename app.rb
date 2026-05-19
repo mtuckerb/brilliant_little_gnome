@@ -27,6 +27,7 @@ require_relative 'helpers/course_helpers'
 require_relative 'lib/brilliant/text_processor'
 require_relative 'lib/brilliant/dashboard_service'
 require_relative 'lib/brilliant/event_bus'
+require_relative 'lib/brilliant/zotero'
 require_relative 'lib/brilliant/sync/base_service'
 Dir.glob('./lib/brilliant/sync/*.rb').each { |f| require_relative f }
 require_relative 'lib/brilliant/client'

@@ -100,11 +100,13 @@ module Brilliant
 
         begin
           changes_detected = []
-          
+          newly_created = []
+
           notifications_to_upsert.each do |n|
             existing = existing_notifications[n[:external_id]]
             if existing.nil?
               changes_detected << n
+              newly_created << n
             else
               # Detect any significant change to trigger a refresh/event
               content_changed = n[:body] != existing.body || n[:title] != existing.title
@@ -125,7 +127,12 @@ module Brilliant
           end
 
           Notification.upsert_all(notifications_to_upsert, unique_by: [:course_id, :external_id])
-          
+
+          # Fan out brand-new Content notifications to Zotero. We only push on
+          # the row's first appearance so subsequent sync passes can't create
+          # duplicate Zotero items. Failures here MUST NOT abort the batch.
+          push_new_content_to_zotero(newly_created)
+
           if publish_event_flag && !@session_changes
             # Only publish immediately if we aren't currently in a big sync session
             publish_aggregated_changes(changes_detected)
@@ -136,6 +143,24 @@ module Brilliant
           puts "[Sync::NotificationService] Batch upsert failed: #{e.message}"
           puts e.backtrace.first(10).join("\n")
           []
+        end
+      end
+
+      # Push the subset of newly-created notifications that are Brightspace
+      # Content rows into Zotero. Quiet no-op if Zotero is disabled or the
+      # Zotero module is unavailable. Wrapped so a per-item failure can't
+      # affect notification sync.
+      def push_new_content_to_zotero(new_items)
+        return if new_items.nil? || new_items.empty?
+        return unless defined?(Brilliant::Zotero) && Brilliant::Zotero.enabled?
+
+        new_items.each do |n|
+          next unless n[:notification_type].to_s == 'Content'
+          begin
+            Brilliant::Zotero.push_content(n)
+          rescue => e
+            puts "[Sync::NotificationService] Zotero push failed for #{n[:external_id]}: #{e.message}"
+          end
         end
       end
 
