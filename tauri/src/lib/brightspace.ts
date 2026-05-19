@@ -22,6 +22,10 @@ export function assignmentSubmitUrl(host: string, courseId: string, folderId: st
   return `https://${host}/d2l/lms/dropbox/user/folder_submit_files.d2l?db=${folderId}&ou=${courseId}`;
 }
 
+export function quizSummaryUrl(host: string, courseId: string, quizId: string): string {
+  return `https://${host}/d2l/lms/quizzing/user/quiz_summary.d2l?qi=${quizId}&ou=${courseId}`;
+}
+
 // Discussion URLs use the legacy `/d2l/lms/discussions/...` routes — the
 // `/d2l/le/<api>/...` shape from the REST API path 404s in the web UI.
 export function discussionForumUrl(host: string, courseId: string, forumId: string): string {
