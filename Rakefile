@@ -5,6 +5,15 @@ if Rake.application.top_level_tasks.any? { |t| t.start_with?('db:') }
   require './app'
 end
 
+require 'rake/testtask'
+
+Rake::TestTask.new(:test) do |t|
+  t.libs << 'test'
+  t.libs << 'lib'
+  t.test_files = FileList['test/**/*_test.rb']
+  t.verbose = true
+end
+
 namespace :platforms do
   def get_ruby_bundle_paths
     portable_ruby = "bin/ruby_dist/macos-arm64/bin/ruby"
