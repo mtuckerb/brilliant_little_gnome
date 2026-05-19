@@ -7,14 +7,24 @@
 
 use super::AppStateArg;
 use crate::error::Result;
+use base64::Engine;
 use serde::Serialize;
 use serde_json::Value;
+
+const PREVIEW_MAX_BYTES: usize = 25 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct AssignmentAttachment {
     pub name: String,
     pub url: Option<String>,
     pub size: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewAttachment {
+    pub bytes_base64: String,
+    pub mime: Option<String>,
+    pub filename: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +68,48 @@ pub struct GradebookEntry {
     pub numerator: Option<f64>,
     pub denominator: Option<f64>,
     pub comments_html: Option<String>,
+}
+
+#[tauri::command]
+pub async fn preview_attachment(
+    state: AppStateArg<'_>,
+    url: String,
+    filename: String,
+) -> Result<PreviewAttachment> {
+    ensure_preview_url_is_brightspace_scoped(&state, &url)?;
+    let (bytes, mime, header_filename) = state.client.fetch_bytes_with_limit(&url, Some(PREVIEW_MAX_BYTES)).await?;
+    let bytes_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(PreviewAttachment {
+        bytes_base64,
+        mime,
+        filename: header_filename.unwrap_or(filename),
+    })
+}
+
+fn ensure_preview_url_is_brightspace_scoped(state: &AppStateArg<'_>, url: &str) -> Result<()> {
+    if url.starts_with('/') && !url.starts_with("//") {
+        return Ok(());
+    }
+
+    let configured_host = state
+        .client
+        .host
+        .read()
+        .clone()
+        .ok_or_else(|| crate::error::AppError::Other("no Brightspace host configured".into()))?;
+    let Some(rest) = url.strip_prefix("https://") else {
+        return Err(crate::error::AppError::Other(
+            "Attachment URL is not a supported Brightspace URL.".to_string(),
+        ));
+    };
+    let host = rest.split('/').next().unwrap_or_default();
+    if host.eq_ignore_ascii_case(&configured_host) {
+        Ok(())
+    } else {
+        Err(crate::error::AppError::Other(
+            "Attachment URL is outside the configured Brightspace host.".to_string(),
+        ))
+    }
 }
 
 #[tauri::command]

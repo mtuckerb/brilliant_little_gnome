@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { routeFileToViewer } from "../lib/fileViewer";
 import { api } from "../api";
 import {
   displayCourseCode,
@@ -29,20 +30,33 @@ function errorMessage(e: unknown) {
 }
 
 function AttachmentList({ items }: { items: AssignmentAttachment[] }) {
+  const navigate = useNavigate();
   if (items.length === 0) return null;
   return (
     <ul className="mt-2">
-      {items.map((f, idx) => (
-        <li key={idx} className="is-size-7">
-          <span className="icon is-small mr-1"><i className="fas fa-paperclip"></i></span>
-          {f.url ? (
-            <a href={f.url} target="_blank" rel="noreferrer">{f.name}</a>
-          ) : (
-            <span>{f.name}</span>
-          )}
-          {f.size != null && <span className="has-text-grey ml-2">({Math.round(f.size / 1024)} KB)</span>}
-        </li>
-      ))}
+      {items.map((f, idx) => {
+        const route = routeFileToViewer(f.name || f.url || "", f.size);
+        const tooLarge = route.reason === "too_large";
+        return (
+          <li key={idx} className="is-size-7">
+            <span className="icon is-small mr-1"><i className="fas fa-paperclip"></i></span>
+            {f.url && route.supported ? (
+              <button
+                className="button is-text p-0 is-size-7"
+                onClick={() => navigate("/viewer", { state: { url: f.url, name: f.name, size: f.size } })}
+              >
+                {f.name}
+              </button>
+            ) : f.url ? (
+              <a href={f.url} target="_blank" rel="noreferrer">{f.name}</a>
+            ) : (
+              <span>{f.name}</span>
+            )}
+            {f.size != null && <span className="has-text-grey ml-2">({Math.round(f.size / 1024)} KB)</span>}
+            {tooLarge && <span className="tag is-warning is-light ml-2">too large to preview</span>}
+          </li>
+        );
+      })}
     </ul>
   );
 }

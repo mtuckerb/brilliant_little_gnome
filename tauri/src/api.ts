@@ -128,6 +128,11 @@ export const api = {
       courseId,
       assignmentId,
     }),
+  previewAttachment: (url: string, filename: string) =>
+    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
+      "preview_attachment",
+      { url, filename },
+    ),
 
   // Downloads — Rust writes to ~/Downloads (or platform equivalent) and
   // returns saved_path. A "download://saved" event also fires; the tray
