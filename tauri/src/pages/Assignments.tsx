@@ -58,7 +58,7 @@ export default function Assignments() {
       </nav>
       {id && <CourseHeader courseId={id} />}
       <div className="box">
-        <div className="level">
+        <div className="level is-flex is-flex-wrap-wrap" style={{ gap: 8 }}>
           <div className="level-left"><h2 className="title is-4"><i className="fas fa-tasks mr-2"></i>Assignments</h2></div>
           <div className="level-right">
             <button className="button is-small is-primary mr-2" onClick={() => setShowCreate(true)}>
