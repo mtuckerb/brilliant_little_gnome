@@ -3,11 +3,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const readJson = (path) => JSON.parse(readFileSync(resolve(root, path), 'utf8'));
+const readText = (path) => readFileSync(resolve(root, path), 'utf8');
+const readJson = (path) => JSON.parse(readText(path));
 
 const config = readJson('src-tauri/tauri.conf.json');
 const pkg = readJson('package.json');
-const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
+const viteConfig = readText('vite.config.ts');
+const iosDeployPath = 'scripts/ios-deploy.mjs';
+const iosDeployScript = readText(iosDeployPath);
 
 const devUrl = config?.build?.devUrl;
 if (devUrl !== 'http://127.0.0.1:1420') {
@@ -21,8 +24,18 @@ for (const [name, script] of Object.entries(pkg.scripts ?? {})) {
   }
 }
 
-if (!pkg.scripts?.['dev:ios']?.includes('--host 127.0.0.1')) {
-  throw new Error('Expected npm run dev:ios to pin Tauri iOS dev to --host 127.0.0.1');
+const devIosScript = pkg.scripts?.['dev:ios'];
+if (!devIosScript?.includes('node scripts/ios-deploy.mjs')) {
+  throw new Error('Expected package.json script dev:ios to invoke node scripts/ios-deploy.mjs, got: ' + devIosScript);
+}
+
+if (!iosDeployScript.includes("spawnSync('npm', ['run', 'ios:build']")) {
+  throw new Error('Expected ' + iosDeployPath + ' to build through npm run ios:build before deploying.');
+}
+
+const viteHostPinsLocalhost = /host:\s*remoteDevHost\s*\|\|\s*["']127\.0\.0\.1["']/.test(viteConfig);
+if (!viteHostPinsLocalhost) {
+  throw new Error('Expected vite.config.ts to pin the default iOS dev server host to 127.0.0.1 when BRILLIANT_TAURI_REMOTE_DEV is not enabled.');
 }
 
 if (!pkg.scripts?.['dev:ios:remote']?.includes('BRILLIANT_TAURI_REMOTE_DEV=1')) {
