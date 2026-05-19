@@ -1,6 +1,8 @@
 // Helpers for triggering a file download from a base64 payload returned by a
 // `#[tauri::command]`. Mirrors the pattern in `SyllabusPanel`.
 
+import { base64ToBytes } from "./fileViewer";
+
 export interface DownloadPayload {
   bytes_base64?: string | null;
   mime: string | null;
@@ -11,13 +13,6 @@ export interface DownloadPayload {
 // Re-exported under the more accurate "result" name used across the app since
 // Rust now always writes to disk and returns saved_path.
 export type DownloadResult = DownloadPayload;
-
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
 
 export function triggerDownload(payload: DownloadPayload) {
   if (payload.saved_path) {

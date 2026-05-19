@@ -18,6 +18,7 @@ import Setup from "./pages/Setup";
 import Calendar from "./pages/Calendar";
 import Modules from "./pages/Modules";
 import ModuleDetail from "./pages/ModuleDetail";
+import FileViewer from "./pages/FileViewer";
 import Discussions from "./pages/Discussions";
 import DiscussionTopic from "./pages/DiscussionTopic";
 import CourseAnnouncements from "./pages/CourseAnnouncements";
@@ -114,6 +115,7 @@ function AppInner() {
         <Route path="/course/:id/grades" element={<Grades />} />
         <Route path="/course/:id/assignments" element={<Assignments />} />
         <Route path="/course/:id/assignments/:aid" element={<AssignmentDetail />} />
+        <Route path="/viewer" element={<FileViewer />} />
         <Route path="/course/:id/content" element={<Modules />} />
         <Route path="/course/:id/content/:moduleId" element={<ModuleDetail />} />
         <Route path="/course/:id/discussions" element={<Discussions />} />

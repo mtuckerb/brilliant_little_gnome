@@ -3,6 +3,7 @@
 // fetches via PagingInfo bookmarks, and a shared cache backed by `api_caches`.
 
 use crate::error::{AppError, Result};
+use futures::StreamExt;
 use parking_lot::RwLock;
 use reqwest::{header, Client, StatusCode};
 use serde::de::DeserializeOwned;
@@ -388,6 +389,13 @@ impl BrightspaceClient {
     /// can be large. Returns `(bytes, content_type, suggested_filename)`. The
     /// filename is parsed from the `Content-Disposition` header when present.
     pub async fn fetch_bytes(&self, url_or_path: &str) -> Result<(Vec<u8>, Option<String>, Option<String>)> {
+        self.fetch_bytes_with_limit(url_or_path, None).await
+    }
+
+    /// Same as `fetch_bytes`, but enforces a hard byte cap before/while reading
+    /// the response body. `Content-Length` is rejected up front when present, and
+    /// chunked/missing-length responses are aborted once they exceed the cap.
+    pub async fn fetch_bytes_with_limit(&self, url_or_path: &str, max_bytes: Option<usize>) -> Result<(Vec<u8>, Option<String>, Option<String>)> {
         let host = self.host.read().clone()
             .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
         let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
@@ -411,13 +419,28 @@ impl BrightspaceClient {
             return Err(AppError::BrightspaceApi { status: status.as_u16(), body: format!("GET {} -> {}", url, status) });
         }
         *self.degraded.write() = false;
+        if let (Some(max), Some(length)) = (max_bytes, resp.content_length()) {
+            if length > max as u64 {
+                return Err(AppError::Other("File too large to preview — open externally".to_string()));
+            }
+        }
         let content_type = resp.headers().get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
         let filename = resp.headers().get(header::CONTENT_DISPOSITION)
             .and_then(|v| v.to_str().ok())
             .and_then(parse_filename_from_content_disposition);
-        let bytes = resp.bytes().await?.to_vec();
+        let mut bytes = Vec::with_capacity(max_bytes.unwrap_or_default().min(resp.content_length().unwrap_or(0) as usize));
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            if let Some(max) = max_bytes {
+                if bytes.len().saturating_add(chunk.len()) > max {
+                    return Err(AppError::Other("File too large to preview — open externally".to_string()));
+                }
+            }
+            bytes.extend_from_slice(&chunk);
+        }
         Ok((bytes, content_type, filename))
     }
 
