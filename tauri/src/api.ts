@@ -113,6 +113,11 @@ export const api = {
       courseId,
       assignmentId,
     }),
+  previewAttachment: (url: string, filename: string) =>
+    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
+      "preview_attachment",
+      { url, filename },
+    ),
 
   // Downloads (single file or zipped archive returned as base64)
   downloadTopicFile: (courseId: string, topicId: string) =>

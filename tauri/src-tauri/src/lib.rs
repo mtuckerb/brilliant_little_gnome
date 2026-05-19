@@ -156,6 +156,7 @@ pub fn run() {
             commands::assignments::create_synthetic_assignment,
             commands::assignments::delete_assignment,
             commands::assignment_detail::get_assignment_detail,
+            commands::assignment_detail::preview_attachment,
             commands::downloads::download_topic_file,
             commands::downloads::download_module_archive,
             commands::downloads::download_course_archive,
