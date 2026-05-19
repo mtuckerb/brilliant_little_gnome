@@ -43,15 +43,24 @@ pub async fn fetch_course_overview_attachment(
 ) -> Result<OverviewAttachment> {
     let raw = load_or_fetch(&state, &course_id, false).await?;
     let parsed = parse_overview(&raw);
-    let url = parsed
-        .attachment_url
-        .ok_or_else(|| AppError::Other("overview has no attachment".to_string()))?;
     let suggested_name = parsed.attachment_name.unwrap_or_else(|| "Syllabus".to_string());
+    let url = parsed.attachment_url.unwrap_or_else(|| overview_attachment_path(&course_id));
+    if !parsed.has_attachment {
+        return Err(AppError::Other("overview has no attachment".to_string()));
+    }
 
     let (bytes, mime, header_filename) = state.client.fetch_bytes(&url).await?;
     let filename = header_filename.unwrap_or(suggested_name);
     let bytes_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(OverviewAttachment { bytes_base64, mime, filename })
+}
+
+pub fn overview_attachment_path(course_id: &str) -> String {
+    format!(
+        "/d2l/api/le/{}/{}/overview/attachment",
+        crate::client::API_VERSION,
+        course_id,
+    )
 }
 
 async fn load_or_fetch(state: &crate::state::AppState, course_id: &str, force: bool) -> Result<Value> {
@@ -97,6 +106,10 @@ fn parse_overview(raw: &Value) -> CourseOverview {
 
     let has_attachment = raw.get("HasAttachment").and_then(|v| v.as_bool()).unwrap_or(false)
         || raw.pointer("/Attachment/Url").is_some();
+    // The Brightspace `/overview` endpoint returns `{HasAttachment: true}` but
+    // omits any URL — the bytes live at `/overview/attachment`. parse_overview
+    // doesn't know the course id, so we leave `attachment_url` derivable from
+    // `has_attachment` alone; the download/fetch commands construct the path.
     let attachment_url = raw.pointer("/Attachment/Url").and_then(|v| v.as_str()).map(|s| s.to_string());
     let attachment_name = raw.pointer("/Attachment/Name").and_then(|v| v.as_str()).map(|s| s.to_string());
 

@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { Assignment } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
 import CourseHeader from "../components/CourseHeader";
+import SyntheticTaskModal from "../components/SyntheticTaskModal";
 
 const EXIT_MS = 280;
 
@@ -13,11 +14,6 @@ export default function Assignments() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [leaving, setLeaving] = useState<Set<number>>(new Set());
   const [showCreate, setShowCreate] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [draftDue, setDraftDue] = useState("");
-  const [draftDesc, setDraftDesc] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [createErr, setCreateErr] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!id) return;
@@ -43,35 +39,10 @@ export default function Assignments() {
     }
   }
 
-  function resetDraft() {
-    setDraftName("");
-    setDraftDue("");
-    setDraftDesc("");
-    setCreateErr(null);
-  }
-
-  async function submitCreate() {
-    if (!id) return;
-    if (!draftName.trim()) {
-      setCreateErr("Name required");
-      return;
-    }
-    setCreating(true);
-    setCreateErr(null);
-    try {
-      // <input type="datetime-local"> emits "YYYY-MM-DDTHH:mm" with no timezone;
-      // append seconds + Z so the backend (and JS Date downstream) treats it as
-      // a fixed instant rather than guessing the local zone again.
-      const due = draftDue.trim() === "" ? null : `${draftDue}:00`;
-      await api.createSyntheticAssignment(id, draftName.trim(), due, draftDesc.trim() || null);
-      setShowCreate(false);
-      resetDraft();
-      load();
-    } catch (e) {
-      setCreateErr(String((e as { message?: string })?.message ?? e));
-    } finally {
-      setCreating(false);
-    }
+  async function onDelete(a: Assignment) {
+    if (!a.synthetic) return;
+    await api.deleteAssignment(a.id);
+    load();
   }
 
   const visible = items.filter((a) => !a.completed || showCompleted || leaving.has(a.id));
@@ -90,7 +61,7 @@ export default function Assignments() {
         <div className="level">
           <div className="level-left"><h2 className="title is-4"><i className="fas fa-tasks mr-2"></i>Assignments</h2></div>
           <div className="level-right">
-            <button className="button is-small is-primary mr-2" onClick={() => { resetDraft(); setShowCreate(true); }}>
+            <button className="button is-small is-primary mr-2" onClick={() => setShowCreate(true)}>
               <span className="icon"><i className="fas fa-plus"></i></span>
               <span>Add task</span>
             </button>
@@ -109,42 +80,19 @@ export default function Assignments() {
               assignment={a}
               leaving={leaving.has(a.id)}
               onToggleComplete={onToggleComplete}
+              onDelete={a.synthetic ? () => onDelete(a) : undefined}
             />
           ))
         )}
       </div>
 
-      {showCreate && (
-        <div className="modal is-active">
-          <div className="modal-background" onClick={() => setShowCreate(false)} />
-          <div className="modal-card">
-            <header className="modal-card-head">
-              <p className="modal-card-title">New synthetic task</p>
-              <button className="delete" aria-label="close" onClick={() => setShowCreate(false)} />
-            </header>
-            <section className="modal-card-body">
-              <div className="field">
-                <label className="label">Name</label>
-                <input className="input" autoFocus value={draftName} onChange={(e) => setDraftName(e.target.value)} placeholder="Read chapter 3" />
-              </div>
-              <div className="field">
-                <label className="label">Due (optional)</label>
-                <input className="input" type="datetime-local" value={draftDue} onChange={(e) => setDraftDue(e.target.value)} />
-              </div>
-              <div className="field">
-                <label className="label">Notes (optional)</label>
-                <textarea className="textarea" rows={3} value={draftDesc} onChange={(e) => setDraftDesc(e.target.value)} />
-              </div>
-              {createErr && <p className="help is-danger">{createErr}</p>}
-            </section>
-            <footer className="modal-card-foot">
-              <button className="button is-primary" disabled={creating} onClick={submitCreate}>
-                {creating ? "Creating…" : "Create"}
-              </button>
-              <button className="button" disabled={creating} onClick={() => setShowCreate(false)}>Cancel</button>
-            </footer>
-          </div>
-        </div>
+      {id && (
+        <SyntheticTaskModal
+          courseId={id}
+          open={showCreate}
+          onClose={() => setShowCreate(false)}
+          onCreated={() => load()}
+        />
       )}
     </div>
   );

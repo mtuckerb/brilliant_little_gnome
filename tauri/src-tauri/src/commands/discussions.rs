@@ -2,7 +2,7 @@ use super::AppStateArg;
 use crate::error::{AppError, Result};
 use crate::models::{DiscussionForum, DiscussionTopic};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug, Serialize)]
 pub struct DiscussionPostView {
@@ -85,14 +85,35 @@ fn parse_post(p: &Value) -> DiscussionPostView {
         v.get("Html").and_then(|h| h.as_str()).map(|s| s.to_string())
             .or_else(|| v.get("Text").and_then(|h| h.as_str()).map(|s| s.to_string()))
     });
+    // Brightspace puts the author at the top level as `PostingUserDisplayName`
+    // (and `PostingUserId`), NOT nested inside PostingUser. The nested form
+    // is only returned for /whoami-style endpoints. The previous parse
+    // landed on null for every post, which the React side then rendered as
+    // "unknown" and which mis-attributed replies in the threaded view
+    // (every reply collapsed to the same fallback).
     let author_name = p
-        .pointer("/PostingUser/DisplayName")
+        .get("PostingUserDisplayName")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .or_else(|| p.pointer("/PostingUser/DisplayName").and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+        .or_else(|| {
+            // Last-ditch: build "First Last" from any FirstName + LastName
+            // pair Brightspace happens to expose.
+            let first = p
+                .pointer("/PostingUser/FirstName")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let last = p
+                .pointer("/PostingUser/LastName")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let combined = format!("{} {}", first, last).trim().to_string();
+            if combined.is_empty() { None } else { Some(combined) }
+        });
     let author_id = p
-        .pointer("/PostingUser/Identifier")
+        .get("PostingUserId")
         .and_then(value_to_id)
-        .or_else(|| p.get("PostingUserId").and_then(value_to_id));
+        .or_else(|| p.pointer("/PostingUser/Identifier").and_then(value_to_id));
     let posted_at = p
         .get("DatePosted")
         .and_then(|v| v.as_str())
@@ -117,4 +138,107 @@ fn value_to_id(v: &Value) -> Option<String> {
     if let Some(n) = v.as_i64() { return Some(n.to_string()); }
     if let Some(n) = v.as_f64() { return Some((n as i64).to_string()); }
     None
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct MarkReadResult {
+    pub marked: usize,
+    pub failed: usize,
+}
+
+/// Mark every post in a topic as read, propagating to Brightspace via the
+/// per-post `MyReadStatus` PUT. Returns counts so the UI can surface
+/// partial failures without aborting the whole batch.
+#[tauri::command]
+pub async fn mark_topic_read(
+    state: AppStateArg<'_>,
+    course_id: String,
+    topic_id: String,
+) -> Result<MarkReadResult> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT forum_id FROM discussion_topics WHERE course_id = ? AND brightspace_id = ?",
+    )
+    .bind(&course_id)
+    .bind(&topic_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((forum_id,)) = row else {
+        return Err(AppError::Other(format!(
+            "topic {} not found in course {}",
+            topic_id, course_id
+        )));
+    };
+    let raw = state
+        .client
+        .get_discussion_posts(&state.pool, &course_id, &forum_id, &topic_id, false)
+        .await?;
+    mark_posts_read_inner(&state, &course_id, &topic_id, &raw).await
+}
+
+/// Mark every post in every topic of a course as read. Walks topics and
+/// hits each one's posts; tolerates per-topic failures so a single broken
+/// forum doesn't halt the rest.
+#[tauri::command]
+pub async fn mark_course_discussions_read(
+    state: AppStateArg<'_>,
+    course_id: String,
+) -> Result<MarkReadResult> {
+    let topics: Vec<(String, String)> = sqlx::query_as(
+        "SELECT brightspace_id, forum_id FROM discussion_topics WHERE course_id = ?",
+    )
+    .bind(&course_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let mut total = MarkReadResult::default();
+    for (topic_id, forum_id) in topics {
+        let raw = match state
+            .client
+            .get_discussion_posts(&state.pool, &course_id, &forum_id, &topic_id, false)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("topic {} fetch failed: {}", topic_id, e);
+                total.failed += 1;
+                continue;
+            }
+        };
+        let r = mark_posts_read_inner(&state, &course_id, &topic_id, &raw).await?;
+        total.marked += r.marked;
+        total.failed += r.failed;
+    }
+    Ok(total)
+}
+
+async fn mark_posts_read_inner(
+    state: &AppStateArg<'_>,
+    course_id: &str,
+    topic_id: &str,
+    posts: &[Value],
+) -> Result<MarkReadResult> {
+    let mut result = MarkReadResult::default();
+    for p in posts {
+        // Only mark unread posts — Brightspace doesn't error on already-
+        // read, but skipping saves API calls.
+        let is_read = p.get("IsRead").and_then(|v| v.as_bool()).unwrap_or(false);
+        if is_read {
+            continue;
+        }
+        let Some(post_id) = p.get("PostId").and_then(value_to_id) else { continue };
+        let path = format!(
+            "/d2l/api/le/{}/{}/discussions/topics/{}/posts/{}/MyReadStatus",
+            crate::client::API_VERSION,
+            course_id,
+            topic_id,
+            post_id,
+        );
+        match state.client.put_json(&path, json!({ "IsRead": true })).await {
+            Ok(()) => result.marked += 1,
+            Err(e) => {
+                tracing::warn!("mark post {} read failed: {}", post_id, e);
+                result.failed += 1;
+            }
+        }
+    }
+    Ok(result)
 }

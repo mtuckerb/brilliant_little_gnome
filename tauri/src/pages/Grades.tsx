@@ -21,6 +21,8 @@ export default function Grades() {
   const [grades, setGrades] = useState<GradeRow[] | null>(null);
   const [stats, setStats] = useState<GradeStats | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState("");
 
   const load = useCallback(() => {
     if (!id) return;
@@ -36,15 +38,61 @@ export default function Grades() {
     return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
   }
 
-  function editExpected(g: GradeRow) {
-    const cur = g.expected_score;
-    const msg = cur === null
-      ? "Expected score (%):\n\nFor items like class participation that you reasonably expect to ace."
-      : "Expected score (%) — leave blank to clear:";
-    const val = prompt(msg, cur === null ? "" : String(cur));
-    if (val === null) return;
-    const num = val.trim() === "" ? null : parseFloat(val);
-    api.setExpectedScore(g.id, num).then(load);
+  // Backend returns confidence as a 0..1 fraction (possible / all_possible).
+  // The display + color thresholds + "less than 100" notification gate all
+  // assume a 0..100 percentage, so normalize once.
+  const confidencePct = stats.confidence * 100;
+
+  function startEdit(g: GradeRow) {
+    setEditingId(g.id);
+    setEditingValue(g.expected_score === null ? "" : String(g.expected_score));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingValue("");
+  }
+
+  async function commitEdit(g: GradeRow) {
+    const trimmed = editingValue.trim();
+    const num = trimmed === "" ? null : parseFloat(trimmed);
+    // Empty clears; valid number sets; nonsense input cancels silently.
+    if (num !== null && (Number.isNaN(num) || num < 0)) {
+      cancelEdit();
+      return;
+    }
+    setEditingId(null);
+    setEditingValue("");
+    await api.setExpectedScore(g.id, num);
+    load();
+  }
+
+  function renderExpectedInput(g: GradeRow) {
+    return (
+      <input
+        autoFocus
+        type="number"
+        step={0.1}
+        min={0}
+        value={editingValue}
+        onChange={(e) => setEditingValue(e.target.value)}
+        onBlur={() => commitEdit(g)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commitEdit(g);
+          if (e.key === "Escape") cancelEdit();
+        }}
+        placeholder="%"
+        style={{
+          width: 70,
+          textAlign: "right",
+          padding: "2px 6px",
+          border: "1px solid #739AC3",
+          borderRadius: 4,
+          background: "#FFFFFF",
+          fontSize: "0.85rem",
+        }}
+      />
+    );
   }
 
   return (
@@ -78,7 +126,7 @@ export default function Grades() {
                 <div className="level-item has-text-centered px-4" style={{ borderLeft: "1px solid #eee" }}>
                   <div>
                     <p className="heading">Confidence</p>
-                    <p className={`title ${confColor(stats.confidence)}`}>{fmtPct(stats.confidence)}</p>
+                    <p className={`title ${confColor(confidencePct)}`}>{fmtPct(confidencePct, 0)}</p>
                   </div>
                 </div>
               </>
@@ -92,7 +140,7 @@ export default function Grades() {
           </div>
         </div>
 
-        {stats.confidence < 100 && stats.remaining_points > 0 && (
+        {confidencePct < 100 && stats.remaining_points > 0 && (
           <div className="notification is-light is-info py-2 px-4 is-size-7 mb-4">
             <strong>Confidence Note:</strong> Only {fmtNum(stats.total_points_possible)} of the {fmtNum(stats.all_possible_points)} total points graded.
           </div>
@@ -113,14 +161,33 @@ export default function Grades() {
               const isActuallyGraded = g.is_graded && !g.is_expected;
               const rowClass = g.hidden ? "has-background-white-ter has-text-grey-light" : (isActuallyGraded ? "" : "has-background-white-ter has-text-grey-light");
               let result;
-              if (isActuallyGraded && g.perc !== null) {
+              if (editingId === g.id) {
+                result = renderExpectedInput(g);
+              } else if (isActuallyGraded && g.perc !== null) {
                 result = <span className={`tag ${gradeColor(g.perc)} is-light`} style={{ fontWeight: "bold" }}>{fmtPct(g.perc)}</span>;
               } else if (g.is_expected && g.expected_score !== null) {
-                result = <a onClick={() => editExpected(g)} title="Expected score (click to edit)" style={{ fontStyle: "italic", color: "#888", textDecoration: "none", borderBottom: "1px dotted #bbb" }}>~{fmtPct(g.expected_score)}</a>;
+                result = (
+                  <a
+                    onClick={() => startEdit(g)}
+                    title="Expected score (click to edit)"
+                    style={{ fontStyle: "italic", color: "#888", textDecoration: "none", borderBottom: "1px dotted #bbb", cursor: "text" }}
+                  >
+                    ~{fmtPct(g.expected_score)}
+                  </a>
+                );
               } else if (!g.manually_marked_ungraded) {
-                result = <a onClick={() => editExpected(g)} title="Set an expected score" className="has-text-grey-light">-</a>;
+                result = (
+                  <a
+                    onClick={() => startEdit(g)}
+                    title="Click to speculate a score"
+                    className="has-text-grey-light"
+                    style={{ cursor: "text", borderBottom: "1px dotted #ddd" }}
+                  >
+                    —
+                  </a>
+                );
               } else {
-                result = <>-</>;
+                result = <>—</>;
               }
 
               const points = isActuallyGraded ? `${fmtNum(g.numerator)} / ${fmtNum(g.denominator, 2, "-")}` :

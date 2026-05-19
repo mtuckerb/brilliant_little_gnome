@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-const remoteDevHost = process.env.BRILLIANT_TAURI_REMOTE_DEV === "1"
-  ? process.env.TAURI_DEV_HOST
-  : undefined;
+// `tauri ios dev --host` sets TAURI_DEV_HOST to the Mac's LAN IP so the
+// phone can reach the dev server. We just honor that whenever it's set —
+// no separate opt-in flag needed.
+const remoteDevHost = process.env.TAURI_DEV_HOST || undefined;
 
 export default defineConfig(async () => ({
   plugins: [react()],

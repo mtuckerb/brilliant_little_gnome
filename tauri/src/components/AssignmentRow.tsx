@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
-import { displayCourseName, type Assignment, type Course } from "../types";
+import { courseLabel, type Assignment, type Course } from "../types";
+import BrightspaceLink, { useBrightspaceHost } from "./BrightspaceLink";
+import { assignmentSubmitUrl } from "../lib/brightspace";
 
 // Single-row presentation used by both Calendar and Assignments. Caller owns
 // "show completed" state and the leaving-animation set; this component is just
@@ -12,11 +14,15 @@ interface Props {
   // When set, show course name/code in the row (Calendar). When omitted,
   // assume the row is already inside a course context (Assignments page).
   showCourse?: boolean;
+  // Optional. Pass for synthetic rows so the user can remove them inline.
+  onDelete?: () => void;
 }
 
-export default function AssignmentRow({ assignment: a, course: c, leaving, onToggleComplete, showCourse }: Props) {
+export default function AssignmentRow({ assignment: a, course: c, leaving, onToggleComplete, showCourse, onDelete }: Props) {
   const cls = `assignment-row is-flex is-justify-content-space-between is-align-items-center py-2${leaving ? " is-leaving" : ""}`;
   const detailHref = `/course/${a.course_id}/assignments/${a.id}`;
+  const bsHost = useBrightspaceHost();
+  const bsUrl = a.external_url ?? (bsHost ? assignmentSubmitUrl(bsHost, a.course_id, a.brightspace_id) : null);
   return (
     <div className={cls} style={{ borderBottom: "1px solid #eee", gap: 12 }}>
       <input
@@ -30,12 +36,13 @@ export default function AssignmentRow({ assignment: a, course: c, leaving, onTog
         {showCourse && c && (
           <>
             <Link to={`/course/${c.org_unit_id}/assignments`} style={{ color: c.custom_color || undefined }}>
-              <strong>{c.code ? `${c.code} - ${displayCourseName(c)}` : displayCourseName(c)}</strong>
+              <strong>{courseLabel(c)}</strong>
             </Link>
             <span className="mx-2 has-text-grey-light">·</span>
           </>
         )}
         <Link to={detailHref} className="has-text-link-dark">{a.name}</Link>
+        {bsUrl && <BrightspaceLink url={bsUrl} label="Open this assignment in Brightspace" className="is-inline-block" />}
         {a.completed && <span className="tag is-success is-light ml-2">done</span>}
         {a.optional && <span className="tag is-light ml-2">optional</span>}
         {a.synthetic && <span className="tag is-info is-light ml-2">synthetic</span>}
@@ -43,6 +50,23 @@ export default function AssignmentRow({ assignment: a, course: c, leaving, onTog
       <span className="has-text-grey is-size-7" style={{ flex: "0 0 auto" }}>
         {a.due_date && new Date(a.due_date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}
       </span>
+      {onDelete && (
+        <button
+          className="button is-small is-white"
+          title="Delete this synthetic task"
+          aria-label="Delete synthetic task"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            // window.confirm() is silently swallowed by WKWebView; trust the
+            // click instead. If you misclick, recreate it — it's two fields.
+            onDelete();
+          }}
+          style={{ flex: "0 0 auto" }}
+        >
+          <span className="icon is-small has-text-grey"><i className="fas fa-trash"></i></span>
+        </button>
+      )}
     </div>
   );
 }

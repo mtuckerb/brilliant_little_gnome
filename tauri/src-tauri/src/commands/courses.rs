@@ -1,11 +1,18 @@
 use super::AppStateArg;
 use crate::error::Result;
 use crate::models::Course;
+use base64::Engine;
+use serde::Serialize;
+
+#[derive(Debug, Serialize)]
+pub struct CourseBanner {
+    pub data_url: String,
+}
 
 #[tauri::command]
 pub async fn list_courses(state: AppStateArg<'_>) -> Result<Vec<Course>> {
     let rows = sqlx::query_as::<_, Course>(
-        "SELECT org_unit_id, name, custom_name, code, semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses ORDER BY is_pinned DESC, sort_order ASC, COALESCE(custom_name, name) ASC",
+        "SELECT org_unit_id, name, custom_name, code, custom_code, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses ORDER BY is_pinned DESC, sort_order ASC, COALESCE(custom_name, name) ASC",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -15,7 +22,7 @@ pub async fn list_courses(state: AppStateArg<'_>) -> Result<Vec<Course>> {
 #[tauri::command]
 pub async fn get_course(state: AppStateArg<'_>, id: String) -> Result<Course> {
     let course = sqlx::query_as::<_, Course>(
-        "SELECT org_unit_id, name, custom_name, code, semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses WHERE org_unit_id = ?",
+        "SELECT org_unit_id, name, custom_name, code, custom_code, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses WHERE org_unit_id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -97,7 +104,75 @@ pub async fn update_course_name(state: AppStateArg<'_>, id: String, name: String
         .execute(&state.pool)
         .await?;
 
+    #[cfg(feature = "p2p")]
+    {
+        use crate::p2p::bridge::LocalChange;
+        use crate::p2p::doc::CourseField;
+        if let Some(engine) = state.sync_engine() {
+            if let Err(e) = engine
+                .bridge()
+                .apply_local(LocalChange::Course {
+                    id: id.clone(),
+                    field: CourseField::CustomName(custom_name.clone()),
+                })
+                .await
+            {
+                tracing::warn!("apply_local custom_name {}: {}", id, e);
+            }
+        }
+    }
+
     get_course(state, id).await
+}
+
+#[tauri::command]
+pub async fn update_course_semester(state: AppStateArg<'_>, id: String, semester: Option<String>) -> Result<()> {
+    // Override for the Brightspace-assigned semester. Empty/whitespace clears
+    // the override so the display falls back to whatever Brightspace says.
+    let trimmed = semester.and_then(|s| {
+        let t = s.trim().to_string();
+        if t.is_empty() { None } else { Some(t) }
+    });
+    sqlx::query("UPDATE courses SET custom_semester = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+        .bind(&trimmed)
+        .bind(&id)
+        .execute(&state.pool)
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_course_code(state: AppStateArg<'_>, id: String, code: Option<String>) -> Result<()> {
+    // Empty/whitespace → None: clears the override so display falls back to
+    // the auto-derived `code` column. This mirrors `update_course_name`'s
+    // semantics for `custom_name`.
+    let trimmed = code.and_then(|s| {
+        let t = s.trim().to_string();
+        if t.is_empty() { None } else { Some(t) }
+    });
+    sqlx::query("UPDATE courses SET custom_code = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+        .bind(&trimmed)
+        .bind(&id)
+        .execute(&state.pool)
+        .await?;
+    #[cfg(feature = "p2p")]
+    {
+        use crate::p2p::bridge::LocalChange;
+        use crate::p2p::doc::CourseField;
+        if let Some(engine) = state.sync_engine() {
+            if let Err(e) = engine
+                .bridge()
+                .apply_local(LocalChange::Course {
+                    id: id.clone(),
+                    field: CourseField::CustomCode(trimmed.clone()),
+                })
+                .await
+            {
+                tracing::warn!("apply_local custom_code {}: {}", id, e);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -222,7 +297,55 @@ pub async fn drop_course(state: AppStateArg<'_>, id: String) -> Result<()> {
     Ok(())
 }
 
+/// Permanently delete a course and everything tied to it. Used for
+/// onboarding dummies / mis-imports where archiving isn't enough. The next
+/// Brightspace enrollment sync will recreate the row if the user is still
+/// enrolled, which is desirable when the deletion was a mistake.
+#[tauri::command]
+pub async fn delete_course(state: AppStateArg<'_>, id: String) -> Result<()> {
+    let mut tx = state.pool.begin().await?;
+    // Order matters: child rows first, then the course. Foreign keys aren't
+    // declared on every table here, but we want them gone regardless.
+    sqlx::query("DELETE FROM assignments WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM grades WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM content_modules WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM content_items WHERE module_id IN (SELECT brightspace_id FROM content_modules WHERE course_id = ?)")
+        .bind(&id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM discussion_forums WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM discussion_topics WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM courses WHERE org_unit_id = ?").bind(&id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn refresh_course(state: AppStateArg<'_>, id: String) -> Result<()> {
     crate::sync::sync_course(state.inner().clone(), &id).await
+}
+
+/// Fetch the course banner image via the authenticated Brightspace client
+/// and return it as a base64 data URL. Brightspace banner URLs point at the
+/// /d2l/api/.../image endpoint which requires the session cookie — the Tauri
+/// webview can't send that, so we proxy through the Rust HTTP client.
+/// Returns None when the course has no banner_url, or when the fetch fails
+/// (so the UI can fall back to the accent-color block).
+#[tauri::command]
+pub async fn fetch_course_banner(state: AppStateArg<'_>, id: String) -> Result<Option<CourseBanner>> {
+    let url: Option<String> = sqlx::query_scalar("SELECT banner_url FROM courses WHERE org_unit_id = ?")
+        .bind(&id)
+        .fetch_optional(&state.pool)
+        .await?
+        .flatten();
+    let Some(url) = url else { return Ok(None) };
+    match state.client.fetch_bytes(&url).await {
+        Ok((bytes, mime, _filename)) => {
+            let mime = mime.unwrap_or_else(|| "image/jpeg".to_string());
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            Ok(Some(CourseBanner { data_url: format!("data:{};base64,{}", mime, b64) }))
+        }
+        Err(e) => {
+            tracing::warn!("banner fetch for {}: {}", id, e);
+            Ok(None)
+        }
+    }
 }

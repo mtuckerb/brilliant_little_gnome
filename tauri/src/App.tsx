@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { parseCoursePath, recordCourseVisit } from "./lib/courseLastTab";
 import { listen } from "@tauri-apps/api/event";
 import { api, onAppEvent } from "./api";
 import type { AuthStatus, SyncStatus } from "./types";
-import Layout from "./components/Layout";
+import DesktopLayout from "./components/DesktopLayout";
+import MobileLayout from "./components/MobileLayout";
+import { useIsMobile } from "./hooks/useIsMobile";
 import Dashboard from "./pages/Dashboard";
 import CourseDetail from "./pages/CourseDetail";
 import Grades from "./pages/Grades";
@@ -17,13 +20,28 @@ import Modules from "./pages/Modules";
 import ModuleDetail from "./pages/ModuleDetail";
 import Discussions from "./pages/Discussions";
 import DiscussionTopic from "./pages/DiscussionTopic";
+import CourseAnnouncements from "./pages/CourseAnnouncements";
+import CourseSearch from "./pages/CourseSearch";
 import Archive from "./pages/Archive";
 import { ToastProvider, useToast } from "./components/ToastProvider";
+import DownloadsTray from "./components/DownloadsTray";
+import { useExternalLinkInterceptor } from "./hooks/useExternalLinkInterceptor";
+
+function CourseTabRecorder() {
+  const location = useLocation();
+  useEffect(() => {
+    const parsed = parseCoursePath(location.pathname);
+    if (parsed) recordCourseVisit(parsed.courseId, parsed.subPath);
+  }, [location.pathname]);
+  return null;
+}
 
 function AppInner() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const toast = useToast();
+  useExternalLinkInterceptor();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     api.authStatus().then(setAuth).catch(() => setAuth({ authenticated: false, degraded: false, host: null, user_id: null, uid: null }));
@@ -85,8 +103,10 @@ function AppInner() {
     );
   }
 
+  const Shell = isMobile ? MobileLayout : DesktopLayout;
   return (
-    <Layout auth={auth} sync={sync} onAuthChange={setAuth}>
+    <Shell auth={auth} sync={sync} onAuthChange={setAuth}>
+      <CourseTabRecorder />
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
@@ -98,13 +118,16 @@ function AppInner() {
         <Route path="/course/:id/content/:moduleId" element={<ModuleDetail />} />
         <Route path="/course/:id/discussions" element={<Discussions />} />
         <Route path="/course/:id/discussions/:topicId" element={<DiscussionTopic />} />
+        <Route path="/course/:id/announcements" element={<CourseAnnouncements />} />
+        <Route path="/course/:id/search" element={<CourseSearch />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/archive" element={<Archive />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
-    </Layout>
+      <DownloadsTray />
+    </Shell>
   );
 }
 

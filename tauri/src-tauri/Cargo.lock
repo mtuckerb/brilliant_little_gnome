@@ -667,6 +667,7 @@ dependencies = [
  "jsonwebtoken",
  "keyring",
  "loro",
+ "md-5",
  "once_cell",
  "parking_lot",
  "postcard",

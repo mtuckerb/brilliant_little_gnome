@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { DownloadResult } from "./lib/download";
+
+export interface ZoteroResult {
+  created: string[];
+  failures: string[];
+  collection_key: string | null;
+}
 import type {
   Course,
   GradeRow,
@@ -46,6 +53,12 @@ export const api = {
     invoke<void>("update_course_color", { id, color }),
   updateCourseName: (id: string, name: string) =>
     invoke<Course>("update_course_name", { id, name }),
+  updateCourseCode: (id: string, code: string | null) =>
+    invoke<void>("update_course_code", { id, code }),
+  updateCourseSemester: (id: string, semester: string | null) =>
+    invoke<void>("update_course_semester", { id, semester }),
+  fetchCourseBanner: (id: string) =>
+    invoke<{ data_url: string } | null>("fetch_course_banner", { id }),
   updateCourseUnits: (id: string, units: number | null) =>
     invoke<void>("update_course_units", { id, units }),
   updateCourseTargetGrade: (id: string, target: number | null) =>
@@ -54,6 +67,8 @@ export const api = {
     invoke<void>("update_course_end_of_week", { id, day }),
   dropCourse: (id: string, status: string) =>
     invoke<void>("drop_course", { id, status }),
+  deleteCourse: (id: string) =>
+    invoke<void>("delete_course", { id }),
   refreshCourse: (id: string) => invoke<void>("refresh_course", { id }),
 
   // Overview / syllabus
@@ -114,22 +129,44 @@ export const api = {
       assignmentId,
     }),
 
-  // Downloads (single file or zipped archive returned as base64)
+  // Downloads — Rust writes to ~/Downloads (or platform equivalent) and
+  // returns saved_path. A "download://saved" event also fires; the tray
+  // listens there so it sees every download regardless of caller.
   downloadTopicFile: (courseId: string, topicId: string) =>
-    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
-      "download_topic_file",
-      { courseId, topicId },
-    ),
+    invoke<DownloadResult>("download_topic_file", { courseId, topicId }),
   downloadModuleArchive: (courseId: string, moduleId: string) =>
-    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
-      "download_module_archive",
-      { courseId, moduleId },
-    ),
+    invoke<DownloadResult>("download_module_archive", { courseId, moduleId }),
   downloadCourseArchive: (courseId: string) =>
-    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
-      "download_course_archive",
-      { courseId },
-    ),
+    invoke<DownloadResult>("download_course_archive", { courseId }),
+  downloadCourseSyllabus: (courseId: string) =>
+    invoke<DownloadResult>("download_course_syllabus", { courseId }),
+  revealInFolder: (path: string) =>
+    invoke<void>("reveal_in_folder", { path }),
+  openUrl: (url: string) =>
+    invoke<void>("open_url", { url }),
+  exportAuth: () =>
+    invoke<{ host: string; cookie: string }>("export_auth"),
+
+  // One-shot import from the old Sinatra Brilliant DB.
+  importFromOldBrilliant: (dbPath?: string) =>
+    invoke<{
+      courses_updated: number;
+      assignments_updated: number;
+      synthetic_assignments_inserted: number;
+      notifications_inserted: number;
+      prefs_overlaid: boolean;
+      old_db_path: string;
+    }>("import_from_old_brilliant", { dbPath: dbPath ?? null }),
+
+  // Zotero (requires zotero_user_id + zotero_api_key in prefs)
+  zoteroSendTopic: (courseId: string, topicId: string) =>
+    invoke<ZoteroResult>("zotero_send_topic", { courseId, topicId }),
+  zoteroSendModule: (courseId: string, moduleId: string) =>
+    invoke<ZoteroResult>("zotero_send_module", { courseId, moduleId }),
+  zoteroSendCourse: (courseId: string) =>
+    invoke<ZoteroResult>("zotero_send_course", { courseId }),
+  zoteroSendSyllabus: (courseId: string) =>
+    invoke<ZoteroResult>("zotero_send_syllabus", { courseId }),
 
   // Notifications
   listNotifications: (params: {
@@ -161,6 +198,10 @@ export const api = {
     invoke<DiscussionTopic[]>("list_topics", { courseId }),
   listTopicPosts: (courseId: string, topicId: string) =>
     invoke<DiscussionPost[]>("list_topic_posts", { courseId, topicId }),
+  markTopicRead: (courseId: string, topicId: string) =>
+    invoke<{ marked: number; failed: number }>("mark_topic_read", { courseId, topicId }),
+  markCourseDiscussionsRead: (courseId: string) =>
+    invoke<{ marked: number; failed: number }>("mark_course_discussions_read", { courseId }),
 
   // REST API toggle
   restApiStart: () => invoke<{ port: number; key: string }>("rest_api_start"),

@@ -116,7 +116,64 @@ impl BrightspaceClient {
         self.app.emit("auth-captured", host)
     }
 
-    fn mark_auth_failure(&self, status: StatusCode) {
+    /// Probe `/users/whoami` to confirm the session is genuinely dead
+    /// before flipping the app into "degraded" state. A surprising number
+    /// of 401/403s come from individual endpoints (resource-scoped perms,
+    /// transient gateway hiccups) rather than session expiry. Without
+    /// this probe we kept showing "session expired" toasts on a healthy
+    /// account, which trained the user to ignore them.
+    async fn maybe_mark_auth_failure(&self, origin_path: &str, status: StatusCode) {
+        // Already-known-degraded: don't bother re-probing — saves API
+        // chatter while the user is mid-reauth.
+        if self.is_degraded() {
+            return;
+        }
+        let host = self.host.read().clone();
+        let cookie = self.cookie.read().clone();
+        let (Some(host), Some(cookie)) = (host, cookie) else {
+            // No creds to probe with — the failure is real.
+            self.commit_auth_failure(status);
+            return;
+        };
+        let probe_url = format!("https://{}/d2l/api/lp/{}/users/whoami", host, API_VERSION);
+        match self
+            .http
+            .get(&probe_url)
+            .header(header::COOKIE, cookie)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let probe_status = resp.status();
+                if probe_status.is_success() {
+                    tracing::info!(
+                        "auth probe passed (whoami {}) despite {} on {}; not flipping degraded",
+                        probe_status,
+                        status,
+                        origin_path,
+                    );
+                    return;
+                }
+                if matches!(probe_status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+                    tracing::warn!(
+                        "auth probe confirmed expiry (whoami {}); marking degraded",
+                        probe_status,
+                    );
+                    self.commit_auth_failure(status);
+                } else {
+                    tracing::warn!(
+                        "auth probe inconclusive (whoami {}); leaving degraded=false",
+                        probe_status,
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("auth probe network error: {} — not flipping degraded", e);
+            }
+        }
+    }
+
+    fn commit_auth_failure(&self, status: StatusCode) {
         *self.degraded.write() = true;
         let host = self.host.read().clone().unwrap_or_default();
         if let Err(e) = self.app.emit(
@@ -226,7 +283,7 @@ impl BrightspaceClient {
                     status
                 );
             } else {
-                self.mark_auth_failure(status);
+                self.maybe_mark_auth_failure(path, status).await;
             }
             let body = resp.text().await.unwrap_or_default();
             Err(AppError::BrightspaceApi { status: status.as_u16(), body })
@@ -275,6 +332,33 @@ impl BrightspaceClient {
         Ok(items)
     }
 
+    /// PUT a JSON body to a Brightspace path. Used by mark-as-read style
+    /// state updates (`/discussions/topics/.../MyReadStatus`). Returns
+    /// nothing — these endpoints are write-only fire-and-forget.
+    pub async fn put_json(&self, path: &str, body: serde_json::Value) -> Result<()> {
+        let host = self.host.read().clone()
+            .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
+        let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
+        let url = format!("https://{}{}", host, path);
+        let resp = self.http.put(&url)
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ACCEPT, "application/json")
+            .body(body.to_string())
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+                self.maybe_mark_auth_failure(path, status).await;
+            }
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::BrightspaceApi { status: status.as_u16(), body });
+        }
+        *self.degraded.write() = false;
+        Ok(())
+    }
+
     /// Fetch a raw HTML page (not JSON, not cached). Used by the PSY-220
     /// scraper which has to parse the rendered grades view.
     pub async fn fetch_html(&self, path: &str) -> Result<String> {
@@ -290,7 +374,7 @@ impl BrightspaceClient {
         let status = resp.status();
         if !status.is_success() {
             if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                self.mark_auth_failure(status);
+                self.maybe_mark_auth_failure(path, status).await;
             }
             let body = resp.text().await.unwrap_or_default();
             return Err(AppError::BrightspaceApi { status: status.as_u16(), body });
@@ -322,7 +406,7 @@ impl BrightspaceClient {
         let status = resp.status();
         if !status.is_success() {
             if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                self.mark_auth_failure(status);
+                self.maybe_mark_auth_failure(url_or_path, status).await;
             }
             return Err(AppError::BrightspaceApi { status: status.as_u16(), body: format!("GET {} -> {}", url, status) });
         }

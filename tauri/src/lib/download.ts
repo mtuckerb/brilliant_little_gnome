@@ -8,6 +8,10 @@ export interface DownloadPayload {
   saved_path?: string | null;
 }
 
+// Re-exported under the more accurate "result" name used across the app since
+// Rust now always writes to disk and returns saved_path.
+export type DownloadResult = DownloadPayload;
+
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);

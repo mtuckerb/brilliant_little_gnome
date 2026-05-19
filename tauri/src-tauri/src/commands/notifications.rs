@@ -3,17 +3,28 @@ use crate::error::Result;
 use crate::models::Notification;
 
 #[tauri::command]
-pub async fn list_notifications(state: AppStateArg<'_>, unread_only: Option<bool>) -> Result<Vec<Notification>> {
-    let rows = if unread_only.unwrap_or(false) {
-        sqlx::query_as::<_, Notification>(
+pub async fn list_notifications(
+    state: AppStateArg<'_>,
+    unread_only: Option<bool>,
+    course_id: Option<String>,
+) -> Result<Vec<Notification>> {
+    // Course-scoped queries (used by the per-course Announcements view)
+    // skip the LIMIT — there usually aren't that many per course, and the
+    // user explicitly navigated there to see them.
+    let unread = unread_only.unwrap_or(false);
+    let rows = match (course_id.as_deref(), unread) {
+        (Some(cid), true) => sqlx::query_as::<_, Notification>(
+            "SELECT n.id, n.external_id, n.notification_type, n.title, n.body, n.date, n.course_id, COALESCE(c.custom_name, c.name, n.course_name) AS course_name, n.urgency, n.is_personal, n.is_read, n.url FROM notifications n LEFT JOIN courses c ON c.org_unit_id = n.course_id WHERE n.is_read = 0 AND n.course_id = ? ORDER BY n.date DESC NULLS LAST",
+        ).bind(cid).fetch_all(&state.pool).await?,
+        (Some(cid), false) => sqlx::query_as::<_, Notification>(
+            "SELECT n.id, n.external_id, n.notification_type, n.title, n.body, n.date, n.course_id, COALESCE(c.custom_name, c.name, n.course_name) AS course_name, n.urgency, n.is_personal, n.is_read, n.url FROM notifications n LEFT JOIN courses c ON c.org_unit_id = n.course_id WHERE n.course_id = ? ORDER BY n.date DESC NULLS LAST",
+        ).bind(cid).fetch_all(&state.pool).await?,
+        (None, true) => sqlx::query_as::<_, Notification>(
             "SELECT n.id, n.external_id, n.notification_type, n.title, n.body, n.date, n.course_id, COALESCE(c.custom_name, c.name, n.course_name) AS course_name, n.urgency, n.is_personal, n.is_read, n.url FROM notifications n LEFT JOIN courses c ON c.org_unit_id = n.course_id WHERE n.is_read = 0 ORDER BY n.date DESC NULLS LAST",
-        )
-        .fetch_all(&state.pool).await?
-    } else {
-        sqlx::query_as::<_, Notification>(
+        ).fetch_all(&state.pool).await?,
+        (None, false) => sqlx::query_as::<_, Notification>(
             "SELECT n.id, n.external_id, n.notification_type, n.title, n.body, n.date, n.course_id, COALESCE(c.custom_name, c.name, n.course_name) AS course_name, n.urgency, n.is_personal, n.is_read, n.url FROM notifications n LEFT JOIN courses c ON c.org_unit_id = n.course_id ORDER BY n.date DESC NULLS LAST LIMIT 200",
-        )
-        .fetch_all(&state.pool).await?
+        ).fetch_all(&state.pool).await?,
     };
     Ok(rows)
 }

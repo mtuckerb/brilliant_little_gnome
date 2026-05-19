@@ -52,4 +52,36 @@ impl AppState {
     pub fn sync_engine(&self) -> Option<Arc<crate::p2p::SyncEngine>> {
         self.sync.read().clone()
     }
+
+    /// Push the current Brightspace cookie + host into the Loro doc so
+    /// paired peers pick up the fresh session. Called after every
+    /// `store_credentials` so the aggregate session lifetime across the
+    /// device fleet stays as long as possible — when one device's auth
+    /// expires, another peer's session takes over silently.
+    ///
+    /// Best-effort: any failure (no sync engine running, transient Loro
+    /// error) is logged and swallowed. The credentials are already saved
+    /// locally before this is called.
+    #[cfg(feature = "p2p")]
+    pub async fn mirror_credentials_to_loro(&self) {
+        let Some(engine) = self.sync_engine() else { return };
+        use crate::p2p::bridge::{LocalChange, PrefField};
+        let bridge = engine.bridge();
+        if let Some(cookie) = self.client.cookie_clone() {
+            if let Err(e) = bridge
+                .apply_local(LocalChange::Pref(PrefField::BrightspaceCookie(cookie)))
+                .await
+            {
+                tracing::warn!("apply_local brightspace_cookie: {e}");
+            }
+        }
+        if let Some(host) = self.client.host_clone() {
+            if let Err(e) = bridge
+                .apply_local(LocalChange::Pref(PrefField::BrightspaceHost(host)))
+                .await
+            {
+                tracing::warn!("apply_local brightspace_host: {e}");
+            }
+        }
+    }
 }

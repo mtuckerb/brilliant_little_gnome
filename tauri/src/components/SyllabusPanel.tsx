@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { runZotero } from "../lib/zotero";
+import { useToast } from "./ToastProvider";
 
 interface Props {
   courseId: string;
@@ -28,9 +30,17 @@ function blobFromBase64(b64: string, mime: string | null): { url: string; revoke
 export default function SyllabusPanel({ courseId }: Props) {
   const [meta, setMeta] = useState<OverviewMeta | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"view" | "download" | null>(null);
+  const [busy, setBusy] = useState<"view" | "download" | "zotero" | null>(null);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
   const [viewerName, setViewerName] = useState<string | null>(null);
+  const toast = useToast();
+
+  async function handleSendToZotero() {
+    if (!meta?.has_attachment) return;
+    setBusy("zotero");
+    await runZotero(toast, "Syllabus", () => api.zoteroSendSyllabus(courseId));
+    setBusy(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -51,7 +61,11 @@ export default function SyllabusPanel({ courseId }: Props) {
     setBusy("view");
     setErr(null);
     try {
-      if (meta.has_attachment && meta.attachment_url) {
+      // Brightspace's overview JSON only flags HasAttachment without exposing
+      // a URL — the bytes live at /overview/attachment, which the Rust command
+      // knows how to hit. So prefer the attachment whenever HasAttachment is
+      // true, and only fall back to the HTML description when there isn't one.
+      if (meta.has_attachment) {
         const att = await api.fetchCourseOverviewAttachment(courseId);
         const { url } = blobFromBase64(att.bytes_base64, att.mime);
         setViewerUrl(url);
@@ -79,16 +93,10 @@ export default function SyllabusPanel({ courseId }: Props) {
     setBusy("download");
     setErr(null);
     try {
-      const att = await api.fetchCourseOverviewAttachment(courseId);
-      const { url, revoke } = blobFromBase64(att.bytes_base64, att.mime);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = att.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      // Defer revoke; some browsers race the download otherwise.
-      setTimeout(revoke, 4000);
+      // Goes through the Rust save_download_file path: the bytes land in
+      // ~/Downloads and a "download://saved" event drops it into the tray.
+      // The blob-URL anchor-click route silently no-ops in WKWebView.
+      await api.downloadCourseSyllabus(courseId);
     } catch (e) {
       setErr(String((e as { message?: string })?.message ?? e));
     } finally {
@@ -129,6 +137,15 @@ export default function SyllabusPanel({ courseId }: Props) {
           <button className="button is-small" disabled={!meta.has_attachment || busy !== null} onClick={handleDownload}>
             <span className="icon"><i className="fas fa-download"></i></span>
             <span>{busy === "download" ? "Saving…" : "Download"}</span>
+          </button>
+          <button
+            className="button is-small ml-2"
+            disabled={!meta.has_attachment || busy !== null}
+            onClick={handleSendToZotero}
+            title="Send the syllabus PDF to your Zotero library"
+          >
+            <span className="icon"><i className="fas fa-book-bookmark"></i></span>
+            <span>{busy === "zotero" ? "Sending…" : "Zotero"}</span>
           </button>
         </div>
       </div>

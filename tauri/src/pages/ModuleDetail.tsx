@@ -4,6 +4,11 @@ import { api } from "../api";
 import type { ContentItem, ContentModule } from "../types";
 import { triggerDownload } from "../lib/download";
 import CourseHeader from "../components/CourseHeader";
+import { runZotero } from "../lib/zotero";
+import { useToast } from "../components/ToastProvider";
+import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
+import { moduleUrl, topicViewUrl } from "../lib/brightspace";
+import RichText from "../components/RichText";
 
 // Module detail — shows the module's instructor commentary (description),
 // child sub-modules as clickable links, and the list of items inside the
@@ -17,7 +22,11 @@ export default function ModuleDetail() {
   const [items, setItems] = useState<ContentItem[] | null>(null);
   const [downloading, setDownloading] = useState<Record<string, boolean>>({});
   const [moduleZipping, setModuleZipping] = useState(false);
+  const [zoteroBusy, setZoteroBusy] = useState<Record<string, boolean>>({});
+  const [moduleSendingZotero, setModuleSendingZotero] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
+  const bsHost = useBrightspaceHost();
 
   useEffect(() => {
     if (!courseId || !moduleId) return;
@@ -67,6 +76,25 @@ export default function ModuleDetail() {
     }
   }
 
+  async function sendItemToZotero(it: ContentItem) {
+    if (!courseId) return;
+    const key = `item:${it.id}`;
+    setZoteroBusy((s) => ({ ...s, [key]: true }));
+    await runZotero(toast, it.title, () =>
+      api.zoteroSendTopic(courseId, it.brightspace_id),
+    );
+    setZoteroBusy((s) => ({ ...s, [key]: false }));
+  }
+
+  async function sendModuleToZotero() {
+    if (!courseId || !moduleId) return;
+    setModuleSendingZotero(true);
+    await runZotero(toast, current?.title ?? "Module", () =>
+      api.zoteroSendModule(courseId, moduleId),
+    );
+    setModuleSendingZotero(false);
+  }
+
   if (modules === null || items === null) {
     return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
   }
@@ -99,8 +127,15 @@ export default function ModuleDetail() {
       </nav>
 
       <div className="level mb-3">
-        <div className="level-left">
-          <h1 className="title is-4"><i className="fas fa-folder-open mr-2"></i>{current.title}</h1>
+        <div className="level-left is-flex is-align-items-center">
+          <h1 className="title is-4 mb-0"><i className="fas fa-folder-open mr-2"></i>{current.title}</h1>
+          {bsHost && courseId && moduleId && (
+            <BrightspaceLink
+              url={moduleUrl(bsHost, courseId, moduleId)}
+              label="Open this module in Brightspace"
+              className="ml-2"
+            />
+          )}
         </div>
         <div className="level-right">
           <button
@@ -114,6 +149,17 @@ export default function ModuleDetail() {
             </span>
             <span>{moduleZipping ? "Bundling…" : "Download all"}</span>
           </button>
+          <button
+            className="button is-small is-light ml-2"
+            disabled={moduleSendingZotero || items.length === 0}
+            onClick={sendModuleToZotero}
+            title="Send all files in this module (and sub-modules) to your Zotero library"
+          >
+            <span className="icon is-small">
+              <i className={`fas ${moduleSendingZotero ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i>
+            </span>
+            <span>{moduleSendingZotero ? "Sending…" : "Send to Zotero"}</span>
+          </button>
         </div>
       </div>
 
@@ -123,7 +169,7 @@ export default function ModuleDetail() {
       {current.description && (
         <div className="box">
           <h2 className="title is-6"><i className="fas fa-chalkboard-teacher mr-2 has-text-grey"></i>From the instructor</h2>
-          <div className="content" dangerouslySetInnerHTML={{ __html: current.description }} />
+          <RichText content={current.description} />
         </div>
       )}
 
@@ -169,6 +215,16 @@ export default function ModuleDetail() {
                 >
                   <span className="icon is-small">
                     <i className={`fas ${downloading[`item:${it.id}`] ? "fa-circle-notch fa-spin" : "fa-download"}`}></i>
+                  </span>
+                </button>
+                <button
+                  className="button is-small is-white"
+                  title="Send this file to Zotero"
+                  disabled={zoteroBusy[`item:${it.id}`]}
+                  onClick={() => sendItemToZotero(it)}
+                >
+                  <span className="icon is-small">
+                    <i className={`fas ${zoteroBusy[`item:${it.id}`] ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i>
                   </span>
                 </button>
               </li>

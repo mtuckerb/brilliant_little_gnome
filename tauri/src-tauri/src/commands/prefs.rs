@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[tauri::command]
 pub async fn get_prefs(state: AppStateArg<'_>) -> Result<UserPreferences> {
     let prefs = sqlx::query_as::<_, UserPreferences>(
-        "SELECT id, display_name, time_zone, brightspace_host, api_enabled, api_key, api_listen_all, api_port, jwt_secret, historic_gpa, historic_units, default_semester, brightspace_uid, brightspace_user_id, last_login_at, calendar_show_empty_days FROM user_preferences LIMIT 1",
+        "SELECT id, display_name, time_zone, brightspace_host, api_enabled, api_key, api_listen_all, api_port, jwt_secret, historic_gpa, historic_units, default_semester, brightspace_uid, brightspace_user_id, last_login_at, calendar_show_empty_days, zotero_user_id, zotero_api_key , zotero_use_local, zotero_local_base_url, zotero_local_user_id, zotero_basic_auth_user, zotero_basic_auth_pass FROM user_preferences LIMIT 1",
     )
     .fetch_one(&state.pool)
     .await?;
@@ -24,6 +24,13 @@ pub struct PrefsPatch {
     pub api_listen_all: Option<bool>,
     pub api_port: Option<i64>,
     pub calendar_show_empty_days: Option<bool>,
+    pub zotero_user_id: Option<String>,
+    pub zotero_api_key: Option<String>,
+    pub zotero_use_local: Option<bool>,
+    pub zotero_local_base_url: Option<String>,
+    pub zotero_local_user_id: Option<String>,
+    pub zotero_basic_auth_user: Option<String>,
+    pub zotero_basic_auth_pass: Option<String>,
 }
 
 #[tauri::command]
@@ -70,6 +77,49 @@ pub async fn update_prefs(state: AppStateArg<'_>, patch: PrefsPatch) -> Result<U
     if let Some(v) = patch.calendar_show_empty_days {
         sqlx::query("UPDATE user_preferences SET calendar_show_empty_days = ?, updated_at = CURRENT_TIMESTAMP")
             .bind(v as i64).execute(pool).await?;
+    }
+    // Zotero credentials: device-local on purpose. Each device may want a
+    // different API key (e.g. shared family Mac vs personal laptop), and
+    // syncing the key over Loro would expose it to every paired peer.
+    if let Some(v) = patch.zotero_user_id.as_ref() {
+        let trimmed = v.trim();
+        let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+        sqlx::query("UPDATE user_preferences SET zotero_user_id = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(stored).execute(pool).await?;
+    }
+    if let Some(v) = patch.zotero_api_key.as_ref() {
+        let trimmed = v.trim();
+        let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+        sqlx::query("UPDATE user_preferences SET zotero_api_key = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(stored).execute(pool).await?;
+    }
+    if let Some(v) = patch.zotero_use_local {
+        sqlx::query("UPDATE user_preferences SET zotero_use_local = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(v as i64).execute(pool).await?;
+    }
+    if let Some(v) = patch.zotero_local_base_url.as_ref() {
+        let trimmed = v.trim();
+        let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+        sqlx::query("UPDATE user_preferences SET zotero_local_base_url = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(stored).execute(pool).await?;
+    }
+    if let Some(v) = patch.zotero_local_user_id.as_ref() {
+        let trimmed = v.trim();
+        let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+        sqlx::query("UPDATE user_preferences SET zotero_local_user_id = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(stored).execute(pool).await?;
+    }
+    if let Some(v) = patch.zotero_basic_auth_user.as_ref() {
+        let trimmed = v.trim();
+        let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+        sqlx::query("UPDATE user_preferences SET zotero_basic_auth_user = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(stored).execute(pool).await?;
+    }
+    if let Some(v) = patch.zotero_basic_auth_pass.as_ref() {
+        let trimmed = v.trim();
+        let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+        sqlx::query("UPDATE user_preferences SET zotero_basic_auth_pass = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(stored).execute(pool).await?;
     }
 
     // T-016: mirror Class-B prefs into Loro. `api_*` stays local-only

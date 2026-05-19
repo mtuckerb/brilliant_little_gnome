@@ -6,7 +6,9 @@ export interface Course {
   name: string;
   custom_name: string | null;
   code: string | null;
+  custom_code: string | null;
   semester: string | null;
+  custom_semester: string | null;
   is_pinned: boolean;
   custom_color: string | null;
   banner_url: string | null;
@@ -20,6 +22,35 @@ export interface Course {
 
 export function displayCourseName(course: Course): string {
   return course.custom_name || course.name;
+}
+
+export function displayCourseCode(course: Course): string | null {
+  return course.custom_code || course.code;
+}
+
+export function displayCourseSemester(course: Course): string | null {
+  return course.custom_semester || course.semester;
+}
+
+// Strip one-or-more leading course-code tokens (e.g. "SWO-399", "SWO 399",
+// "SWO399", "SWO-399/SWO-599") plus the separator that follows. Used when we
+// render `${code} ${title}` so a name that already begins with the code
+// doesn't produce "SWO-399 - SWO-399 Topics in Social Work".
+const LEADING_CODE_RE = /^\s*(?:[A-Z]{2,4}\s*-?\s*\d{3,4})(?:\s*[/,&]\s*[A-Z]{2,4}\s*-?\s*\d{3,4})*\s*[-:–—]?\s*/i;
+
+export function stripLeadingCode(name: string): string {
+  const stripped = name.replace(LEADING_CODE_RE, "").trim();
+  // Defensive: if the strip ate the whole string, keep the original so we
+  // never render an empty title.
+  return stripped.length > 0 ? stripped : name;
+}
+
+// One-stop helper for rendering "{code} — {clean name}" in lists/rows. Keeps
+// the code prefix when known and strips it off the name to avoid the dup.
+export function courseLabel(course: Course): string {
+  const code = displayCourseCode(course);
+  const name = stripLeadingCode(displayCourseName(course));
+  return code ? `${code} — ${name}` : name;
 }
 
 export interface Grade {
@@ -110,6 +141,13 @@ export interface UserPreferences {
   brightspace_user_id: string | null;
   last_login_at: string | null;
   calendar_show_empty_days: boolean;
+  zotero_user_id: string | null;
+  zotero_api_key: string | null;
+  zotero_use_local: boolean;
+  zotero_local_base_url: string | null;
+  zotero_local_user_id: string | null;
+  zotero_basic_auth_user: string | null;
+  zotero_basic_auth_pass: string | null;
 }
 
 export interface AuthStatus {

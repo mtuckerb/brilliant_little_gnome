@@ -17,6 +17,8 @@ const SECTIONS: { to: string; icon: string; label: string; end?: boolean }[] = [
   { to: "/assignments", icon: "fa-tasks", label: "Assignments" },
   { to: "/content", icon: "fa-folder-tree", label: "Modules" },
   { to: "/discussions", icon: "fa-comments", label: "Discussions" },
+  { to: "/announcements", icon: "fa-bullhorn", label: "Announcements" },
+  { to: "/search", icon: "fa-magnifying-glass", label: "Search" },
 ];
 
 export default function CourseNav({ courseId, courseLabel }: Props) {

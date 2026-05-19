@@ -31,6 +31,8 @@ pub async fn setup_cookies(
         .client
         .store_credentials(&state.pool, &host, &cookie_string, uid.as_deref(), user_id.as_deref())
         .await?;
+    #[cfg(feature = "p2p")]
+    state.mirror_credentials_to_loro().await;
     Ok(AuthStatus {
         authenticated: state.client.is_configured(),
         degraded: state.client.is_degraded(),
@@ -43,6 +45,29 @@ pub async fn setup_cookies(
 #[tauri::command]
 pub async fn clear_auth(state: AppStateArg<'_>) -> Result<()> {
     state.client.clear_credentials(&state.pool).await
+}
+
+#[derive(serde::Serialize)]
+pub struct AuthExport {
+    pub host: String,
+    pub cookie: String,
+}
+
+/// Export the current session so the user can paste it into a fresh
+/// install (faster than the full browser-login flow, simpler than P2P
+/// pairing for one-off transfers). Errors when the device isn't
+/// authenticated — there's nothing to export.
+#[tauri::command]
+pub async fn export_auth(state: AppStateArg<'_>) -> Result<AuthExport> {
+    let host = state
+        .client
+        .host_clone()
+        .ok_or_else(|| AppError::Other("No Brightspace host configured".into()))?;
+    let cookie = state
+        .client
+        .cookie_clone()
+        .ok_or_else(|| AppError::Other("Not signed in — nothing to export".into()))?;
+    Ok(AuthExport { host, cookie })
 }
 
 /// Open a child webview window pointing at the Brightspace login URL, then poll
@@ -110,6 +135,8 @@ pub async fn open_login_window(app: AppHandle, host: String) -> Result<()> {
                         let cookie_str = all.join("; ");
                         let st = app_for_task.state::<std::sync::Arc<crate::state::AppState>>();
                         let _ = st.client.store_credentials(&st.pool, &host_for_task, &cookie_str, None, None).await;
+                        #[cfg(feature = "p2p")]
+                        st.mirror_credentials_to_loro().await;
                         let _ = app_for_task.emit("auth-captured", &host_for_task);
                         let _ = win.close();
                         break;

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment, Course, UserPreferences } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
+import { useIsMobile } from "../hooks/useIsMobile";
+import { courseLabel } from "../types";
 
 type Row = { assignment: Assignment; course: Course };
 const EXIT_MS = 280;
@@ -13,6 +16,7 @@ export default function Calendar() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [leaving, setLeaving] = useState<Set<number>>(new Set());
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
+  const isMobile = useIsMobile();
 
   const load = useCallback(async () => {
     const [courses, p] = await Promise.all([api.listCourses(), api.getPrefs().catch(() => null)]);
@@ -66,6 +70,99 @@ export default function Calendar() {
   }, [data]);
 
   if (!grouped) return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
+
+  if (isMobile) {
+    // Mobile: flat chronological list of upcoming items (next 14 days
+    // forward + 2 days back). Matches the "Upcoming Due Dates" stream
+    // from the Pencil mockup — quick scan, tap a row to dive into the
+    // assignment.
+    const now = new Date();
+    const upcomingCutoff = new Date(now.getTime() + 21 * 86400_000);
+    const upcoming = (data ?? [])
+      .filter((r) => {
+        if (!r.assignment.due_date) return false;
+        if (r.assignment.completed && !showCompleted) return false;
+        const d = new Date(r.assignment.due_date);
+        if (Number.isNaN(d.getTime())) return false;
+        if (d > upcomingCutoff) return false;
+        if (d < new Date(now.getTime() - 2 * 86400_000)) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(a.assignment.due_date!).getTime() - new Date(b.assignment.due_date!).getTime());
+
+    return (
+      <div>
+        <div className="mb-4">
+          <h1 className="title is-4 mb-1">Calendar</h1>
+          <p className="is-size-7 has-text-grey">Upcoming due dates across all courses</p>
+        </div>
+
+        <div className="is-flex is-justify-content-flex-end mb-3">
+          <button className="button is-small is-light" onClick={() => setShowCompleted((s) => !s)}>
+            <span className="icon is-small"><i className={`fas ${showCompleted ? "fa-eye-slash" : "fa-eye"}`}></i></span>
+            <span>{showCompleted ? "Hide completed" : "Show completed"}</span>
+          </button>
+        </div>
+
+        {upcoming.length === 0 ? (
+          <div className="box has-text-centered has-text-grey py-5">
+            <i className="fas fa-check-circle fa-2x mb-2 has-text-success"></i>
+            <p>Nothing due in the next few weeks.</p>
+          </div>
+        ) : (
+          <div className="box" style={{ padding: 0 }}>
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {upcoming.map(({ assignment: a, course: c }, ix) => {
+                const due = new Date(a.due_date!);
+                const overdue = due < now && !a.completed;
+                const dayLabel = due.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+                const timeLabel = due.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+                return (
+                  <li key={a.id} style={{ borderTop: ix === 0 ? "none" : "1px solid #f0f0f0" }}>
+                    <Link
+                      to={`/course/${c.org_unit_id}/assignments/${a.id}`}
+                      className="is-flex is-align-items-center"
+                      style={{
+                        gap: 12,
+                        padding: "12px 14px",
+                        color: "inherit",
+                        textDecoration: "none",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 6,
+                          alignSelf: "stretch",
+                          background: c.custom_color || "#5A6573",
+                          borderRadius: 2,
+                          flex: "0 0 auto",
+                        }}
+                      />
+                      <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+                        <div className="is-size-7 has-text-grey" style={{ marginBottom: 2 }}>
+                          <span className={overdue ? "has-text-danger has-text-weight-bold" : "has-text-weight-semibold"}>
+                            {dayLabel} · {timeLabel}
+                          </span>
+                          {a.completed && <span className="tag is-success is-light is-small ml-2">done</span>}
+                          {overdue && <span className="tag is-danger is-light is-small ml-2">overdue</span>}
+                        </div>
+                        <div className="has-text-weight-bold" style={{ color: "#1B2530", fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {a.name}
+                        </div>
+                        <div className="is-size-7 has-text-grey" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {courseLabel(c)}
+                        </div>
+                      </div>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>

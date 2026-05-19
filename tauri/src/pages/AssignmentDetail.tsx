@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import {
+  displayCourseCode,
   displayCourseName,
   type Assignment,
   type AssignmentAttachment,
@@ -10,6 +11,9 @@ import {
 } from "../types";
 import { fmtNum } from "../lib/format";
 import CourseHeader from "../components/CourseHeader";
+import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
+import { assignmentSubmitUrl } from "../lib/brightspace";
+import RichText from "../components/RichText";
 
 function AttachmentList({ items }: { items: AssignmentAttachment[] }) {
   if (items.length === 0) return null;
@@ -76,6 +80,12 @@ export default function AssignmentDetail() {
   }
 
   const accent = course?.custom_color || "#739AC3";
+  const bsHost = useBrightspaceHost();
+  const bsAssignmentUrl =
+    a.external_url ??
+    (bsHost && course
+      ? assignmentSubmitUrl(bsHost, course.org_unit_id, a.brightspace_id)
+      : null);
 
   // Score cascade matches original Sinatra: feedback.Score → gradebook.numerator
   const fb = detail?.feedback;
@@ -88,7 +98,7 @@ export default function AssignmentDetail() {
       <nav className="breadcrumb mb-3">
         <ul>
           <li><Link to="/dashboard">Dashboard</Link></li>
-          {course && <li><Link to={`/course/${course.org_unit_id}`}>{course.code || displayCourseName(course)}</Link></li>}
+          {course && <li><Link to={`/course/${course.org_unit_id}`}>{displayCourseCode(course) || displayCourseName(course)}</Link></li>}
           <li><Link to={`/course/${id}/assignments`}>Assignments</Link></li>
           <li className="is-active"><a>{a.name}</a></li>
         </ul>
@@ -96,7 +106,12 @@ export default function AssignmentDetail() {
       {id && <CourseHeader courseId={id} />}
 
       <div className="box">
-        <h1 className="title is-4" style={{ color: accent }}>{a.name}</h1>
+        <div className="is-flex is-align-items-center" style={{ gap: 6 }}>
+          <h1 className="title is-4 mb-0" style={{ color: accent }}>{a.name}</h1>
+          {bsAssignmentUrl && (
+            <BrightspaceLink url={bsAssignmentUrl} label="Open this assignment in Brightspace (submit there)" />
+          )}
+        </div>
 
         <div className="tags mb-4">
           {a.completed && <span className="tag is-success">Done</span>}
@@ -185,7 +200,7 @@ export default function AssignmentDetail() {
       {fb && (fb.feedback_html || fb.attachments.length > 0) && (
         <div className="box">
           <h2 className="title is-5"><i className="fas fa-comment-dots mr-2"></i>Feedback</h2>
-          {fb.feedback_html && <div className="content" dangerouslySetInnerHTML={{ __html: fb.feedback_html }} />}
+          {fb.feedback_html && <RichText content={fb.feedback_html} />}
           <AttachmentList items={fb.attachments} />
         </div>
       )}
@@ -194,7 +209,7 @@ export default function AssignmentDetail() {
       {!fb?.feedback_html && gb?.comments_html && (
         <div className="box">
           <h2 className="title is-5"><i className="fas fa-comment-dots mr-2"></i>Gradebook comments</h2>
-          <div className="content" dangerouslySetInnerHTML={{ __html: gb.comments_html }} />
+          <RichText content={gb.comments_html} />
         </div>
       )}
 
@@ -202,7 +217,7 @@ export default function AssignmentDetail() {
       {description && (
         <div className="box">
           <h2 className="title is-5"><i className="fas fa-list mr-2"></i>Instructions</h2>
-          <div className="content" dangerouslySetInnerHTML={{ __html: description }} />
+          <RichText content={description} />
           {detail && <AttachmentList items={detail.instruction_attachments} />}
         </div>
       )}
@@ -217,7 +232,7 @@ export default function AssignmentDetail() {
                 {s.submitted_at ? new Date(s.submitted_at).toLocaleString() : "(no date)"}
               </p>
               {s.comment_html && (
-                <div className="content is-small" dangerouslySetInnerHTML={{ __html: s.comment_html }} />
+                <RichText content={s.comment_html} className="is-small" />
               )}
               <AttachmentList items={s.files} />
             </div>

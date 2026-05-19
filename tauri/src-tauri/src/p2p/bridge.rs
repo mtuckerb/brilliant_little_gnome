@@ -326,6 +326,8 @@ impl Bridge {
             PrefField::CalendarShowEmptyDays(v) => {
                 self.doc.set_pref_calendar_show_empty_days(v)?
             }
+            PrefField::BrightspaceCookie(v) => self.doc.set_pref_brightspace_cookie(&v)?,
+            PrefField::BrightspaceHost(v) => self.doc.set_pref_brightspace_host(&v)?,
         }
         Ok(())
     }
@@ -397,6 +399,14 @@ pub enum PrefField {
     ShowCourseList(bool),
     ShowRecentUpdates(bool),
     CalendarShowEmptyDays(bool),
+    /// Brightspace auth cookie. Shared across paired devices so when one
+    /// device re-authenticates, the others automatically pick up the new
+    /// session — keeps the aggregate session lifetime as long as possible
+    /// instead of every device degrading independently.
+    BrightspaceCookie(String),
+    /// Institutional host (e.g. `courses.maine.edu`). Synced for the same
+    /// reason — a freshly-paired device shouldn't need re-entry.
+    BrightspaceHost(String),
 }
 
 /// What changed in this batch of remote diffs. We collect a HashSet of
@@ -632,6 +642,8 @@ async fn write_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
     let show_course_list = doc.get_pref_show_course_list().map(|b| b as i64);
     let show_recent = doc.get_pref_show_recent_updates().map(|b| b as i64);
     let calendar_show_empty = doc.get_pref_calendar_show_empty_days().map(|b| b as i64);
+    let brightspace_cookie = doc.get_pref_brightspace_cookie();
+    let brightspace_host = doc.get_pref_brightspace_host();
 
     let semester_colors_json = serde_json::to_string(
         &doc.iter_pref_semester_colors()
@@ -659,6 +671,8 @@ async fn write_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
            show_course_list          = COALESCE(?, show_course_list), \
            show_recent_updates       = COALESCE(?, show_recent_updates), \
            calendar_show_empty_days  = COALESCE(?, calendar_show_empty_days), \
+           brightspace_cookie        = COALESCE(?, brightspace_cookie), \
+           brightspace_host          = COALESCE(?, brightspace_host), \
            semester_colors           = ?, \
            collapsed_topics          = ?, \
            updated_at                = CURRENT_TIMESTAMP",
@@ -672,6 +686,8 @@ async fn write_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
     .bind(show_course_list)
     .bind(show_recent)
     .bind(calendar_show_empty)
+    .bind(brightspace_cookie)
+    .bind(brightspace_host)
     .bind(semester_colors_json)
     .bind(collapsed_topics_json)
     .execute(pool)
@@ -705,6 +721,8 @@ async fn write_course_to_sqlite(
         "UPDATE courses SET \
            is_pinned       = COALESCE(?, is_pinned), \
            custom_color    = ?, \
+           custom_name     = ?, \
+           custom_code     = ?, \
            units           = COALESCE(?, units), \
            target_grade    = COALESCE(?, target_grade), \
            sort_order      = COALESCE(?, sort_order), \
@@ -714,6 +732,8 @@ async fn write_course_to_sqlite(
     )
     .bind(o.is_pinned.map(|b| b as i64))
     .bind(o.custom_color.as_deref()) // None → SQL NULL: clearing the override
+    .bind(o.custom_name.as_deref()) // None → SQL NULL: clearing the override
+    .bind(o.custom_code.as_deref()) // None → SQL NULL: clearing the override
     .bind(o.units)
     .bind(o.target_grade)
     .bind(o.sort_order)
@@ -1187,6 +1207,8 @@ mod tests {
         for field in [
             CourseField::IsPinned(true),
             CourseField::CustomColor(Some("#abcdef".into())),
+            CourseField::CustomName(Some("Calculus I".into())),
+            CourseField::CustomCode(Some("MAT-101".into())),
             CourseField::Units(Some(3.0)),
             CourseField::TargetGrade(Some(95.0)),
             CourseField::SortOrder(Some(7)),
@@ -1200,6 +1222,8 @@ mod tests {
         let got = bridge.doc.get_course_overlay(id).unwrap();
         assert_eq!(got.is_pinned, Some(true));
         assert_eq!(got.custom_color.as_deref(), Some("#abcdef"));
+        assert_eq!(got.custom_name.as_deref(), Some("Calculus I"));
+        assert_eq!(got.custom_code.as_deref(), Some("MAT-101"));
         assert_eq!(got.units, Some(3.0));
         assert_eq!(got.target_grade, Some(95.0));
         assert_eq!(got.sort_order, Some(7));

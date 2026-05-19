@@ -3,13 +3,12 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		29BBE0C8526A878FE6AF8DAE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C7B0EB84D13D1BEAF99CA037 /* Assets.xcassets */; };
 		2A042CBD3EDA4048EE67F31C /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5215A71F97BA87828C4F5565 /* main.mm */; };
-		2BCEE55E714142453DB5361E /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 3B7CB3F75CF6F42A2EE545E3 /* libapp.a */; };
 		3933325D6B5FA143B7FB2E1E /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 0D98E29C59658A7642D5CD64 /* assets */; };
 		4BC3958EB00642CFD3E13659 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CEB6F76592E282673B8BA804 /* Metal.framework */; };
 		52166522871E7A3E29E70D4A /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 52014CD345C68184ABFFDDCD /* UIKit.framework */; };
@@ -23,65 +22,65 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		09730B68C3E33E21DF7B9F8E /* courses.rs */ = {isa = PBXFileReference; path = courses.rs; sourceTree = "<group>"; };
-		0BCF4AD9EA63F0C05E64414D /* notifications.rs */ = {isa = PBXFileReference; path = notifications.rs; sourceTree = "<group>"; };
+		09730B68C3E33E21DF7B9F8E /* courses.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = courses.rs; sourceTree = "<group>"; };
+		0BCF4AD9EA63F0C05E64414D /* notifications.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = notifications.rs; sourceTree = "<group>"; };
 		0D98E29C59658A7642D5CD64 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
-		0E0D75E8104AE0F1481EB15C /* rest.rs */ = {isa = PBXFileReference; path = rest.rs; sourceTree = "<group>"; };
-		10C442E36ED4D516DA5350C5 /* background.rs */ = {isa = PBXFileReference; path = background.rs; sourceTree = "<group>"; };
+		0E0D75E8104AE0F1481EB15C /* rest.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = rest.rs; sourceTree = "<group>"; };
+		10C442E36ED4D516DA5350C5 /* background.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = background.rs; sourceTree = "<group>"; };
 		120711078C3C6AD73D4B223A /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
-		1DFE3D292167743AE66694E7 /* auth.rs */ = {isa = PBXFileReference; path = auth.rs; sourceTree = "<group>"; };
-		239BC3DB15E99105EB45302B /* secrets.rs */ = {isa = PBXFileReference; path = secrets.rs; sourceTree = "<group>"; };
-		24223135F50215870EC219FE /* grades.rs */ = {isa = PBXFileReference; path = grades.rs; sourceTree = "<group>"; };
-		25F71CA9DB71FA80442FE4D3 /* sync.rs */ = {isa = PBXFileReference; path = sync.rs; sourceTree = "<group>"; };
-		27DE4EBCEE5FC20280A9CCAA /* content.rs */ = {isa = PBXFileReference; path = content.rs; sourceTree = "<group>"; };
+		1DFE3D292167743AE66694E7 /* auth.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = auth.rs; sourceTree = "<group>"; };
+		239BC3DB15E99105EB45302B /* secrets.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = secrets.rs; sourceTree = "<group>"; };
+		24223135F50215870EC219FE /* grades.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = grades.rs; sourceTree = "<group>"; };
+		25F71CA9DB71FA80442FE4D3 /* sync.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = sync.rs; sourceTree = "<group>"; };
+		27DE4EBCEE5FC20280A9CCAA /* content.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = content.rs; sourceTree = "<group>"; };
 		2A7E2F0D39561219F13771DE /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
-		2C099CF48FD149109C40C9F3 /* engine.rs */ = {isa = PBXFileReference; path = engine.rs; sourceTree = "<group>"; };
-		2EF8C95402E13E3C4F0C76D2 /* psy220.rs */ = {isa = PBXFileReference; path = psy220.rs; sourceTree = "<group>"; };
-		32A3AC43C0C54D468DC999D6 /* doc.rs */ = {isa = PBXFileReference; path = doc.rs; sourceTree = "<group>"; };
-		33E4E1CA3E40B77CBC2A9ED9 /* state.rs */ = {isa = PBXFileReference; path = state.rs; sourceTree = "<group>"; };
+		2C099CF48FD149109C40C9F3 /* engine.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = engine.rs; sourceTree = "<group>"; };
+		2EF8C95402E13E3C4F0C76D2 /* psy220.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = psy220.rs; sourceTree = "<group>"; };
+		32A3AC43C0C54D468DC999D6 /* doc.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = doc.rs; sourceTree = "<group>"; };
+		33E4E1CA3E40B77CBC2A9ED9 /* state.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = state.rs; sourceTree = "<group>"; };
 		34B08A88C9732D6D26A0CDB3 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
-		3606B123C7CC1B674B1B77FA /* persistence.rs */ = {isa = PBXFileReference; path = persistence.rs; sourceTree = "<group>"; };
-		3726364CE34E02C35EBF9910 /* db.rs */ = {isa = PBXFileReference; path = db.rs; sourceTree = "<group>"; };
+		3606B123C7CC1B674B1B77FA /* persistence.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = persistence.rs; sourceTree = "<group>"; };
+		3726364CE34E02C35EBF9910 /* db.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = db.rs; sourceTree = "<group>"; };
 		3B7CB3F75CF6F42A2EE545E3 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
-		3D01390BC709BA1DEB3B1C97 /* auth.rs */ = {isa = PBXFileReference; path = auth.rs; sourceTree = "<group>"; };
-		451BA274246A0E24940260CC /* models.rs */ = {isa = PBXFileReference; path = models.rs; sourceTree = "<group>"; };
+		3D01390BC709BA1DEB3B1C97 /* auth.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = auth.rs; sourceTree = "<group>"; };
+		451BA274246A0E24940260CC /* models.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = models.rs; sourceTree = "<group>"; };
 		52014CD345C68184ABFFDDCD /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		5215A71F97BA87828C4F5565 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
-		539FDEF9143467FBDD4D1705 /* sync_p2p.rs */ = {isa = PBXFileReference; path = sync_p2p.rs; sourceTree = "<group>"; };
+		539FDEF9143467FBDD4D1705 /* sync_p2p.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = sync_p2p.rs; sourceTree = "<group>"; };
 		5FE72A58E5AA929BB334D4F5 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
-		61E20A612886E73A1D806205 /* grades.rs */ = {isa = PBXFileReference; path = grades.rs; sourceTree = "<group>"; };
+		61E20A612886E73A1D806205 /* grades.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = grades.rs; sourceTree = "<group>"; };
 		743E467F3ECF804FB599E6DB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		7ECB0E139108396AC74C931A /* courses.rs */ = {isa = PBXFileReference; path = courses.rs; sourceTree = "<group>"; };
-		8028A18B7E32CFFA88D92A5B /* brilliant-tauri_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "brilliant-tauri_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		814A44C463AC2B04355B8DC1 /* bridge.rs */ = {isa = PBXFileReference; path = bridge.rs; sourceTree = "<group>"; };
-		855BCE234AF74C2A2C013A68 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
-		86750093F4B1C7D2CCE6F40D /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
-		87531D6726EB9A53088D6686 /* overview.rs */ = {isa = PBXFileReference; path = overview.rs; sourceTree = "<group>"; };
-		9280923F7E98EDAB27F803E7 /* discussions.rs */ = {isa = PBXFileReference; path = discussions.rs; sourceTree = "<group>"; };
-		95543CD653C3FF91063FBB27 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
-		96186ADE68A1E1DE49977A4F /* prefs.rs */ = {isa = PBXFileReference; path = prefs.rs; sourceTree = "<group>"; };
+		7ECB0E139108396AC74C931A /* courses.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = courses.rs; sourceTree = "<group>"; };
+		8028A18B7E32CFFA88D92A5B /* Brilliant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Brilliant.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		814A44C463AC2B04355B8DC1 /* bridge.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = bridge.rs; sourceTree = "<group>"; };
+		855BCE234AF74C2A2C013A68 /* lib.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = lib.rs; sourceTree = "<group>"; };
+		86750093F4B1C7D2CCE6F40D /* mod.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = mod.rs; sourceTree = "<group>"; };
+		87531D6726EB9A53088D6686 /* overview.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = overview.rs; sourceTree = "<group>"; };
+		9280923F7E98EDAB27F803E7 /* discussions.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = discussions.rs; sourceTree = "<group>"; };
+		95543CD653C3FF91063FBB27 /* mod.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = mod.rs; sourceTree = "<group>"; };
+		96186ADE68A1E1DE49977A4F /* prefs.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = prefs.rs; sourceTree = "<group>"; };
 		96D13084D5A7B7A16D8CCED5 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		97CB649C97A416F45C4FD4B8 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
-		98F22B84973AEDCC6A922D4D /* error.rs */ = {isa = PBXFileReference; path = error.rs; sourceTree = "<group>"; };
-		9FAAF99FD4964194D7BCCC4C /* assignment_detail.rs */ = {isa = PBXFileReference; path = assignment_detail.rs; sourceTree = "<group>"; };
-		A4DD120B656AD186D74A8944 /* content.rs */ = {isa = PBXFileReference; path = content.rs; sourceTree = "<group>"; };
-		A5905EBF2A7E283A3BD48FCD /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
-		AE17E7ABE884B97FA8A74F09 /* rest_api.rs */ = {isa = PBXFileReference; path = rest_api.rs; sourceTree = "<group>"; };
-		AECE19C994CB370BE0D0E5C9 /* transport.rs */ = {isa = PBXFileReference; path = transport.rs; sourceTree = "<group>"; };
+		98F22B84973AEDCC6A922D4D /* error.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = error.rs; sourceTree = "<group>"; };
+		9FAAF99FD4964194D7BCCC4C /* assignment_detail.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = assignment_detail.rs; sourceTree = "<group>"; };
+		A4DD120B656AD186D74A8944 /* content.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = content.rs; sourceTree = "<group>"; };
+		A5905EBF2A7E283A3BD48FCD /* mod.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = mod.rs; sourceTree = "<group>"; };
+		AE17E7ABE884B97FA8A74F09 /* rest_api.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = rest_api.rs; sourceTree = "<group>"; };
+		AECE19C994CB370BE0D0E5C9 /* transport.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = transport.rs; sourceTree = "<group>"; };
 		B15A368DCEC7B240EA98D988 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
-		B65BA2ECBD194CA11E341A58 /* assignments.rs */ = {isa = PBXFileReference; path = assignments.rs; sourceTree = "<group>"; };
-		C11D3B6795727311CE7413B7 /* events.rs */ = {isa = PBXFileReference; path = events.rs; sourceTree = "<group>"; };
-		C2A6FD87A1DB0F29842E9737 /* discussions.rs */ = {isa = PBXFileReference; path = discussions.rs; sourceTree = "<group>"; };
+		B65BA2ECBD194CA11E341A58 /* assignments.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = assignments.rs; sourceTree = "<group>"; };
+		C11D3B6795727311CE7413B7 /* events.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = events.rs; sourceTree = "<group>"; };
+		C2A6FD87A1DB0F29842E9737 /* discussions.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = discussions.rs; sourceTree = "<group>"; };
 		C7B0EB84D13D1BEAF99CA037 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		CCF9ECD4A24CFFA2D829F6C7 /* pairing.rs */ = {isa = PBXFileReference; path = pairing.rs; sourceTree = "<group>"; };
+		CCF9ECD4A24CFFA2D829F6C7 /* pairing.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = pairing.rs; sourceTree = "<group>"; };
 		CEB6F76592E282673B8BA804 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
-		D5503CD1A4F1D5A146F10470 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
-		D96EC7B0C61E142E3C1EBC1C /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		D5503CD1A4F1D5A146F10470 /* main.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.rs; sourceTree = "<group>"; };
+		D96EC7B0C61E142E3C1EBC1C /* mod.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = mod.rs; sourceTree = "<group>"; };
 		DBA53FB77605B07B803E9EC1 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
-		E00570D217C7CCB2A9315859 /* notifications.rs */ = {isa = PBXFileReference; path = notifications.rs; sourceTree = "<group>"; };
+		E00570D217C7CCB2A9315859 /* notifications.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = notifications.rs; sourceTree = "<group>"; };
 		ED58FAB2F53172C6FD79BDA8 /* brilliant-tauri_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "brilliant-tauri_iOS.entitlements"; sourceTree = "<group>"; };
-		FBD9B52894A8EC71877F8570 /* assignments.rs */ = {isa = PBXFileReference; path = assignments.rs; sourceTree = "<group>"; };
-		FD7A518CE3AC1175E3951529 /* downloads.rs */ = {isa = PBXFileReference; path = downloads.rs; sourceTree = "<group>"; };
+		FBD9B52894A8EC71877F8570 /* assignments.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = assignments.rs; sourceTree = "<group>"; };
+		FD7A518CE3AC1175E3951529 /* downloads.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = downloads.rs; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,7 +121,7 @@
 		0FED256BA65871546529F96A /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				8028A18B7E32CFFA88D92A5B /* brilliant-tauri_iOS.app */,
+				8028A18B7E32CFFA88D92A5B /* Brilliant.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -281,13 +280,6 @@
 			path = commands;
 			sourceTree = "<group>";
 		};
-		"TEMP_45A3C583-BFBD-497F-94BD-8BC265C97D63" /* x86_64 */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = x86_64;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -308,7 +300,7 @@
 			packageProductDependencies = (
 			);
 			productName = "brilliant-tauri_iOS";
-			productReference = 8028A18B7E32CFFA88D92A5B /* brilliant-tauri_iOS.app */;
+			productReference = 8028A18B7E32CFFA88D92A5B /* Brilliant.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -330,7 +322,6 @@
 			);
 			mainGroup = 59B39D4F180A5DD82A90F6DE;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -347,7 +338,6 @@
 				29BBE0C8526A878FE6AF8DAE /* Assets.xcassets in Resources */,
 				F3A97123E03D5BE107407526 /* LaunchScreen.storyboard in Resources */,
 				3933325D6B5FA143B7FB2E1E /* assets in Resources */,
-				2BCEE55E714142453DB5361E /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -449,12 +439,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
-				ARCHS = (
-					arm64,
-				);
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "brilliant-tauri_iOS/brilliant-tauri_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = "QDWAV324SU";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -466,15 +455,29 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
-				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
-				OTHER_LDFLAGS = "$(inherited) -Wl,-undefined,dynamic_lookup";
-				PRODUCT_BUNDLE_IDENTIFIER = com.brilliant.tauri;
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION)",
+					"$(SDKROOT)/usr/lib/swift",
+					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)",
+					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION)",
+					"$(SDKROOT)/usr/lib/swift",
+					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)",
+					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-Wl,-undefined,dynamic_lookup",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.tuckerbradford.brilliant;
 				PRODUCT_NAME = "Brilliant";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
-				DEVELOPMENT_TEAM = "QDWAV324SU";
 			};
 			name = release;
 		};
@@ -482,12 +485,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
-				ARCHS = (
-					arm64,
-				);
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "brilliant-tauri_iOS/brilliant-tauri_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = "QDWAV324SU";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -499,15 +501,29 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
-				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
-				OTHER_LDFLAGS = "$(inherited) -Wl,-undefined,dynamic_lookup";
-				PRODUCT_BUNDLE_IDENTIFIER = com.brilliant.tauri;
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION)",
+					"$(SDKROOT)/usr/lib/swift",
+					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)",
+					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION)",
+					"$(SDKROOT)/usr/lib/swift",
+					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)",
+					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-Wl,-undefined,dynamic_lookup",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.tuckerbradford.brilliant;
 				PRODUCT_NAME = "Brilliant";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
-				DEVELOPMENT_TEAM = "QDWAV324SU";
 			};
 			name = debug;
 		};

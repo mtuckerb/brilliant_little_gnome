@@ -1,6 +1,6 @@
 name: brilliant-tauri
 options:
-  bundleIdPrefix: com.brilliant.tauri
+  bundleIdPrefix: com.tuckerbradford.brilliant
   deploymentTarget:
     iOS: 14.0
 fileGroups: [../../src]
@@ -11,7 +11,7 @@ settingGroups:
   app:
     base:
       PRODUCT_NAME: Brilliant
-      PRODUCT_BUNDLE_IDENTIFIER: com.brilliant.tauri
+      PRODUCT_BUNDLE_IDENTIFIER: com.tuckerbradford.brilliant
 targetTemplates:
   app:
     type: application

@@ -15,8 +15,11 @@ use crate::error::{AppError, Result};
 use serde::Serialize;
 use serde_json::Value;
 use std::{collections::HashSet, fs, path::PathBuf};
+use tauri::{AppHandle, Emitter};
 
-#[derive(Debug, Serialize)]
+const DOWNLOAD_EVENT: &str = "download://saved";
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DownloadBytes {
     /// Base64 payload retained as a browser fallback; desktop downloads are
     /// written directly to disk so Tauri/WebView blob-download quirks do not
@@ -27,8 +30,16 @@ pub struct DownloadBytes {
     pub saved_path: Option<String>,
 }
 
+fn emit_saved(app: &AppHandle, payload: &DownloadBytes) {
+    // Best-effort: never let a missed listener break a real download.
+    if let Err(e) = app.emit(DOWNLOAD_EVENT, payload) {
+        tracing::warn!("emit {} failed: {}", DOWNLOAD_EVENT, e);
+    }
+}
+
 #[tauri::command]
 pub async fn download_topic_file(
+    app: AppHandle,
     state: AppStateArg<'_>,
     course_id: String,
     topic_id: String,
@@ -42,16 +53,19 @@ pub async fn download_topic_file(
     let (bytes, mime, name) = state.client.fetch_bytes(&path).await?;
     let filename = name.unwrap_or_else(|| format!("topic_{}.bin", topic_id));
     let saved_path = save_download_file(&filename, &bytes)?;
-    Ok(DownloadBytes {
+    let payload = DownloadBytes {
         bytes_base64: None,
         mime,
         filename,
         saved_path: Some(saved_path.display().to_string()),
-    })
+    };
+    emit_saved(&app, &payload);
+    Ok(payload)
 }
 
 #[tauri::command]
 pub async fn download_module_archive(
+    app: AppHandle,
     state: AppStateArg<'_>,
     course_id: String,
     module_id: String,
@@ -87,19 +101,23 @@ pub async fn download_module_archive(
     let bytes = zip.finish();
     let filename = format!("Brilliant-{}-{}.zip", course_id, sanitize(&module_title));
     let saved_path = save_download_file(&filename, &bytes)?;
-    Ok(DownloadBytes {
+    let payload = DownloadBytes {
         bytes_base64: None,
         mime: Some("application/zip".to_string()),
         filename,
         saved_path: Some(saved_path.display().to_string()),
-    })
+    };
+    emit_saved(&app, &payload);
+    Ok(payload)
 }
 
 #[tauri::command]
 pub async fn download_course_archive(
+    app: AppHandle,
     state: AppStateArg<'_>,
     course_id: String,
 ) -> Result<DownloadBytes> {
+    tracing::info!("download_course_archive start course={}", course_id);
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
     let modules = toc.get("Modules").and_then(|m| m.as_array()).cloned().unwrap_or_default();
 
@@ -141,20 +159,142 @@ pub async fn download_course_archive(
         }
     }
 
+    tracing::info!(
+        "download_course_archive course={} entries={} failures={}",
+        course_id,
+        zip.entry_count(),
+        failures.len()
+    );
     if zip.entry_count() == 0 {
-        return Err(AppError::Other("No downloadable files found in this course.".to_string()));
+        return Err(AppError::Other(format!(
+            "No downloadable files found in this course. {} failures encountered. \
+             First failure: {}",
+            failures.len(),
+            failures.first().map(String::as_str).unwrap_or("(none)")
+        )));
     }
     add_download_warnings(&mut zip, &failures);
 
     let bytes = zip.finish();
     let filename = format!("Brilliant-{}.zip", course_id);
     let saved_path = save_download_file(&filename, &bytes)?;
-    Ok(DownloadBytes {
+    tracing::info!("download_course_archive saved {}", saved_path.display());
+    let payload = DownloadBytes {
         bytes_base64: None,
         mime: Some("application/zip".to_string()),
         filename,
         saved_path: Some(saved_path.display().to_string()),
-    })
+    };
+    emit_saved(&app, &payload);
+    Ok(payload)
+}
+
+/// Download the course's overview attachment (syllabus PDF) straight to disk
+/// via the same save flow as every other download. Replaces the SyllabusPanel
+/// blob-URL anchor-click path that WKWebView silently swallowed.
+#[tauri::command]
+pub async fn download_course_syllabus(
+    app: AppHandle,
+    state: AppStateArg<'_>,
+    course_id: String,
+) -> Result<DownloadBytes> {
+    let overview = state.client.get_overview(&state.pool, &course_id, false).await?;
+    let has_attachment = overview
+        .get("HasAttachment")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || overview.pointer("/Attachment/Url").is_some();
+    if !has_attachment {
+        return Err(AppError::Other("This course's overview has no attachment.".to_string()));
+    }
+    // Brightspace omits the URL from /overview JSON when an attachment exists —
+    // the bytes live at /overview/attachment. Fall back to the constructed path
+    // when no explicit URL is present in the cached JSON.
+    let att_url = overview
+        .pointer("/Attachment/Url")
+        .and_then(|v| v.as_str())
+        .or_else(|| overview.pointer("/Attachment/Href").and_then(|v| v.as_str()))
+        .map(String::from)
+        .unwrap_or_else(|| crate::commands::overview::overview_attachment_path(&course_id));
+    let suggested = overview
+        .pointer("/Attachment/Name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Syllabus")
+        .to_string();
+
+    let (bytes, mime, response_name) = state.client.fetch_bytes(&att_url).await?;
+    let filename = response_name.unwrap_or(suggested);
+    let saved_path = save_download_file(&filename, &bytes)?;
+    let payload = DownloadBytes {
+        bytes_base64: None,
+        mime,
+        filename,
+        saved_path: Some(saved_path.display().to_string()),
+    };
+    emit_saved(&app, &payload);
+    Ok(payload)
+}
+
+/// Open a URL in the user's default browser. Used by the "open in
+/// Brightspace" buttons. Not part of tauri-plugin-shell so the React code
+/// doesn't need an allowlist capability — the Rust side calls the OS
+/// directly. Only http(s) URLs are accepted to avoid being a generic
+/// `Command::new` proxy.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<()> {
+    use std::process::Command;
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(AppError::Other(format!("refusing to open non-http URL: {}", url)));
+    }
+
+    #[cfg(target_os = "macos")]
+    let result = Command::new("open").arg(&url).spawn();
+
+    #[cfg(target_os = "windows")]
+    let result = Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+
+    #[cfg(target_os = "linux")]
+    let result = Command::new("xdg-open").arg(&url).spawn();
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    let result: std::io::Result<_> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "open_url not supported on this platform",
+    ));
+
+    result.map_err(|e| AppError::Other(format!("open_url: {}", e)))?;
+    Ok(())
+}
+
+/// Reveal a previously-saved file in the OS file manager (Finder on macOS,
+/// Explorer on Windows, the parent folder on Linux).
+#[tauri::command]
+pub fn reveal_in_folder(path: String) -> Result<()> {
+    use std::process::Command;
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err(AppError::Other(format!("File no longer exists: {}", path)));
+    }
+
+    #[cfg(target_os = "macos")]
+    let result = Command::new("open").arg("-R").arg(&p).spawn();
+
+    #[cfg(target_os = "windows")]
+    let result = Command::new("explorer").arg(format!("/select,{}", p.display())).spawn();
+
+    #[cfg(target_os = "linux")]
+    let result = Command::new("xdg-open")
+        .arg(p.parent().unwrap_or(&p))
+        .spawn();
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    let result: std::io::Result<_> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "reveal_in_folder not supported on this platform",
+    ));
+
+    result.map_err(|e| AppError::Other(format!("reveal_in_folder: {}", e)))?;
+    Ok(())
 }
 
 fn find_module(toc: &Value, target_id: &str) -> Option<Value> {

@@ -11,6 +11,8 @@ pub mod discussions;
 pub mod overview;
 pub mod assignment_detail;
 pub mod downloads;
+pub mod zotero;
+pub mod import_old;
 
 #[cfg(feature = "p2p")]
 pub mod sync_p2p;

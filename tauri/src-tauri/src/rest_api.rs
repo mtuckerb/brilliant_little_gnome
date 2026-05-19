@@ -476,6 +476,8 @@ async fn auth_cookies(
     }
     state.client.store_credentials(&state.pool, body.host.trim(), body.cookies.trim(), None, None).await
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    #[cfg(feature = "p2p")]
+    state.mirror_credentials_to_loro().await;
     Ok(Json(json!({ "status": "ok" })))
 }
 

@@ -1,0 +1,139 @@
+import { type ReactNode } from "react";
+import { Link, useLocation } from "react-router-dom";
+import type { AuthStatus, SyncStatus } from "../types";
+import GnomeSync from "./GnomeSync";
+
+// iPhone-sized mobile shell. Matches the three frames Tucker drew in
+// pencil-new.pen (HDUr0 / c3DdR / NouE8): dark app bar on top, content
+// fills the middle, persistent bottom tab bar with four icons.
+//
+// Phase 1: the existing pages render unchanged inside the content area —
+// they're already responsive enough to fit at 390px wide. Per-page mobile
+// styling (the card-on-mobile look from the mockup) is a follow-up.
+
+interface Props {
+  auth: AuthStatus;
+  sync: SyncStatus | null;
+  onAuthChange: (auth: AuthStatus) => void;
+  children: ReactNode;
+}
+
+interface Tab {
+  to: string;
+  icon: string;
+  label: string;
+  matchPrefix: string;
+}
+
+const TABS: Tab[] = [
+  { to: "/dashboard", icon: "fa-book", label: "Courses", matchPrefix: "/dashboard" },
+  { to: "/calendar", icon: "fa-calendar-days", label: "Calendar", matchPrefix: "/calendar" },
+  { to: "/notifications", icon: "fa-bell", label: "Alerts", matchPrefix: "/notifications" },
+  { to: "/settings", icon: "fa-cog", label: "Settings", matchPrefix: "/settings" },
+];
+
+export default function MobileLayout({ auth, sync, children }: Props) {
+  const location = useLocation();
+  const authOk = !auth.degraded;
+  const authDot = auth.degraded ? "#C04A4A" : "#2C8F61";
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100dvh",
+        paddingTop: "env(safe-area-inset-top)",
+        overflow: "hidden",
+        background: "#F4F5F7",
+      }}
+    >
+      <header
+        style={{
+          flex: "0 0 auto",
+          background: "#1F2A33",
+          color: "#FFFFFF",
+          padding: "12px 14px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          borderBottom: "1px solid rgba(0,0,0,0.3)",
+          position: "relative",
+        }}
+      >
+        <Link
+          to="/dashboard"
+          style={{
+            color: "#FFFFFF",
+            textDecoration: "none",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            position: "absolute",
+            left: "50%",
+            transform: "translateX(-50%)",
+          }}
+        >
+          <GnomeSync size={24} brightspaceSync={sync} brightspaceOk={authOk} />
+          <span style={{ fontWeight: 700 }}>Brilliant</span>
+        </Link>
+        <span style={{ flex: "1 1 auto" }} />
+        <span
+          className="icon is-small"
+          title={auth.degraded ? "Session expired" : "Authenticated"}
+          style={{ color: authDot }}
+        >
+          <i className="fas fa-circle" style={{ fontSize: "0.55rem" }}></i>
+        </span>
+      </header>
+
+      <main
+        style={{
+          flex: "1 1 auto",
+          overflow: "auto",
+          background: "#F4F5F7",
+        }}
+      >
+        <div style={{ padding: "12px 12px 16px 12px" }}>{children}</div>
+      </main>
+
+      <nav
+        style={{
+          flex: "0 0 auto",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "8px 18px",
+          paddingBottom: "max(8px, env(safe-area-inset-bottom))",
+          background: "#FFFFFF",
+          borderTop: "1px solid #D8DEE5",
+        }}
+      >
+        {TABS.map((t) => {
+          const active = location.pathname.startsWith(t.matchPrefix);
+          return (
+            <Link
+              key={t.to}
+              to={t.to}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 2,
+                textDecoration: "none",
+                color: active ? "#3D6691" : "#5A6573",
+                fontSize: 11,
+                fontWeight: active ? 700 : 500,
+                padding: "4px 6px",
+                minWidth: 56,
+              }}
+            >
+              <i className={`fas ${t.icon}`} style={{ fontSize: 18 }}></i>
+              <span>{t.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}

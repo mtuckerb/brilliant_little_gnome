@@ -8,7 +8,9 @@ pub struct Course {
     pub name: String,
     pub custom_name: Option<String>,
     pub code: Option<String>,
+    pub custom_code: Option<String>,
     pub semester: Option<String>,
+    pub custom_semester: Option<String>,
     #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
     pub is_pinned: bool,
     pub custom_color: Option<String>,
@@ -128,6 +130,14 @@ pub struct UserPreferences {
     pub last_login_at: Option<String>,
     #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
     pub calendar_show_empty_days: bool,
+    pub zotero_user_id: Option<String>,
+    pub zotero_api_key: Option<String>,
+    #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
+    pub zotero_use_local: bool,
+    pub zotero_local_base_url: Option<String>,
+    pub zotero_local_user_id: Option<String>,
+    pub zotero_basic_auth_user: Option<String>,
+    pub zotero_basic_auth_pass: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

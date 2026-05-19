@@ -35,6 +35,8 @@ use std::sync::Arc;
 pub struct CourseOverlay {
     pub is_pinned: Option<bool>,
     pub custom_color: Option<String>,
+    pub custom_name: Option<String>,
+    pub custom_code: Option<String>,
     pub units: Option<f64>,
     pub target_grade: Option<f64>,
     pub sort_order: Option<i64>,
@@ -85,6 +87,8 @@ pub struct SyntheticAssignment {
 pub enum CourseField {
     IsPinned(bool),
     CustomColor(Option<String>),
+    CustomName(Option<String>),
+    CustomCode(Option<String>),
     Units(Option<f64>),
     TargetGrade(Option<f64>),
     SortOrder(Option<i64>),
@@ -174,6 +178,26 @@ impl SyncDoc {
 
     pub fn get_pref_time_zone(&self) -> Option<String> {
         get_string(&self.prefs(), "time_zone")
+    }
+
+    pub fn set_pref_brightspace_cookie(&self, value: &str) -> Result<()> {
+        self.prefs().insert("brightspace_cookie", value)?;
+        self.commit();
+        Ok(())
+    }
+
+    pub fn get_pref_brightspace_cookie(&self) -> Option<String> {
+        get_string(&self.prefs(), "brightspace_cookie")
+    }
+
+    pub fn set_pref_brightspace_host(&self, value: &str) -> Result<()> {
+        self.prefs().insert("brightspace_host", value)?;
+        self.commit();
+        Ok(())
+    }
+
+    pub fn get_pref_brightspace_host(&self) -> Option<String> {
+        get_string(&self.prefs(), "brightspace_host")
     }
 
     pub fn set_pref_historic_gpa(&self, value: f64) -> Result<()> {
@@ -294,6 +318,8 @@ impl SyncDoc {
         match field {
             CourseField::IsPinned(v) => m.insert("is_pinned", v)?,
             CourseField::CustomColor(v) => insert_opt_string(&m, "custom_color", v.as_deref())?,
+            CourseField::CustomName(v) => insert_opt_string(&m, "custom_name", v.as_deref())?,
+            CourseField::CustomCode(v) => insert_opt_string(&m, "custom_code", v.as_deref())?,
             CourseField::Units(v) => insert_opt_f64(&m, "units", v)?,
             CourseField::TargetGrade(v) => insert_opt_f64(&m, "target_grade", v)?,
             CourseField::SortOrder(v) => insert_opt_i64(&m, "sort_order", v)?,
@@ -599,6 +625,8 @@ fn read_course_overlay(m: &LoroMap) -> CourseOverlay {
     CourseOverlay {
         is_pinned: get_bool(m, "is_pinned"),
         custom_color: get_string(m, "custom_color"),
+        custom_name: get_string(m, "custom_name"),
+        custom_code: get_string(m, "custom_code"),
         units: get_f64(m, "units"),
         target_grade: get_f64(m, "target_grade"),
         sort_order: get_i64(m, "sort_order"),
@@ -687,6 +715,8 @@ mod tests {
         let id = "12345";
         d.set_course_overlay(id, CourseField::IsPinned(true)).unwrap();
         d.set_course_overlay(id, CourseField::CustomColor(Some("#abcdef".into()))).unwrap();
+        d.set_course_overlay(id, CourseField::CustomName(Some("Calculus I".into()))).unwrap();
+        d.set_course_overlay(id, CourseField::CustomCode(Some("MAT-101".into()))).unwrap();
         d.set_course_overlay(id, CourseField::Units(Some(3.0))).unwrap();
         d.set_course_overlay(id, CourseField::TargetGrade(Some(95.0))).unwrap();
         d.set_course_overlay(id, CourseField::SortOrder(Some(7))).unwrap();
@@ -696,6 +726,8 @@ mod tests {
         assert_eq!(got, CourseOverlay {
             is_pinned: Some(true),
             custom_color: Some("#abcdef".into()),
+            custom_name: Some("Calculus I".into()),
+            custom_code: Some("MAT-101".into()),
             units: Some(3.0),
             target_grade: Some(95.0),
             sort_order: Some(7),
@@ -705,6 +737,10 @@ mod tests {
         // None on an Option<_> field clears it (overlay reset semantic).
         d.set_course_overlay(id, CourseField::CustomColor(None)).unwrap();
         assert_eq!(d.get_course_overlay(id).unwrap().custom_color, None);
+        d.set_course_overlay(id, CourseField::CustomName(None)).unwrap();
+        assert_eq!(d.get_course_overlay(id).unwrap().custom_name, None);
+        d.set_course_overlay(id, CourseField::CustomCode(None)).unwrap();
+        assert_eq!(d.get_course_overlay(id).unwrap().custom_code, None);
 
         let all = d.iter_course_overlays();
         assert_eq!(all.len(), 1);

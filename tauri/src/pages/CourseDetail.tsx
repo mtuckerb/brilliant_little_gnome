@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import { displayCourseName, type Course } from "../types";
+import { type Course } from "../types";
 import SyllabusPanel from "../components/SyllabusPanel";
+import SyntheticTasksPanel from "../components/SyntheticTasksPanel";
 import { triggerDownload } from "../lib/download";
-import CourseNav from "../components/CourseNav";
+import CourseHeader from "../components/CourseHeader";
+import { runZotero } from "../lib/zotero";
+import { useToast } from "../components/ToastProvider";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -14,8 +17,10 @@ export default function CourseDetail() {
   const [err, setErr] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [titleDraft, setTitleDraft] = useState("");
+  const [sendingZotero, setSendingZotero] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const toast = useToast();
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!id) return;
@@ -57,31 +62,45 @@ export default function CourseDetail() {
     await api.updateCourseEndOfWeek(course.org_unit_id, n).catch(() => {});
   }
 
-  async function onTitleSave() {
-    if (!course) return;
-    const previous = course;
-    setCourse({ ...course, custom_name: titleDraft.trim() === "" ? null : titleDraft.trim() });
-    setEditingTitle(false);
-    try {
-      const updated = await api.updateCourseName(course.org_unit_id, titleDraft);
-      setCourse(updated);
-    } catch (e) {
-      setCourse(previous);
-      alert(`Title save failed: ${String((e as { message?: string })?.message ?? e)}`);
-    }
-  }
-
   async function onDownloadEverything() {
     if (!course || downloading) return;
-    if (!confirm("Download every file in this course? This may take a while for large courses.")) return;
+    // window.confirm() returns immediately false in Tauri 2 WKWebView so the
+    // click was being silently swallowed. The button itself is the
+    // confirmation — clicking it intentionally is enough; tray feedback +
+    // "Bundling…" state makes the long-running work visible.
+    console.info("download_course_archive starting", course.org_unit_id);
     setDownloading(true);
     try {
       const payload = await api.downloadCourseArchive(course.org_unit_id);
+      console.info("download_course_archive done", payload);
       triggerDownload(payload);
     } catch (e) {
+      console.error("download_course_archive failed", e);
       alert(`Download failed: ${String((e as { message?: string })?.message ?? e)}`);
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function onSendCourseToZotero() {
+    if (!course || sendingZotero) return;
+    setSendingZotero(true);
+    await runZotero(toast, "Whole course", () =>
+      api.zoteroSendCourse(course.org_unit_id),
+    );
+    setSendingZotero(false);
+  }
+
+  async function onDeleteForever() {
+    if (!course) return;
+    try {
+      await api.deleteCourse(course.org_unit_id);
+      navigate("/dashboard");
+    } catch (e) {
+      toast.show(
+        `Delete failed: ${String((e as { message?: string })?.message ?? e)}`,
+        "is-danger",
+      );
     }
   }
 
@@ -97,89 +116,9 @@ export default function CourseDetail() {
     }
   }
 
-  const accent = course.custom_color || "#739AC3";
-  const banner = course.banner_url;
-  const courseTitle = displayCourseName(course);
-
   return (
     <div>
-      <nav className="breadcrumb mb-3">
-        <ul>
-          <li><Link to="/dashboard">Dashboard</Link></li>
-          <li className="is-active"><a>{courseTitle}</a></li>
-        </ul>
-      </nav>
-      <CourseNav courseId={course.org_unit_id} />
-
-      <section
-        className="hero is-small mb-5"
-        style={{
-          borderRadius: 12,
-          overflow: "hidden",
-          position: "relative",
-          backgroundImage: banner
-            ? `url(${banner})`
-            : "linear-gradient(135deg, #2f4f6f 0%, #739AC3 100%)",
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          border: `1px solid ${accent}`,
-          boxShadow: "0 4px 15px rgba(0,0,0,0.1)",
-        }}
-      >
-        <div
-          className="hero-body"
-          style={{
-            background:
-              "linear-gradient(to right, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.3) 50%, rgba(0,0,0,0.1) 100%)",
-            padding: "3rem 2rem",
-          }}
-        >
-          {editingTitle ? (
-            <div className="field has-addons" style={{ maxWidth: 900 }}>
-              <div className="control is-expanded">
-                <input
-                  className="input is-large"
-                  value={titleDraft}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") onTitleSave(); if (e.key === "Escape") setEditingTitle(false); }}
-                  autoFocus
-                />
-              </div>
-              <div className="control"><button className="button is-light is-large" onClick={onTitleSave}>Save</button></div>
-              <div className="control"><button className="button is-dark is-large" onClick={() => setEditingTitle(false)}>Cancel</button></div>
-            </div>
-          ) : (
-            <h1
-              className="title is-2 has-text-white is-flex is-align-items-center"
-              style={{ textShadow: "0 2px 10px rgba(0,0,0,0.8)", lineHeight: 1.1, gap: 10 }}
-            >
-              <span>{courseTitle}</span>
-              <button
-                className="button is-small is-light is-outlined"
-                title="Edit course title"
-                onClick={() => { setTitleDraft(courseTitle); setEditingTitle(true); }}
-              >
-                <span className="icon"><i className="fas fa-pencil-alt"></i></span>
-              </button>
-            </h1>
-          )}
-          {course.code && (
-            <p
-              className="is-size-7 has-text-white is-uppercase"
-              style={{
-                letterSpacing: 1.5,
-                textShadow: "0 1px 2px rgba(0,0,0,0.5)",
-                position: "absolute",
-                bottom: 10,
-                right: 20,
-                opacity: 0.75,
-              }}
-            >
-              {course.code}
-            </p>
-          )}
-        </div>
-      </section>
+      <CourseHeader courseId={course.org_unit_id} onCourseUpdated={setCourse} />
 
       <div className="is-flex is-align-items-center is-flex-wrap-wrap mb-4" style={{ gap: 12 }}>
         <label className="is-flex is-align-items-center" style={{ gap: 8 }}>
@@ -205,9 +144,20 @@ export default function CourseDetail() {
           <span className="icon"><i className={`fas ${downloading ? "fa-circle-notch fa-spin" : "fa-file-archive"}`}></i></span>
           <span>{downloading ? "Bundling…" : "Download all"}</span>
         </button>
+        <button
+          className="button is-small is-light"
+          onClick={onSendCourseToZotero}
+          disabled={sendingZotero}
+          title="Send every content file in this course to your Zotero library (creates a per-course collection)"
+        >
+          <span className="icon"><i className={`fas ${sendingZotero ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i></span>
+          <span>{sendingZotero ? "Sending…" : "Send to Zotero"}</span>
+        </button>
       </div>
 
       <SyllabusPanel courseId={course.org_unit_id} />
+
+      <SyntheticTasksPanel courseId={course.org_unit_id} />
 
       <div className="box">
         <h2 className="title is-6 mb-3"><i className="fas fa-sliders-h mr-2 has-text-grey"></i>Course settings</h2>
@@ -254,6 +204,29 @@ export default function CourseDetail() {
             <p className="help">Default due day for synthetic tasks.</p>
           </div>
         </div>
+      </div>
+
+      <div className="box" style={{ borderColor: "#f5c6cb" }}>
+        <h2 className="title is-6 mb-3 has-text-danger">
+          <i className="fas fa-triangle-exclamation mr-2"></i>Danger zone
+        </h2>
+        {confirmDelete ? (
+          <div className="is-flex is-align-items-center is-flex-wrap-wrap" style={{ gap: 8 }}>
+            <span className="is-size-7">
+              Permanently delete <strong>{course.custom_name || course.name}</strong> and every assignment, grade, module, and discussion synced for it. The next Brightspace sync will recreate it if you're still enrolled.
+            </span>
+            <button className="button is-small is-danger" onClick={onDeleteForever}>
+              <span className="icon"><i className="fas fa-trash"></i></span>
+              <span>Yes, delete forever</span>
+            </button>
+            <button className="button is-small" onClick={() => setConfirmDelete(false)}>Cancel</button>
+          </div>
+        ) : (
+          <button className="button is-small is-danger is-light" onClick={() => setConfirmDelete(true)}>
+            <span className="icon"><i className="fas fa-trash"></i></span>
+            <span>Delete this course forever…</span>
+          </button>
+        )}
       </div>
     </div>
   );

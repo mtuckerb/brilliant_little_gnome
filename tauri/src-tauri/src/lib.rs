@@ -11,6 +11,7 @@ pub mod models;
 pub mod rest_api;
 pub mod state;
 pub mod sync;
+pub mod zotero;
 
 #[cfg(feature = "p2p")]
 pub mod p2p;
@@ -96,6 +97,7 @@ pub fn run() {
             commands::auth::auth_status,
             commands::auth::setup_cookies,
             commands::auth::clear_auth,
+            commands::auth::export_auth,
             commands::auth::open_login_window,
             // Prefs
             commands::prefs::get_prefs,
@@ -106,11 +108,16 @@ pub fn run() {
             commands::courses::reorder_courses,
             commands::courses::update_course_color,
             commands::courses::update_course_name,
+            commands::courses::update_course_code,
+            commands::courses::update_course_semester,
             commands::courses::update_course_units,
             commands::courses::update_course_target_grade,
             commands::courses::update_course_end_of_week,
             commands::courses::drop_course,
+            commands::courses::delete_course,
             commands::courses::refresh_course,
+            commands::courses::fetch_course_banner,
+            commands::import_old::import_from_old_brilliant,
             // Grades
             commands::grades::grades_summary,
             commands::grades::toggle_grade_hidden,
@@ -128,6 +135,13 @@ pub fn run() {
             commands::downloads::download_topic_file,
             commands::downloads::download_module_archive,
             commands::downloads::download_course_archive,
+            commands::downloads::download_course_syllabus,
+            commands::downloads::reveal_in_folder,
+            commands::downloads::open_url,
+            commands::zotero::zotero_send_topic,
+            commands::zotero::zotero_send_module,
+            commands::zotero::zotero_send_course,
+            commands::zotero::zotero_send_syllabus,
             // Notifications
             commands::notifications::list_notifications,
             commands::notifications::mark_notification_read,
@@ -143,6 +157,8 @@ pub fn run() {
             commands::discussions::list_forums,
             commands::discussions::list_topics,
             commands::discussions::list_topic_posts,
+            commands::discussions::mark_topic_read,
+            commands::discussions::mark_course_discussions_read,
             // Overview / syllabus
             commands::overview::get_course_overview,
             commands::overview::fetch_course_overview_attachment,
