@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "../api";
 import type { Notification } from "../types";
 import CourseHeader from "../components/CourseHeader";
@@ -26,6 +27,15 @@ export default function CourseAnnouncements() {
   }, [id, showRead]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Re-fetch whenever the backend emits a notifications update: mark-read
+  // from the Dashboard Notifications view, mark-all-read, and the sync
+  // engine all fire this event. Without it, resolving the same alert from
+  // the Notifications page leaves it visibly unresolved here.
+  useEffect(() => {
+    const unlistenP = listen("notifications:updated", () => { load(); });
+    return () => { unlistenP.then((fn) => fn()).catch(() => {}); };
+  }, [load]);
 
   async function markRead(n: Notification) {
     await api.markNotificationRead(n.id);
