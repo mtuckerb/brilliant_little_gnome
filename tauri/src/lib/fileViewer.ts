@@ -15,7 +15,7 @@ export const SUPPORTED_VIEWER_EXTENSIONS = [
 ] as const;
 
 export type SupportedViewerExtension = (typeof SUPPORTED_VIEWER_EXTENSIONS)[number];
-export type ViewerKind = "native" | "text" | "markdown" | "csv" | "rtf" | "officeXml" | "external";
+export type ViewerKind = "native" | "legacyOffice" | "text" | "markdown" | "csv" | "rtf" | "officeXml" | "external";
 
 export interface ViewerRoute {
   supported: boolean;
@@ -54,10 +54,10 @@ export function routeFileToViewer(nameOrUrl: string, sizeBytes?: number | null):
     case "doc":
     case "xls":
     case "ppt":
-      // Legacy Office binaries are still routed through the in-app viewer first.
-      // WebViews that cannot render them surface the normal error state with an
-      // Open externally fallback instead of downloading immediately.
-      return { supported: true, extension, kind: "native" };
+      // Legacy Office binaries are not reliably rendered by mobile WebViews.
+      // Route them to the in-app viewer so users get a titled screen and a clear
+      // Open externally fallback instead of silently downloading/handing off.
+      return { supported: true, extension, kind: "legacyOffice" };
     default:
       return { supported: false, extension, kind: "external", reason: "unsupported" };
   }

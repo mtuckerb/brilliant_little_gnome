@@ -4,6 +4,25 @@ const DOCX_XML = /^word\/document\.xml$/;
 const XLSX_XML = /^xl\/worksheets\/sheet\d+\.xml$/;
 const PPTX_XML = /^ppt\/slides\/slide\d+\.xml$/;
 const SHARED_STRINGS = "xl/sharedStrings.xml";
+const MAX_OFFICE_ENTRIES = 800;
+const MAX_OFFICE_INFLATED_BYTES = 30 * 1024 * 1024;
+const MAX_OFFICE_TEXT_CHARS = 2 * 1024 * 1024;
+
+function assertOfficeZipBounds(files: Record<string, Uint8Array>) {
+  const entries = Object.entries(files);
+  if (entries.length > MAX_OFFICE_ENTRIES) {
+    throw new Error("Office document is too complex to preview safely — open externally.");
+  }
+  const inflatedBytes = entries.reduce((sum, [, data]) => sum + data.byteLength, 0);
+  if (inflatedBytes > MAX_OFFICE_INFLATED_BYTES) {
+    throw new Error("Office document is too large to decompress safely — open externally.");
+  }
+}
+
+function truncatePreview(text: string): string {
+  if (text.length <= MAX_OFFICE_TEXT_CHARS) return text;
+  return text.slice(0, MAX_OFFICE_TEXT_CHARS) + "\n\n[Preview truncated — open externally to view the full document.]";
+}
 
 function xmlText(xml: string): string {
   return xml
@@ -41,11 +60,12 @@ function sheetText(xml: string, strings: string[]): string {
 
 export function extractOfficeText(bytes: Uint8Array, extension: string): string {
   const files = unzipSync(bytes);
+  assertOfficeZipBounds(files);
   const entries = Object.entries(files).sort(([a], [b]) => a.localeCompare(b));
   if (extension === "xlsx") {
     const strings = sharedStrings(files);
-    return entries.filter(([name]) => XLSX_XML.test(name)).map(([name, data]) => `# ${name}\n${sheetText(strFromU8(data), strings)}`).join("\n\n");
+    return truncatePreview(entries.filter(([name]) => XLSX_XML.test(name)).map(([name, data]) => `# ${name}\n${sheetText(strFromU8(data), strings)}`).join("\n\n"));
   }
   const pattern = extension === "docx" ? DOCX_XML : PPTX_XML;
-  return entries.filter(([name]) => pattern.test(name)).map(([, data]) => xmlText(strFromU8(data))).filter(Boolean).join("\n\n---\n\n");
+  return truncatePreview(entries.filter(([name]) => pattern.test(name)).map(([, data]) => xmlText(strFromU8(data))).filter(Boolean).join("\n\n---\n\n"));
 }

@@ -77,12 +77,7 @@ pub async fn preview_attachment(
     filename: String,
 ) -> Result<PreviewAttachment> {
     ensure_preview_url_is_brightspace_scoped(&state, &url)?;
-    let (bytes, mime, header_filename) = state.client.fetch_bytes(&url).await?;
-    if bytes.len() > PREVIEW_MAX_BYTES {
-        return Err(crate::error::AppError::Other(
-            "File too large to preview — open externally".to_string(),
-        ));
-    }
+    let (bytes, mime, header_filename) = state.client.fetch_bytes_with_limit(&url, Some(PREVIEW_MAX_BYTES)).await?;
     let bytes_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(PreviewAttachment {
         bytes_base64,
@@ -102,10 +97,7 @@ fn ensure_preview_url_is_brightspace_scoped(state: &AppStateArg<'_>, url: &str) 
         .read()
         .clone()
         .ok_or_else(|| crate::error::AppError::Other("no Brightspace host configured".into()))?;
-    let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    else {
+    let Some(rest) = url.strip_prefix("https://") else {
         return Err(crate::error::AppError::Other(
             "Attachment URL is not a supported Brightspace URL.".to_string(),
         ));

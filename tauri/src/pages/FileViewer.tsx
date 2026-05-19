@@ -44,6 +44,8 @@ export default function FileViewer() {
         setObjectUrl(created.url);
         if (route.kind === "officeXml") {
           setText(extractOfficeText(created.bytes, extensionForFile(filename)) || "No readable text found in this Office document.");
+        } else if (route.kind === "legacyOffice") {
+          setErr("This legacy Office format cannot be rendered reliably in the mobile WebView. Use Open externally to view it.");
         } else if (["text", "markdown", "csv", "rtf"].includes(route.kind)) {
           setText(new TextDecoder().decode(created.bytes));
         }
