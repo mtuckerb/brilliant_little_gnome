@@ -8,6 +8,7 @@ const readJson = (path) => JSON.parse(readFileSync(resolve(root, path), 'utf8'))
 const config = readJson('src-tauri/tauri.conf.json');
 const pkg = readJson('package.json');
 const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
+const iosDeployScript = readFileSync(resolve(root, 'scripts/ios-deploy.mjs'), 'utf8');
 
 const devUrl = config?.build?.devUrl;
 if (devUrl !== 'http://127.0.0.1:1420') {
@@ -21,8 +22,16 @@ for (const [name, script] of Object.entries(pkg.scripts ?? {})) {
   }
 }
 
-if (!pkg.scripts?.['dev:ios']?.includes('--host 127.0.0.1')) {
-  throw new Error('Expected npm run dev:ios to pin Tauri iOS dev to --host 127.0.0.1');
+if (!pkg.scripts?.['dev:ios']?.includes('scripts/ios-deploy.mjs')) {
+  throw new Error('Expected npm run dev:ios to use the ios-deploy wrapper instead of tauri ios dev directly');
+}
+
+if (!iosDeployScript.includes("spawnSync('npm', ['run', 'ios:build']")) {
+  throw new Error('Expected the ios-deploy wrapper to build a standalone IPA instead of loading a dev server');
+}
+
+if (!pkg.scripts?.['dev:ios:tauri']?.includes('--host 127.0.0.1')) {
+  throw new Error('Expected npm run dev:ios:tauri to pin Tauri iOS dev to --host 127.0.0.1');
 }
 
 if (!pkg.scripts?.['dev:ios:remote']?.includes('BRILLIANT_TAURI_REMOTE_DEV=1')) {
