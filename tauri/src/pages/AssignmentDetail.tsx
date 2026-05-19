@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import {
@@ -10,6 +10,25 @@ import {
 } from "../types";
 import { fmtNum } from "../lib/format";
 import CourseHeader from "../components/CourseHeader";
+
+function isQuizAssignment(a: Assignment | null) {
+  return a?.assignment_type?.toLowerCase() === "quiz";
+}
+
+function quizIdFromBrightspaceId(brightspaceId: string) {
+  return brightspaceId.startsWith("quiz_") ? brightspaceId.slice("quiz_".length) : brightspaceId;
+}
+
+function brightspacePathForAssignment(a: Assignment, courseId: string) {
+  if (isQuizAssignment(a)) {
+    return `/d2l/lms/quizzing/user/quiz_summary.d2l?qi=${encodeURIComponent(quizIdFromBrightspaceId(a.brightspace_id))}&ou=${encodeURIComponent(courseId)}`;
+  }
+  return `/d2l/le/${encodeURIComponent(courseId)}/dropbox/${encodeURIComponent(a.brightspace_id)}`;
+}
+
+function errorMessage(e: unknown) {
+  return String((e as { message?: string })?.message ?? e);
+}
 
 function AttachmentList({ items }: { items: AssignmentAttachment[] }) {
   if (items.length === 0) return null;
@@ -36,32 +55,68 @@ export default function AssignmentDetail() {
   const [course, setCourse] = useState<Course | null>(null);
   const [a, setA] = useState<Assignment | null>(null);
   const [detail, setDetail] = useState<AssignmentDetailPayload | null>(null);
+  const [brightspaceHost, setBrightspaceHost] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [brightspaceOpenErr, setBrightspaceOpenErr] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!id || !aid) return;
     const aidNum = Number(aid);
+    setErr(null);
+    setBrightspaceOpenErr(null);
+    setA(null);
+    setDetail(null);
     Promise.all([
       api.getCourse(id).catch(() => null),
+      api.getPrefs().catch(() => null),
       api.listAssignments(id, undefined),
     ])
-      .then(([c, list]) => {
+      .then(([c, prefs, list]) => {
         setCourse(c);
+        setBrightspaceHost(prefs?.brightspace_host ?? null);
         const found = list.find((x) => x.id === aidNum) ?? null;
         setA(found);
         if (!found) {
           setErr("Assignment not found");
           return;
         }
+        if (isQuizAssignment(found)) {
+          return;
+        }
         api
           .getAssignmentDetail(id, found.brightspace_id)
           .then(setDetail)
-          .catch((e) => setErr(String(e?.message ?? e)));
+          .catch((e) => setErr(errorMessage(e)));
       })
-      .catch((e) => setErr(String(e?.message ?? e)));
+      .catch((e) => setErr(errorMessage(e)));
   }, [id, aid]);
 
-  if (err) return <div className="notification is-danger">{err}</div>;
+  useEffect(() => { load(); }, [load]);
+
+  if (err) {
+    return (
+      <div>
+        <nav className="breadcrumb mb-3">
+          <ul>
+            <li><Link to="/dashboard">Dashboard</Link></li>
+            {id && <li><Link to={`/course/${id}`}>Course</Link></li>}
+            {id && <li><Link to={`/course/${id}/assignments`}>Assignments</Link></li>}
+            <li className="is-active"><a>Assignment unavailable</a></li>
+          </ul>
+        </nav>
+        {id && <CourseHeader courseId={id} />}
+        <div className="notification is-warning is-light">
+          <p className="has-text-weight-semibold">We couldn't load this assignment.</p>
+          <p className="is-size-7 mt-1">{err}</p>
+          <div className="buttons mt-3">
+            <button className="button is-small is-primary" onClick={load}>Retry</button>
+            {id && <Link className="button is-small" to={`/course/${id}/assignments`}>Back to assignments</Link>}
+            {id && <Link className="button is-small is-light" to={`/course/${id}`}>Back to course</Link>}
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (!a) return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
 
   async function toggleComplete() {
@@ -76,6 +131,22 @@ export default function AssignmentDetail() {
   }
 
   const accent = course?.custom_color || "#739AC3";
+  const isQuiz = isQuizAssignment(a);
+  const brightspacePath = id ? brightspacePathForAssignment(a, id) : null;
+  const brightspaceUrl = a.external_url || (brightspaceHost && brightspacePath ? `https://${brightspaceHost}${brightspacePath}` : null);
+
+  function openBrightspace() {
+    if (!brightspaceUrl) {
+      setBrightspaceOpenErr("Brightspace login details are not available on this device.");
+      return;
+    }
+    setBrightspaceOpenErr(null);
+    try {
+      window.open(brightspaceUrl, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setBrightspaceOpenErr(errorMessage(e));
+    }
+  }
 
   // Score cascade matches original Sinatra: feedback.Score → gradebook.numerator
   const fb = detail?.feedback;
@@ -126,11 +197,11 @@ export default function AssignmentDetail() {
           <button className="button" onClick={toggleOptional}>
             <span>{a.optional ? "Required" : "Optional"}</span>
           </button>
-          {a.external_url && (
-            <a className="button is-link is-light" href={a.external_url} target="_blank" rel="noreferrer">
+          {(a.external_url || isQuiz) && (
+            <button className="button is-link is-light" onClick={openBrightspace}>
               <span className="icon"><i className="fas fa-external-link-alt"></i></span>
-              <span>Open in Brightspace</span>
-            </a>
+              <span>{isQuiz ? "Open quiz" : "Open in Brightspace"}</span>
+            </button>
           )}
           {a.synthetic && (
             <button
@@ -149,7 +220,30 @@ export default function AssignmentDetail() {
         </div>
       </div>
 
-      {detail === null && !a.synthetic && !err && (
+      {brightspaceOpenErr && (
+        <div className="notification is-warning is-light">
+          <p className="has-text-weight-semibold">We couldn't open Brightspace automatically.</p>
+          <p className="is-size-7 mt-1">{brightspaceOpenErr}</p>
+          <div className="buttons mt-3">
+            {id && <Link className="button is-small" to={`/course/${id}/assignments`}>Back to assignments</Link>}
+            {id && <Link className="button is-small is-light" to={`/course/${id}`}>Back to course</Link>}
+          </div>
+        </div>
+      )}
+
+      {isQuiz && (
+        <div className="notification is-info is-light">
+          <p className="has-text-weight-semibold">This assignment is a Brightspace quiz.</p>
+          <p className="is-size-7 mt-1">Use Open quiz to launch it in Brightspace. You can always return here with the navigation links below.</p>
+          <div className="buttons mt-3">
+            <button className="button is-small is-link" onClick={openBrightspace}>Open quiz</button>
+            {id && <Link className="button is-small" to={`/course/${id}/assignments`}>Back to assignments</Link>}
+            {id && <Link className="button is-small is-light" to={`/course/${id}`}>Back to course</Link>}
+          </div>
+        </div>
+      )}
+
+      {detail === null && !a.synthetic && !isQuiz && !err && (
         <div className="has-text-centered py-3">
           <span className="icon has-text-primary"><i className="fas fa-circle-notch fa-spin"></i></span>
           <span className="ml-2 has-text-grey">Loading rubric, feedback &amp; submissions…</span>
