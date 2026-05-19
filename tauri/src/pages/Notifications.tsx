@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "../api";
 import type { Notification } from "../types";
 
@@ -11,6 +12,16 @@ export default function Notifications() {
   }, [unreadOnly]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Re-fetch whenever the backend emits a notifications update: mark-read
+  // from CourseAnnouncements, mark-all-read, and the sync engine all fire
+  // this event. Without it, resolving an alert from the course view leaves
+  // the same alert visibly unresolved on the Dashboard's Notifications
+  // page until the user navigates away and back.
+  useEffect(() => {
+    const unlistenP = listen("notifications:updated", () => { load(); });
+    return () => { unlistenP.then((fn) => fn()).catch(() => {}); };
+  }, [load]);
 
   if (!items) return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
 
