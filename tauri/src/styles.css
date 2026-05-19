@@ -50,3 +50,81 @@ body { background: #fdfdfd; min-height: 100vh; margin: 0; }
   border-bottom: 1px dashed #eee;
   opacity: 0.5;
 }
+
+/* ---------------------------------------------------------------- */
+/* Mobile / iPhone responsive guardrails.
+   Phase 2 of the docs/brilliant_ui.pen Pencil design. The MobileLayout
+   shell renders ~390px wide on iPhone; these rules keep desktop-shaped
+   page bodies (breadcrumbs, .level, button rows, .tags, tables) from
+   overflowing, clipping, or stacking poorly inside it. Anything with
+   its own `useIsMobile()` branch in TSX overrides these via inline
+   style as needed. Keep selectors scoped to <=640px to avoid regressing
+   desktop. */
+@media (max-width: 640px) {
+  html, body { overflow-x: hidden; }
+  .main-content { padding: 0; }
+
+  /* Tighter boxes — desktop uses 1.25rem default; that wastes
+     horizontal space on a 390px viewport. */
+  .box { padding: 14px; border-radius: 12px; }
+
+  /* The desktop breadcrumb above CourseHeader is redundant on mobile:
+     the bottom tab bar handles top-level nav and the in-page title
+     already names the section. Hiding it reclaims a row of vertical
+     space everywhere it appears (Assignments list, AssignmentDetail,
+     CourseHeader, etc). */
+  .breadcrumb { display: none; }
+
+  /* Bulma's .level is a single row that never wraps. On 390px this
+     forces controls off-screen. Stack vertically. */
+  .level { display: block; }
+  .level .level-left,
+  .level .level-right {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 8px 0;
+    align-items: center;
+  }
+  .level-item:not(:last-child) { margin: 0; }
+
+  /* Button groups must wrap on mobile. */
+  .buttons { gap: 6px; }
+  .buttons .button { margin: 0; }
+
+  /* Tag clusters wrap properly. */
+  .tags { gap: 4px; }
+  .tags:not(:last-child) { margin-bottom: 8px; }
+
+  /* Desktop tables overflow on mobile. Allow horizontal scroll as a
+     fallback for places that still render a <table>. */
+  .table-container,
+  .table { overflow-x: auto; }
+
+  /* The CourseNav row pinned at the top of every /course/:id/* page
+     scrolls horizontally on mobile so the tabs don't wrap to four
+     lines. */
+  .course-nav {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .course-nav .button { flex: 0 0 auto; }
+
+  /* Force a sane min tap target everywhere — Apple HIG calls for 44pt. */
+  .button.is-small { min-height: 32px; }
+  .button { min-height: 40px; }
+
+  /* Generic title sizes are too large under the iPhone shell — the
+     shell already provides a header band. */
+  .title.is-3 { font-size: 1.5rem; }
+  .title.is-4 { font-size: 1.25rem; }
+  .title.is-5 { font-size: 1.1rem; }
+
+  /* Make sure assignment row meta stays on one usable line. */
+  .assignment-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+}
