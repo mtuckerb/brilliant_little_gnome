@@ -66,6 +66,13 @@ export default function AssignmentDetail() {
       .catch((e) => setErr(String(e?.message ?? e)));
   }, [id, aid]);
 
+  // Keep hooks above the loading/error returns. The assignment page first
+  // renders with `a === null`, then re-renders after async data arrives;
+  // calling hooks only on the loaded render would violate React's hook-order
+  // invariant.
+  const bsHost = useBrightspaceHost();
+  const isMobile = useIsMobile();
+
   if (err) return <div className="notification is-danger">{err}</div>;
   if (!a) return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
 
@@ -81,8 +88,6 @@ export default function AssignmentDetail() {
   }
 
   const accent = course?.custom_color || "#739AC3";
-  const bsHost = useBrightspaceHost();
-  const isMobile = useIsMobile();
   const bsAssignmentUrl =
     a.external_url ??
     (bsHost && course
