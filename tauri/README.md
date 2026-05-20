@@ -76,6 +76,18 @@ nix develop . --command cargo test \
 
 The npm scripts create the placeholder `dist/` directory that Tauri's compile-time config expects, then run Cargo from `src-tauri/`. The shell exports `PKG_CONFIG_PATH` for OpenSSL and the Linux Tauri libraries, avoiding host-specific setup or manually discovered Cargo/Rust paths.
 
+## macOS Transporter / Brilliant desktop build
+
+The macOS Transporter build is the Tauri desktop app packaged as a universal Apple Silicon + Intel artifact. Use the dev command while iterating locally, and the build command when you need a standalone `.app` / installer bundle:
+
+```sh
+cd tauri/
+npm run macos:dev
+npm run macos:build
+```
+
+`npm run macos:build` invokes `tauri build --target universal-apple-darwin`, embeds the Vite `dist/` assets via `frontendDist`, and produces launchable macOS bundles without any dependency on the Vite dev server. Tagged releases run the same universal target in `.github/workflows/release.yml` and sign/notarize when the Apple credentials are present.
+
 ## iOS / iPadOS
 
 Use `npm run dev:ios` or `npm run dev:ios:remote` only for development; those commands intentionally load the WebView from the Vite dev server so hot module reload works.

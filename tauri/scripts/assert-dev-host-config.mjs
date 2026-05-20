@@ -38,12 +38,12 @@ if (!viteHostPinsLocalhost) {
   throw new Error('Expected vite.config.ts to pin the default iOS dev server host to 127.0.0.1 when BRILLIANT_TAURI_REMOTE_DEV is not enabled.');
 }
 
-if (!pkg.scripts?.['dev:ios:remote']?.includes('BRILLIANT_TAURI_REMOTE_DEV=1')) {
-  throw new Error('Expected npm run dev:ios:remote to explicitly opt into remote development host handling');
+if (!pkg.scripts?.['dev:ios:remote']?.includes('--force-ip-prompt')) {
+  throw new Error('Expected npm run dev:ios:remote to explicitly prompt for the remote development host');
 }
 
-if (!viteConfig.includes('BRILLIANT_TAURI_REMOTE_DEV')) {
-  throw new Error('Expected vite.config.ts to gate TAURI_DEV_HOST behind BRILLIANT_TAURI_REMOTE_DEV');
+if (!viteConfig.includes('process.env.TAURI_DEV_HOST')) {
+  throw new Error('Expected vite.config.ts to honor TAURI_DEV_HOST when Tauri provides a remote iOS dev host.');
 }
 
 console.log('iOS dev host config defaults to 127.0.0.1 and remote host mode is explicit.');

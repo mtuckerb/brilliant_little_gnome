@@ -51,6 +51,15 @@ npm install
 npm run tauri dev
 ```
 
+For a local macOS Transporter/Brilliant desktop artifact, run:
+
+```bash
+cd tauri/
+npm run macos:build
+```
+
+That command builds a universal Apple Silicon + Intel Tauri bundle using the embedded `dist/` assets; it does not require or contact a Vite dev server at launch.
+
 Pre-built signed installers for macOS (universal) and Windows are on the [Releases page](https://github.com/mtuckerb/brilliant_little_gnome/releases).
 
 First launch:
