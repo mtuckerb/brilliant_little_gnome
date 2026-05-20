@@ -164,11 +164,16 @@ export default function SyllabusPanel({ courseId }: Props) {
               <button className="delete" aria-label="close" onClick={() => setViewerUrl(null)} />
             </header>
             <section className="modal-card-body" style={{ padding: 0 }}>
-              <iframe
-                src={viewerUrl}
-                title={viewerName ?? "Syllabus"}
+              <object
+                data={viewerUrl}
+                aria-label={viewerName ?? "Syllabus"}
                 style={{ width: "100%", height: "100%", border: 0 }}
-              />
+              >
+                <embed
+                  src={viewerUrl}
+                  style={{ width: "100%", height: "100%", border: 0 }}
+                />
+              </object>
             </section>
           </div>
         </div>
