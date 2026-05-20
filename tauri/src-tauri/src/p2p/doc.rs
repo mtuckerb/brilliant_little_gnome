@@ -34,6 +34,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CourseOverlay {
     pub is_pinned: Option<bool>,
+    pub custom_name: Option<String>,
     pub custom_color: Option<String>,
     pub units: Option<f64>,
     pub target_grade: Option<f64>,
@@ -84,6 +85,7 @@ pub struct SyntheticAssignment {
 #[derive(Debug, Clone)]
 pub enum CourseField {
     IsPinned(bool),
+    CustomName(Option<String>),
     CustomColor(Option<String>),
     Units(Option<f64>),
     TargetGrade(Option<f64>),
@@ -293,6 +295,7 @@ impl SyncDoc {
         let m = parent.get_or_create_container(id, LoroMap::new())?;
         match field {
             CourseField::IsPinned(v) => m.insert("is_pinned", v)?,
+            CourseField::CustomName(v) => insert_opt_string(&m, "custom_name", v.as_deref())?,
             CourseField::CustomColor(v) => insert_opt_string(&m, "custom_color", v.as_deref())?,
             CourseField::Units(v) => insert_opt_f64(&m, "units", v)?,
             CourseField::TargetGrade(v) => insert_opt_f64(&m, "target_grade", v)?,
@@ -598,6 +601,7 @@ fn collect_bool_map(map: &LoroMap) -> Vec<(String, bool)> {
 fn read_course_overlay(m: &LoroMap) -> CourseOverlay {
     CourseOverlay {
         is_pinned: get_bool(m, "is_pinned"),
+        custom_name: get_string(m, "custom_name"),
         custom_color: get_string(m, "custom_color"),
         units: get_f64(m, "units"),
         target_grade: get_f64(m, "target_grade"),
@@ -686,6 +690,7 @@ mod tests {
         let d = SyncDoc::new();
         let id = "12345";
         d.set_course_overlay(id, CourseField::IsPinned(true)).unwrap();
+        d.set_course_overlay(id, CourseField::CustomName(Some("Intro to Psychology".into()))).unwrap();
         d.set_course_overlay(id, CourseField::CustomColor(Some("#abcdef".into()))).unwrap();
         d.set_course_overlay(id, CourseField::Units(Some(3.0))).unwrap();
         d.set_course_overlay(id, CourseField::TargetGrade(Some(95.0))).unwrap();
@@ -695,6 +700,7 @@ mod tests {
         let got = d.get_course_overlay(id).unwrap();
         assert_eq!(got, CourseOverlay {
             is_pinned: Some(true),
+            custom_name: Some("Intro to Psychology".into()),
             custom_color: Some("#abcdef".into()),
             units: Some(3.0),
             target_grade: Some(95.0),

@@ -704,6 +704,7 @@ async fn write_course_to_sqlite(
     let res = sqlx::query(
         "UPDATE courses SET \
            is_pinned       = COALESCE(?, is_pinned), \
+           custom_name     = ?, \
            custom_color    = ?, \
            units           = COALESCE(?, units), \
            target_grade    = COALESCE(?, target_grade), \
@@ -713,6 +714,7 @@ async fn write_course_to_sqlite(
          WHERE org_unit_id = ?",
     )
     .bind(o.is_pinned.map(|b| b as i64))
+    .bind(o.custom_name.as_deref()) // None → SQL NULL: clearing the override
     .bind(o.custom_color.as_deref()) // None → SQL NULL: clearing the override
     .bind(o.units)
     .bind(o.target_grade)
@@ -1186,6 +1188,7 @@ mod tests {
         let id = "12345";
         for field in [
             CourseField::IsPinned(true),
+            CourseField::CustomName(Some("Intro to Psychology".into())),
             CourseField::CustomColor(Some("#abcdef".into())),
             CourseField::Units(Some(3.0)),
             CourseField::TargetGrade(Some(95.0)),
@@ -1199,6 +1202,7 @@ mod tests {
         }
         let got = bridge.doc.get_course_overlay(id).unwrap();
         assert_eq!(got.is_pinned, Some(true));
+        assert_eq!(got.custom_name.as_deref(), Some("Intro to Psychology"));
         assert_eq!(got.custom_color.as_deref(), Some("#abcdef"));
         assert_eq!(got.units, Some(3.0));
         assert_eq!(got.target_grade, Some(95.0));

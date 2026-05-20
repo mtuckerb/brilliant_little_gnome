@@ -97,6 +97,24 @@ pub async fn update_course_name(state: AppStateArg<'_>, id: String, name: String
         .execute(&state.pool)
         .await?;
 
+    #[cfg(feature = "p2p")]
+    {
+        use crate::p2p::bridge::LocalChange;
+        use crate::p2p::doc::CourseField;
+        if let Some(engine) = state.sync_engine() {
+            if let Err(e) = engine
+                .bridge()
+                .apply_local(LocalChange::Course {
+                    id: id.clone(),
+                    field: CourseField::CustomName(custom_name.clone()),
+                })
+                .await
+            {
+                tracing::warn!("apply_local custom_name {}: {}", id, e);
+            }
+        }
+    }
+
     get_course(state, id).await
 }
 
