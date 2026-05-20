@@ -26,8 +26,9 @@ Stubbed (intentional — fills in next pass):
 
 ```sh
 cd tauri/
-nix-shell                # provides webkitgtk, cairo, gtk3, glib, pkg-config, etc.
-npm install
+nix-shell                # provides Node.js 22, webkitgtk, cairo, gtk3, glib, pkg-config, etc.
+node --version           # should print v22.x (Vite requires ^20.19.0 or >=22.12.0)
+npm install              # keep optional native dependencies enabled for Vite/Rolldown
 npm run tauri dev
 ```
 
@@ -37,6 +38,12 @@ fresh worktrees:
 ```sh
 nix develop .
 ```
+
+Use the Nix shell for frontend validation as well as Rust checks. The shell's
+Node.js version is intentionally aligned with `.github/workflows/release.yml`
+and Vite/Rolldown's current engine requirement; avoid using an older global
+Node.js or install flags such as `--omit=optional`, which can skip the native
+Rolldown binding used during `vite build`.
 
 ## Fresh worktree frontend checks
 

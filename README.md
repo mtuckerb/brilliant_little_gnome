@@ -46,8 +46,9 @@ If an instructor's API response goes "thin" mid-semester (missing descriptions, 
 
 ```bash
 # Tauri desktop app (v2.0+)
+nix develop .            # provides Node.js 22 for Vite/Rolldown builds
 cd tauri/
-npm install
+npm install              # keep optional native dependencies enabled
 npm run tauri dev
 ```
 

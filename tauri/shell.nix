@@ -35,11 +35,16 @@ let
     "x86_64-linux-android"
   ];
 
-  # Single source of truth for the toolchain. Bump as needed.
+  # Single source of truth for the Rust toolchain. Bump as needed.
   rustToolchain = pkgs.rust-bin.stable."1.90.0".default.override {
     extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
     targets = androidTargets ++ lib.optionals stdenv.isDarwin iosTargets;
   };
+
+  # Vite 8 / Rolldown require Node ^20.19.0 or >=22.12.0. The stable
+  # nixos-24.05 nodejs_20 package is 20.18.x, so use the flake's unstable
+  # Node 22 package for both `node` and `npm` in the dev shell.
+  nodejs = pkgsUnstable.nodejs_22;
 
   # Libraries with pkg-config metadata needed by cargo builds/tests. Keep this
   # list separate from buildInputs so shellHook can publish deterministic
@@ -69,7 +74,7 @@ pkgs.mkShell {
     rustToolchain
 
     # Node + build tools (cross-platform)
-    nodejs_20
+    nodejs
     openssl
   ] ++ lib.optionals stdenv.isLinux [
     # Tauri Linux runtime deps (webkit2gtk + the GLib/GTK stack)
