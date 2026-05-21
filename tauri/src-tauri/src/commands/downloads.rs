@@ -52,7 +52,7 @@ pub async fn download_topic_file(
     );
     let (bytes, mime, name) = state.client.fetch_bytes(&path).await?;
     let filename = name.unwrap_or_else(|| format!("topic_{}.bin", topic_id));
-    let saved_path = save_download_file(&filename, &bytes)?;
+    let saved_path = save_download_file(&state.app, &filename, &bytes)?;
     let payload = DownloadBytes {
         bytes_base64: None,
         mime,
@@ -100,7 +100,7 @@ pub async fn download_module_archive(
 
     let bytes = zip.finish();
     let filename = format!("Brilliant-{}-{}.zip", course_id, sanitize(&module_title));
-    let saved_path = save_download_file(&filename, &bytes)?;
+    let saved_path = save_download_file(&state.app, &filename, &bytes)?;
     let payload = DownloadBytes {
         bytes_base64: None,
         mime: Some("application/zip".to_string()),
@@ -177,7 +177,7 @@ pub async fn download_course_archive(
 
     let bytes = zip.finish();
     let filename = format!("Brilliant-{}.zip", course_id);
-    let saved_path = save_download_file(&filename, &bytes)?;
+    let saved_path = save_download_file(&state.app, &filename, &bytes)?;
     tracing::info!("download_course_archive saved {}", saved_path.display());
     let payload = DownloadBytes {
         bytes_base64: None,
@@ -224,7 +224,7 @@ pub async fn download_course_syllabus(
 
     let (bytes, mime, response_name) = state.client.fetch_bytes(&att_url).await?;
     let filename = response_name.unwrap_or(suggested);
-    let saved_path = save_download_file(&filename, &bytes)?;
+    let saved_path = save_download_file(&state.app, &filename, &bytes)?;
     let payload = DownloadBytes {
         bytes_base64: None,
         mime,
@@ -581,18 +581,40 @@ fn sanitize(name: &str) -> String {
     if cleaned.is_empty() { "untitled".to_string() } else { cleaned }
 }
 
-fn save_download_file(filename: &str, data: &[u8]) -> Result<PathBuf> {
-    let downloads_dir = dirs::download_dir()
-        .or_else(|| dirs::home_dir().map(|home| home.join("Downloads")))
-        .ok_or_else(|| AppError::Other("Could not determine a Downloads folder".to_string()))?;
+/// Resolve the platform-appropriate save destination and write `data` there.
+///
+/// On iOS we MUST write to the app's sandboxed Documents directory — that's
+/// the only place visible to the Files app, and `dirs::download_dir()` returns
+/// None inside the sandbox anyway. On macOS/Linux we keep the user's
+/// Downloads folder so the file lands somewhere familiar.
+pub(crate) fn save_download_file(
+    app: &tauri::AppHandle,
+    filename: &str,
+    data: &[u8],
+) -> Result<PathBuf> {
+    #[cfg(target_os = "ios")]
+    let dest = {
+        use tauri::Manager;
+        app.path()
+            .document_dir()
+            .map_err(|e| AppError::Other(format!("could not resolve iOS Documents dir: {e}")))?
+    };
 
-    fs::create_dir_all(&downloads_dir)?;
-    let mut path = unique_filesystem_path(&downloads_dir, &sanitize(filename));
+    #[cfg(not(target_os = "ios"))]
+    let dest = {
+        let _ = app; // keep arg used on non-iOS without an unused-arg warning
+        dirs::download_dir()
+            .or_else(|| dirs::home_dir().map(|home| home.join("Downloads")))
+            .ok_or_else(|| AppError::Other("Could not determine a Downloads folder".to_string()))?
+    };
+
+    fs::create_dir_all(&dest)?;
+    let mut path = unique_filesystem_path(&dest, &sanitize(filename));
     fs::write(&path, data)?;
 
     // Canonicalization is best-effort because some platforms/sandboxes may not
-    // allow resolving a user-visible Downloads location. Returning the original
-    // path is still more useful than failing after a successful write.
+    // allow resolving a user-visible location. Returning the original path is
+    // still more useful than failing after a successful write.
     if let Ok(canonical) = path.canonicalize() {
         path = canonical;
     }
