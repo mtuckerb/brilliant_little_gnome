@@ -363,7 +363,11 @@ impl SyncEngine {
                                 .await;
                             }
                             Ok(TransportEvent::PeerConnected(id)) => {
-                                info!("peer connected: {id}");
+                                info!("peer connected: {id}; requesting state resync");
+                                let vv = doc.doc().oplog_vv().encode();
+                                if let Err(e) = transport.broadcast(WireMsg::StateRequest { vv }).await {
+                                    warn!("state request broadcast after peer connect {id} failed: {e}");
+                                }
                             }
                             Ok(TransportEvent::PeerDisconnected(id)) => {
                                 info!("peer disconnected: {id}");
@@ -1249,6 +1253,130 @@ mod tests {
         timeout(Duration::from_secs(45), body)
             .await
             .expect("pairing handshake test exceeded 45s");
+    }
+
+    /// Regression coverage for reconnect after a peer has been offline while
+    /// another device continued syncing. A connects, B and C receive A's first
+    /// update, B drops offline, A and C continue, then B comes back on the same
+    /// shared secret. The PeerConnected-triggered StateRequest path must pull
+    /// B forward without a fresh QR/pairing nonce and without duplicating peers.
+    #[tokio::test]
+    async fn reconnecting_peer_resyncs_after_missing_updates() {
+        let (relay_map, relay_url, _relay_guard) =
+            iroh::test_utils::run_relay_server().await.unwrap();
+        let memory_lookup = MemoryLookup::new();
+
+        let tmp = TempDir::new().unwrap();
+        let store_a = store_in(&tmp, "reconnect-a");
+        let store_b = store_in(&tmp, "reconnect-b");
+        let store_c = store_in(&tmp, "reconnect-c");
+
+        let body = async {
+            let ep_a = build_test_endpoint(relay_map.clone()).await;
+            let ep_b = build_test_endpoint(relay_map.clone()).await;
+            let ep_c = build_test_endpoint(relay_map.clone()).await;
+            ep_a.address_lookup().unwrap().add(memory_lookup.clone());
+            ep_b.address_lookup().unwrap().add(memory_lookup.clone());
+            ep_c.address_lookup().unwrap().add(memory_lookup.clone());
+            ep_a.online().await;
+            ep_b.online().await;
+            ep_c.online().await;
+            let id_a = ep_a.id();
+            let id_b = ep_b.id();
+            let id_c = ep_c.id();
+            memory_lookup.add_endpoint_info(EndpointAddr::new(id_a).with_relay_url(relay_url.clone()));
+            memory_lookup.add_endpoint_info(EndpointAddr::new(id_b).with_relay_url(relay_url.clone()));
+            memory_lookup.add_endpoint_info(EndpointAddr::new(id_c).with_relay_url(relay_url.clone()));
+
+            let secret = b"reconnect-three-device-secret";
+            let transport_a = Arc::new(Transport::start_with_endpoint(ep_a, secret, vec![]).await.unwrap());
+            let transport_b = Arc::new(Transport::start_with_endpoint(ep_b, secret, vec![id_a]).await.unwrap());
+            let transport_c = Arc::new(Transport::start_with_endpoint(ep_c, secret, vec![id_a]).await.unwrap());
+
+            let doc_a = Arc::new(SyncDoc::from_doc(store_a.load().unwrap()));
+            let doc_b = Arc::new(SyncDoc::from_doc(store_b.load().unwrap()));
+            let doc_c = Arc::new(SyncDoc::from_doc(store_c.load().unwrap()));
+
+            let engine_a = SyncEngine::start_with_parts(
+                store_a.clone(), doc_a.clone(), transport_a.clone(), Bridge::new(doc_a.clone()),
+            ).await.unwrap();
+            let engine_b = SyncEngine::start_with_parts(
+                store_b.clone(), doc_b.clone(), transport_b.clone(), Bridge::new(doc_b.clone()),
+            ).await.unwrap();
+            let engine_c = SyncEngine::start_with_parts(
+                store_c.clone(), doc_c.clone(), transport_c.clone(), Bridge::new(doc_c.clone()),
+            ).await.unwrap();
+
+            // Give the mesh a moment to form before the baseline mutation so the
+            // first broadcast is not lost before B has ever synced anything.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+
+            doc_a.set_pref_display_name("before disconnect").unwrap();
+            timeout(Duration::from_secs(10), async {
+                loop {
+                    if doc_b.get_pref_display_name().as_deref() == Some("before disconnect")
+                        && doc_c.get_pref_display_name().as_deref() == Some("before disconnect")
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }).await.expect("initial update did not reach B and C");
+
+            engine_b.shutdown().await.unwrap();
+            drop(engine_b);
+            drop(transport_b);
+
+            doc_a.set_pref_display_name("while b offline").unwrap();
+            doc_a
+                .set_course_overlay("reconnect-course", crate::p2p::doc::CourseField::IsPinned(true))
+                .unwrap();
+            timeout(Duration::from_secs(10), async {
+                loop {
+                    if doc_c.get_pref_display_name().as_deref() == Some("while b offline")
+                        && doc_c
+                            .get_course_overlay("reconnect-course")
+                            .and_then(|c| c.is_pinned)
+                            == Some(true)
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }).await.expect("online peer C did not receive update while B was offline");
+
+            let ep_b2 = build_test_endpoint(relay_map.clone()).await;
+            ep_b2.address_lookup().unwrap().add(memory_lookup.clone());
+            ep_b2.online().await;
+            memory_lookup.add_endpoint_info(EndpointAddr::new(ep_b2.id()).with_relay_url(relay_url.clone()));
+            let transport_b2 = Arc::new(Transport::start_with_endpoint(ep_b2, secret, vec![id_a]).await.unwrap());
+            let doc_b2 = Arc::new(SyncDoc::from_doc(store_b.load().unwrap()));
+            let engine_b2 = SyncEngine::start_with_parts(
+                store_b.clone(), doc_b2.clone(), transport_b2.clone(), Bridge::new(doc_b2.clone()),
+            ).await.unwrap();
+
+            timeout(Duration::from_secs(15), async {
+                loop {
+                    if doc_b2.get_pref_display_name().as_deref() == Some("while b offline")
+                        && doc_b2
+                            .get_course_overlay("reconnect-course")
+                            .and_then(|c| c.is_pinned)
+                            == Some(true)
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }).await.expect("reconnected B did not resync missed updates");
+
+            engine_a.shutdown().await.unwrap();
+            engine_b2.shutdown().await.unwrap();
+            engine_c.shutdown().await.unwrap();
+        };
+
+        timeout(Duration::from_secs(60), body)
+            .await
+            .expect("reconnect resync test exceeded 60s");
     }
 
     /// T-023 acceptance: three engines, all on the same in-memory iroh
