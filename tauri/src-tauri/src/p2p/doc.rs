@@ -726,9 +726,8 @@ mod tests {
         let got = d.get_course_overlay(id).unwrap();
         assert_eq!(got, CourseOverlay {
             is_pinned: Some(true),
-            custom_name: Some("Intro to Psychology".into()),
-            custom_color: Some("#abcdef".into()),
             custom_name: Some("Calculus I".into()),
+            custom_color: Some("#abcdef".into()),
             custom_code: Some("MAT-101".into()),
             units: Some(3.0),
             target_grade: Some(95.0),
