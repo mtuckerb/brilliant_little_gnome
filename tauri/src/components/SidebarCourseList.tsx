@@ -74,25 +74,13 @@ export default function SidebarCourseList({ filter }: Props) {
   return (
     <div style={{ overflowY: "auto", flex: "1 1 auto", paddingTop: 8 }}>
       {groups.length === 0 && (
-        <div className="px-3 py-3 is-size-7" style={{ color: "#9DA9B5" }}>
+        <div className="px-3 py-3 is-size-7" style={{ color: "var(--pencil-text-on-dark-dim)" }}>
           {filter ? "No matches" : "No courses yet."}
         </div>
       )}
       {groups.map((g) => (
         <div key={g.label} style={{ marginBottom: 12 }}>
-          <div
-            className="is-size-7"
-            style={{
-              padding: "8px 14px 4px",
-              color: "#7C8896",
-              textTransform: "uppercase",
-              letterSpacing: 1,
-              fontWeight: 600,
-              fontSize: 10,
-            }}
-          >
-            {g.label}
-          </div>
+          <div className="pencil-semHdr is-size-7">{g.label}</div>
           {g.courses.map((c) => {
             const isActive = c.org_unit_id === activeCourseId;
             const swatch = c.custom_color || "#5A6573";
@@ -100,14 +88,8 @@ export default function SidebarCourseList({ filter }: Props) {
               <Link
                 key={c.org_unit_id}
                 to={getLastCoursePath(c.org_unit_id)}
-                className="course-sidebar-row"
+                className={`course-sidebar-row pencil-sidebar-row${isActive ? " is-active" : ""}`}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "8px 14px",
-                  textDecoration: "none",
-                  background: isActive ? "#3A4856" : "transparent",
                   borderLeft: isActive ? `3px solid ${swatch}` : "3px solid transparent",
                 }}
               >
@@ -126,7 +108,9 @@ export default function SidebarCourseList({ filter }: Props) {
                     style={{
                       fontSize: 11,
                       fontWeight: 700,
-                      color: isActive ? "#FFFFFF" : "#9DA9B5",
+                      color: isActive
+                        ? "var(--pencil-text-on-dark)"
+                        : "var(--pencil-text-on-dark-dim)",
                       letterSpacing: 0.3,
                     }}
                   >
@@ -135,7 +119,9 @@ export default function SidebarCourseList({ filter }: Props) {
                   <span
                     style={{
                       fontSize: 11,
-                      color: isActive ? "#9DA9B5" : "#5E6975",
+                      color: isActive
+                        ? "var(--pencil-text-on-dark-dim)"
+                        : "var(--pencil-text-on-dark-faint)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
