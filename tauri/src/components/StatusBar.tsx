@@ -38,35 +38,39 @@ export default function StatusBar({ auth, sync, onAuthChange }: Props) {
       ? `Synced ${new Date(sync.last_sync_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
       : "Idle";
 
-  const authColor = auth.degraded ? "#C04A4A" : "#2C8F61";
+  const authColor = auth.degraded
+    ? "var(--pencil-danger)"
+    : "var(--pencil-success)";
   const authTitle = auth.degraded
     ? "Session expired — click to re-authenticate"
     : `Authenticated${auth.host ? ` to ${auth.host}` : ""}${auth.uid ? ` as ${auth.uid}` : ""}`;
 
   return (
     <div
+      className="pencil-StatusBar"
       style={{
         display: "flex",
         alignItems: "center",
         gap: 14,
         padding: "6px 14px",
-        background: "#2A3744",
         borderTop: "1px solid rgba(0,0,0,0.25)",
-        color: "#9DA9B5",
-        fontSize: 11,
         flex: "0 0 auto",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span
           className="icon is-small"
-          style={{ color: syncing ? "#739AC3" : "#2C8F61" }}
+          style={{
+            color: syncing
+              ? "var(--pencil-accent)"
+              : "var(--pencil-success)",
+          }}
         >
           <i className={`fas ${syncing ? "fa-sync fa-spin" : "fa-check"}`}></i>
         </span>
         <span>{syncLabel}</span>
         {syncing && sync && (
-          <span style={{ color: "#5E6975" }}>· {sync.progress}%</span>
+          <span style={{ color: "var(--pencil-text-on-dark-faint)" }}>· {sync.progress}%</span>
         )}
       </div>
 
@@ -79,12 +83,12 @@ export default function StatusBar({ auth, sync, onAuthChange }: Props) {
             alignItems: "center",
             gap: 6,
             padding: "4px 10px",
-            background: "#3A4856",
+            background: "var(--pencil-sidebar-row-hover)",
             borderRadius: 12,
           }}
           title={lastDownload ? `Most recent: ${lastDownload}` : undefined}
         >
-          <span className="icon is-small" style={{ color: "#739AC3" }}>
+          <span className="icon is-small" style={{ color: "var(--pencil-accent)" }}>
             <i className="fas fa-download"></i>
           </span>
           <span>{downloadCount} download{downloadCount === 1 ? "" : "s"}</span>

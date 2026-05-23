@@ -276,25 +276,24 @@ function MobileDashboard({ courses }: { courses: Course[] }) {
 
   return (
     <div>
+      {/* Pencil frame: appBar / appTitleWrap (HDUr0). */}
       <div className="mb-4">
-        <h1 className="title is-4 mb-1">Student Courses</h1>
-        <p className="is-size-7 has-text-grey">Course updates and due dates</p>
+        <h1 className="pencil-appTitle title is-4 mb-1">Student Courses</h1>
+        <p className="pencil-appSub">Course updates and due dates</p>
       </div>
 
-      <div className="is-flex mb-4" style={{ gap: 8 }}>
+      {/* Pencil frame: statsRow (HDUr0). */}
+      <div className="pencil-statsRow mb-4">
         {stats.map((s) => (
-          <div
-            key={s.label}
-            className="box mb-0"
-            style={{ flex: "1 1 0", padding: "12px 10px", textAlign: "center" }}
-          >
-            <div className="has-text-weight-bold" style={{ fontSize: 24, lineHeight: 1.1, color: "#1B2530" }}>{s.value}</div>
-            <div className="is-size-7 has-text-grey">{s.label}</div>
+          <div key={s.label} className="pencil-stat">
+            <div className="pencil-stat-value">{s.value}</div>
+            <div className="pencil-stat-label">{s.label}</div>
           </div>
         ))}
       </div>
 
-      <div className="box" style={{ padding: 14 }}>
+      {/* Pencil frame: semesterCoursesPanel (HDUr0). */}
+      <div className="pencil-semesterCoursesPanel">
         <div className="is-flex is-align-items-center is-justify-content-space-between mb-3">
           <h2 className="title is-6 mb-0">
             {activeSemester ? activeSemester : "All courses"}
@@ -310,8 +309,9 @@ function MobileDashboard({ courses }: { courses: Course[] }) {
             {orderedSemesters.map((sem) => (
               <button
                 key={sem}
+                type="button"
                 onClick={() => setActiveSemester(sem)}
-                className={`button is-small ${activeSemester === sem ? "is-primary" : "is-light"}`}
+                className={`pencil-semester-chip${activeSemester === sem ? " is-active" : ""}`}
                 style={{ flex: "0 0 auto" }}
               >
                 {sem}
@@ -320,47 +320,35 @@ function MobileDashboard({ courses }: { courses: Course[] }) {
           </div>
         )}
 
+        {/* Pencil frame: course-rows / course-row-N (c3DdR). */}
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {visible.map((c) => (
-            <li key={c.org_unit_id} style={{ borderTop: "1px solid #f0f0f0" }}>
+            <li key={c.org_unit_id}>
               <Link
                 to={getLastCoursePath(c.org_unit_id)}
-                className="is-flex is-align-items-center"
-                style={{
-                  gap: 12,
-                  padding: "12px 4px",
-                  color: "inherit",
-                  textDecoration: "none",
-                }}
+                className="pencil-course-row"
               >
                 <span
                   style={{
                     width: 8,
                     height: 44,
                     flex: "0 0 auto",
-                    borderRadius: 3,
-                    background: c.custom_color || "#5A6573",
+                    borderRadius: "var(--pencil-radius-xs)",
+                    background: c.custom_color || "var(--pencil-text-secondary)",
                   }}
                 />
                 <div style={{ flex: "1 1 auto", minWidth: 0 }}>
-                  <div
-                    className="has-text-weight-bold"
-                    style={{
-                      color: "#1B2530",
-                      fontSize: 14,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+                  <div className="pencil-course-row-title">
                     {stripLeadingCode(displayCourseName(c))}
                   </div>
-                  <div className="is-size-7 has-text-grey">
+                  <div className="pencil-course-row-meta">
                     {displayCourseCode(c) ?? ""}
                     {c.is_pinned && <i className="fas fa-thumbtack ml-2 has-text-warning"></i>}
                   </div>
                 </div>
-                <span className="icon has-text-grey-light"><i className="fas fa-chevron-right"></i></span>
+                <span className="icon" style={{ color: "var(--pencil-text-secondary)" }}>
+                  <i className="fas fa-chevron-right"></i>
+                </span>
               </Link>
             </li>
           ))}
