@@ -1,0 +1,283 @@
+/*
+ * Pencil v2.11 design tokens — single source of truth.
+ *
+ * Mirrors the `variables` block at the top of docs/brilliant_ui.pen.
+ * Every value here is verbatim from that file; do not hand-edit one
+ * without updating the .pen file too. The mapping from Pencil names
+ * to CSS custom properties is documented in tauri/docs/pencil-naming.md.
+ *
+ * Class names below mirror the Pencil frame names verbatim (or their
+ * camelCase form when the frame uses kebab-case). They exist so React
+ * components can apply Pencil-shaped styling without re-declaring the
+ * palette in every inline `style={...}`. Where a frame is purely a
+ * positioning container with no paint, we deliberately omit a class —
+ * the Pencil identifier still lives on the React component file name.
+ */
+
+:root {
+  /* Palette — verbatim Pencil variables. */
+  --pencil-accent:                 #739AC3;
+  --pencil-accent-dark:            #3D6691;
+  --pencil-bg-app:                 #F4F5F7;
+  --pencil-bg-pane:                #FFFFFF;
+  --pencil-bg-pane-alt:            #FAFBFC;
+  --pencil-bg-sidebar:             #1F2A33;
+  --pencil-bg-sidebar-row-active:  #2A3744;
+  --pencil-border-soft:            #E5E8EC;
+  --pencil-danger:                 #C04A4A;
+  --pencil-success:                #2C8F61;
+  --pencil-text-on-dark:           #FFFFFF;
+  --pencil-text-on-dark-dim:       #9DA9B5;
+  --pencil-text-on-dark-faint:     #5E6975;
+  --pencil-text-primary:           #1B2530;
+  --pencil-text-secondary:         #5A6573;
+  --pencil-warn:                   #D4A437;
+
+  /* Derived tokens used by the Pencil mocks but not in the variables
+     block (extracted from frame fills observed in the .pen JSON). */
+  --pencil-sidebar-row-hover:      #3A4856;
+  --pencil-status-divider:         #2A3744;
+  --pencil-mobile-foot-bg:         #FFFFFF;
+  --pencil-mobile-foot-border:     #D8DEE5;
+
+  /* Typography. Pencil uses Inter at fixed sizes per frame. */
+  --pencil-font-family:            "Inter", -apple-system, BlinkMacSystemFont,
+                                   "Segoe UI", "Roboto", "Helvetica Neue",
+                                   Arial, sans-serif;
+  --pencil-font-xs:   11px;
+  --pencil-font-sm:   12px;
+  --pencil-font-md:   13px;
+  --pencil-font-lg:   14px;
+  --pencil-font-xl:   16px;
+  --pencil-font-2xl:  18px;
+  --pencil-font-3xl:  22px;
+  --pencil-font-4xl:  24px;
+  --pencil-font-5xl:  36px;
+
+  /* Corner radii — Pencil mostly uses 6/8/10/12/16. */
+  --pencil-radius-xs:  3px;
+  --pencil-radius-sm:  5px;
+  --pencil-radius-md:  6px;
+  --pencil-radius-lg:  8px;
+  --pencil-radius-xl:  10px;
+  --pencil-radius-2xl: 12px;
+  --pencil-radius-3xl: 16px;
+  --pencil-radius-pill: 999px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Frame-named utility classes. Each maps to a Pencil frame in the
+   .pen file; see tauri/docs/pencil-naming.md for the canonical table.
+   Components that opt in get Pencil-shaped paint without duplicating
+   the palette in inline styles. */
+
+/* --- Desktop Vision shell ----------------------------------------- */
+
+.pencil-TitleBar {
+  background: var(--pencil-bg-sidebar);
+  color: var(--pencil-text-on-dark-dim);
+}
+
+.pencil-Sidebar {
+  background: var(--pencil-bg-sidebar-row-active);
+  color: var(--pencil-text-on-dark);
+}
+
+.pencil-sidebar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  text-decoration: none;
+  color: var(--pencil-text-on-dark-dim);
+}
+
+.pencil-sidebar-row.is-active {
+  background: var(--pencil-sidebar-row-hover);
+  color: var(--pencil-text-on-dark);
+}
+
+.pencil-semHdr {
+  padding: 8px 14px 4px;
+  color: var(--pencil-text-on-dark-faint);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.pencil-sbSearchBox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--pencil-sidebar-row-hover);
+  border-radius: var(--pencil-radius-md);
+}
+
+.pencil-MainPane {
+  background: var(--pencil-bg-app);
+}
+
+.pencil-StatusBar {
+  background: var(--pencil-bg-sidebar-row-active);
+  color: var(--pencil-text-on-dark-dim);
+  font-size: var(--pencil-font-xs);
+}
+
+/* --- Mobile Vision shells ----------------------------------------- */
+
+.pencil-mobile-shell {
+  background: var(--pencil-bg-app);
+}
+
+.pencil-appBar {
+  background: var(--pencil-bg-sidebar);
+  color: var(--pencil-text-on-dark);
+}
+
+.pencil-appTitle {
+  font-weight: 600;
+  font-size: var(--pencil-font-2xl);
+  color: var(--pencil-text-primary);
+}
+
+.pencil-appSub {
+  font-size: var(--pencil-font-sm);
+  color: var(--pencil-text-secondary);
+}
+
+.pencil-statsRow {
+  display: flex;
+  gap: 8px;
+}
+
+.pencil-stat {
+  flex: 1 1 0;
+  background: var(--pencil-bg-pane);
+  border-radius: var(--pencil-radius-2xl);
+  padding: 12px 10px;
+  text-align: center;
+}
+
+.pencil-stat-value {
+  font-size: var(--pencil-font-2xl);
+  font-weight: 700;
+  color: var(--pencil-text-primary);
+  line-height: 1.1;
+}
+
+.pencil-stat-value.is-accent {
+  color: var(--pencil-accent-dark);
+}
+
+.pencil-stat-label {
+  font-size: var(--pencil-font-xs);
+  color: var(--pencil-text-secondary);
+}
+
+.pencil-semesterCoursesPanel {
+  background: var(--pencil-bg-pane);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.pencil-semester-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--pencil-radius-pill);
+  font-size: var(--pencil-font-sm);
+  font-weight: 500;
+  background: var(--pencil-bg-pane);
+  color: var(--pencil-text-secondary);
+  border: 1px solid var(--pencil-border-soft);
+  cursor: pointer;
+}
+
+.pencil-semester-chip.is-active {
+  background: var(--pencil-bg-sidebar-row-active);
+  color: var(--pencil-text-on-dark);
+  font-weight: 600;
+  border-color: transparent;
+}
+
+.pencil-course-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px;
+  color: var(--pencil-text-primary);
+  text-decoration: none;
+}
+
+.pencil-course-row + .pencil-course-row {
+  border-top: 1px solid var(--pencil-border-soft);
+}
+
+.pencil-course-row-title {
+  font-size: var(--pencil-font-md);
+  font-weight: 600;
+  color: var(--pencil-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pencil-course-row-meta {
+  font-size: var(--pencil-font-xs);
+  color: var(--pencil-text-secondary);
+}
+
+.pencil-course-row-meta.is-danger { color: var(--pencil-danger); font-weight: 600; }
+.pencil-course-row-meta.is-warn   { color: var(--pencil-warn);   font-weight: 600; }
+.pencil-course-row-meta.is-success{ color: var(--pencil-success);font-weight: 600; }
+
+.pencil-bottomNav {
+  background: var(--pencil-mobile-foot-bg);
+  border-top: 1px solid var(--pencil-mobile-foot-border);
+}
+
+.pencil-bottomNav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-decoration: none;
+  color: var(--pencil-text-secondary);
+  font-size: var(--pencil-font-xs);
+  font-weight: 500;
+  padding: 4px 6px;
+  min-width: 56px;
+}
+
+.pencil-bottomNav-item.is-active {
+  color: var(--pencil-accent-dark);
+  font-weight: 700;
+}
+
+/* --- Mobile Vision - Assignment ---------------------------------- */
+
+.pencil-assn {
+  font-size: var(--pencil-font-4xl);
+  font-weight: 700;
+  color: var(--pencil-text-primary);
+  margin: 0 0 8px;
+}
+
+.pencil-assn-course {
+  font-size: var(--pencil-font-sm);
+  color: var(--pencil-text-secondary);
+}
+
+.pencil-assn-meta-due {
+  font-size: var(--pencil-font-xs);
+  font-weight: 600;
+  color: #C2410C; /* Pencil-literal Due Today orange — no token defined */
+}
+
+.pencil-assn-meta-pts {
+  font-size: var(--pencil-font-xs);
+  color: var(--pencil-text-secondary);
+}

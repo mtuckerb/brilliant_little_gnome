@@ -3,9 +3,15 @@ import { Link, useLocation } from "react-router-dom";
 import type { AuthStatus, SyncStatus } from "../types";
 import GnomeSync from "./GnomeSync";
 
-// iPhone-sized mobile shell. Matches the three frames Tucker drew in
-// pencil-new.pen (HDUr0 / c3DdR / NouE8): dark app bar on top, content
-// fills the middle, persistent bottom tab bar with four icons.
+// iPhone-sized mobile shell. Matches the three Pencil frames
+// (`Mobile Vision - Navigation` HDUr0, `Mobile Vision - Assignment` c3DdR,
+// `Mobile Vision - Calendar` NouE8): dark `appBar` on top, content fills
+// the middle, persistent `bottomNav` with four icons.
+//
+// All paint colors come from --pencil-* design tokens defined in
+// styles/pencil-tokens.css (which mirrors the .pen file's `variables`
+// block verbatim). The frame names appear here as className markers so
+// devtools maps directly back to the Pencil file.
 //
 // Phase 1: the existing pages render unchanged inside the content area —
 // they're already responsive enough to fit at 390px wide. Per-page mobile
@@ -25,6 +31,7 @@ interface Tab {
   matchPrefix: string;
 }
 
+// Pencil frame: bottomNav (HDUr0 children: navHome/navLearn/navInbox/navProfile).
 const TABS: Tab[] = [
   { to: "/dashboard", icon: "fa-book", label: "Courses", matchPrefix: "/dashboard" },
   { to: "/calendar", icon: "fa-calendar-days", label: "Calendar", matchPrefix: "/calendar" },
@@ -35,24 +42,25 @@ const TABS: Tab[] = [
 export default function MobileLayout({ auth, sync, children }: Props) {
   const location = useLocation();
   const authOk = !auth.degraded;
-  const authDot = auth.degraded ? "#C04A4A" : "#2C8F61";
+  const authDot = auth.degraded
+    ? "var(--pencil-danger)"
+    : "var(--pencil-success)";
 
   return (
     <div
+      className="pencil-mobile-shell"
       style={{
         display: "flex",
         flexDirection: "column",
         height: "100dvh",
         paddingTop: "env(safe-area-inset-top)",
         overflow: "hidden",
-        background: "#F4F5F7",
       }}
     >
       <header
+        className="pencil-appBar"
         style={{
           flex: "0 0 auto",
-          background: "#1F2A33",
-          color: "#FFFFFF",
           padding: "12px 14px",
           display: "flex",
           alignItems: "center",
@@ -64,7 +72,7 @@ export default function MobileLayout({ auth, sync, children }: Props) {
         <Link
           to="/dashboard"
           style={{
-            color: "#FFFFFF",
+            color: "var(--pencil-text-on-dark)",
             textDecoration: "none",
             display: "flex",
             alignItems: "center",
@@ -91,13 +99,14 @@ export default function MobileLayout({ auth, sync, children }: Props) {
         style={{
           flex: "1 1 auto",
           overflow: "auto",
-          background: "#F4F5F7",
+          background: "var(--pencil-bg-app)",
         }}
       >
         <div style={{ padding: "12px 12px 16px 12px" }}>{children}</div>
       </main>
 
       <nav
+        className="pencil-bottomNav"
         style={{
           flex: "0 0 auto",
           display: "flex",
@@ -105,8 +114,6 @@ export default function MobileLayout({ auth, sync, children }: Props) {
           alignItems: "center",
           padding: "8px 18px",
           paddingBottom: "max(8px, env(safe-area-inset-bottom))",
-          background: "#FFFFFF",
-          borderTop: "1px solid #D8DEE5",
         }}
       >
         {TABS.map((t) => {
@@ -115,18 +122,7 @@ export default function MobileLayout({ auth, sync, children }: Props) {
             <Link
               key={t.to}
               to={t.to}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 2,
-                textDecoration: "none",
-                color: active ? "#3D6691" : "#5A6573",
-                fontSize: 11,
-                fontWeight: active ? 700 : 500,
-                padding: "4px 6px",
-                minWidth: 56,
-              }}
+              className={`pencil-bottomNav-item${active ? " is-active" : ""}`}
             >
               <i className={`fas ${t.icon}`} style={{ fontSize: 18 }}></i>
               <span>{t.label}</span>
