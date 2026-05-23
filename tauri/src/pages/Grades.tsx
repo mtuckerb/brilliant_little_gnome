@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { GradeRow, GradeStats } from "../types";
 import { fmtNum, fmtPct } from "../lib/format";
+import { canSpeculateGrade, isActuallyGraded } from "../lib/grades";
 import CourseHeader from "../components/CourseHeader";
 
 function gradeColor(score: number | null): string {
@@ -158,12 +159,12 @@ export default function Grades() {
           </thead>
           <tbody>
             {grades.map((g) => {
-              const isActuallyGraded = g.is_graded && !g.is_expected;
-              const rowClass = g.hidden ? "has-background-white-ter has-text-grey-light" : (isActuallyGraded ? "" : "has-background-white-ter has-text-grey-light");
+              const actuallyGraded = isActuallyGraded(g);
+              const rowClass = g.hidden ? "has-background-white-ter has-text-grey-light" : (actuallyGraded ? "" : "has-background-white-ter has-text-grey-light");
               let result;
               if (editingId === g.id) {
                 result = renderExpectedInput(g);
-              } else if (isActuallyGraded && g.perc !== null) {
+              } else if (actuallyGraded && g.perc !== null) {
                 result = <span className={`tag ${gradeColor(g.perc)} is-light`} style={{ fontWeight: "bold" }}>{fmtPct(g.perc)}</span>;
               } else if (g.is_expected && g.expected_score !== null) {
                 result = (
@@ -175,7 +176,7 @@ export default function Grades() {
                     ~{fmtPct(g.expected_score)}
                   </a>
                 );
-              } else if (!g.manually_marked_ungraded) {
+              } else if (canSpeculateGrade(g)) {
                 result = (
                   <a
                     onClick={() => startEdit(g)}
@@ -190,7 +191,7 @@ export default function Grades() {
                 result = <>—</>;
               }
 
-              const points = isActuallyGraded ? `${fmtNum(g.numerator)} / ${fmtNum(g.denominator, 2, "-")}` :
+              const points = actuallyGraded ? `${fmtNum(g.numerator)} / ${fmtNum(g.denominator, 2, "-")}` :
                 g.is_expected ? `${fmtNum(g.numerator ?? 0)} / ${fmtNum(g.denominator ?? g.rel_weight, 2, "-")}` :
                 `- / ${fmtNum(g.denominator, 2, "-")}`;
 
