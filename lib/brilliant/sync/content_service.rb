@@ -1,106 +1,98 @@
 module Brilliant
   module Sync
     class ContentService < BaseService
-      def sync(course_id, toc)
-        modules_data = toc.is_a?(Hash) ? (toc['Modules'] || []) : toc
-        return unless modules_data.is_a?(Array)
-        
-        @all_modules_to_upsert = []
-        @all_items_to_upsert = []
-        @course_id = course_id.to_s
-        
-        process_module_tree(nil, modules_data)
-        
+      def sync_content_for_course(course)
         with_connection do
-          ActiveRecord::Base.transaction do
-            begin
-              # Detect new content items for notification (only if we already had some items, to avoid first-sync flood)
-              existing_ids = ContentItem.joins(:content_module).where(content_modules: { course_id: @course_id }).pluck(:brightspace_id).map(&:to_s)
-              
-              if existing_ids.any? && @all_items_to_upsert.any?
-                new_items = @all_items_to_upsert.select { |item| !existing_ids.include?(item[:brightspace_id].to_s) && !item[:is_hidden] }
-                if new_items.any?
-                  course = Course.find_by(org_unit_id: @course_id)
-                  new_items.each do |item|
-                    client.upsert_notification({
-                      id: "content_#{@course_id}_#{item[:brightspace_id]}",
-                      type: 'Content',
-                      title: "New Content: #{item[:title]}",
-                      body: "A new item has been added to #{course&.name || 'the course'}: #{item[:title]}",
-                      date: Time.current,
-                      course_id: @course_id,
-                      course_name: course&.name,
-                      urgency: 1,
-                      is_personal: false,
-                      url: "/course/#{@course_id}"
-                    })
-                  end
-                end
-              end
+          toc = client.get_toc(course.org_unit_id)
+          overview = client.get_overview(course.org_unit_id, force_refresh: true)
 
-              ContentModule.upsert_all(@all_modules_to_upsert, unique_by: :index_content_modules_on_course_and_bs_id) if @all_modules_to_upsert.any?
-              ContentItem.upsert_all(@all_items_to_upsert, unique_by: :index_content_items_on_module_and_bs_id) if @all_items_to_upsert.any?
-            rescue => e
-              puts "[Sync::ContentService] Batch upsert failed: #{e.message}"
+          ActiveRecord::Base.transaction do
+            refresh_course_overview(course, overview)
+            stale_module_ids = course.content_modules.pluck(:id)
+            synced_module_ids = []
+
+            toc.fetch("Modules", []).each do |module_data|
+              synced_module_ids.concat(sync_module(course, module_data))
             end
+
+            delete_stale_modules(course, stale_module_ids - synced_module_ids)
           end
+        end
+      end
+
+      def sync_all_content
+        Course.all.each do |course|
+          sync_content_for_course(course)
+        rescue => e
+          puts "Failed to sync content for #{course.name}: #{e.message}"
         end
       end
 
       private
 
-      def process_module_tree(parent_id, modules_data)
-        modules_data.each_with_index do |mod, index|
-          m_id = mod['ModuleId'].to_s
-          @all_modules_to_upsert << {
-            course_id: @course_id,
-            brightspace_id: m_id,
-            title: mod['Title'],
-            description: html_to_markdown(mod['Description']),
-            sort_order: index,
-            parent_id: parent_id,
-            updated_at: Time.current,
-            created_at: Time.current
-          }
+      def refresh_course_overview(course, overview)
+        course.update!(overview_raw: overview.to_json) if course.respond_to?(:overview_raw=)
+      end
 
-          # If TOC returned a module with no Topics, try fetching the module structure directly
-          topics = mod['Topics'] || []
-          if topics.empty? && m_id.present?
-            begin
-              structure = client.get_module_structure(@course_id, m_id)
-              if structure.is_a?(Array)
-                # Structure endpoint returns ContentObject items; filter to topics only (Type 1)
-                # and exclude sub-modules (Type 0) which have a 'Structure' key
-                topics = structure.reject { |item| item['Type'].to_i == 0 || item.key?('Structure') }
-                puts "[Sync::ContentService] Backfilled #{topics.size} topics for module #{m_id} (#{mod['Title']})" if topics.any?
-              end
-            rescue => e
-              puts "[Sync::ContentService] Module structure fetch failed for #{m_id}: #{e.message}"
-            end
-          end
+      def delete_stale_modules(course, stale_module_ids)
+        return if stale_module_ids.empty?
 
-          topics.each_with_index do |topic, t_index|
-            t_id = (topic['Identifier'] || topic['TopicId'] || topic['Id']).to_s
-            @all_items_to_upsert << {
-              module_id: m_id,
-              brightspace_id: t_id,
-              title: topic['Title'],
-              item_type: (topic['TypeIdentifier'] || topic['Type']).to_s,
-              url: topic['Url'],
-              is_hidden: topic['IsHidden'] || false,
-              sort_order: t_index,
-              attachments: [topic].to_json,
-              updated_at: Time.current,
-              created_at: Time.current
-            }
-
-            if topic['Url'] && (topic['Url'].start_with?('/content/enforced/') || topic['Url'].include?('/viewContent/'))
-              client.enqueue_attachment_task(@course_id, "content/topics/#{t_id}/file", t_id, topic['Title'])
-            end
-          end
-          
-          process_module_tree(m_id, mod['Modules']) if mod['Modules']
+        ContentModule.where(course_id: course.org_unit_id, id: stale_module_ids).find_each do |stale_module|
+          ContentItem.where(module_id: stale_module.brightspace_id).delete_all
+          stale_module.destroy!
         end
+      end
+
+      def sync_module(course, module_data, parent_id = nil)
+        module_record = ContentModule.find_or_initialize_by(
+          course_id: course.org_unit_id,
+          brightspace_id: module_data["ModuleId"]
+        )
+        module_record.assign_attributes(
+          title: module_data["Title"],
+          description: html_to_markdown(module_data["Description"]&.dig("Html")),
+          sort_order: module_data["SortOrder"],
+          parent_id: parent_id,
+          user_id: course.user_id
+        )
+        module_record.save!
+
+        stale_item_ids = ContentItem.where(module_id: module_record.brightspace_id).pluck(:id)
+        synced_item_ids = []
+        module_data["Topics"]&.each do |topic_data|
+          synced_item_ids << sync_topic(module_record, topic_data)
+        end
+
+        stale_item_ids -= synced_item_ids
+        ContentItem.where(module_id: module_record.brightspace_id, id: stale_item_ids).delete_all unless stale_item_ids.empty?
+
+        synced_module_ids = [module_record.id]
+
+        # Sync submodules recursively
+        module_data["Modules"]&.each do |submodule_data|
+          synced_module_ids.concat(sync_module(course, submodule_data, module_record.brightspace_id))
+        end
+
+        synced_module_ids
+      end
+
+      def sync_topic(module_record, topic_data)
+        item = ContentItem.find_or_initialize_by(
+          module_id: module_record.brightspace_id,
+          brightspace_id: topic_data["TopicId"]
+        )
+
+        item.assign_attributes(
+          title: topic_data["Title"],
+          item_type: topic_data["Type"],
+          url: topic_data["Url"],
+          is_hidden: topic_data["IsHidden"],
+          sort_order: topic_data["SortOrder"],
+          attachments: topic_data["Attachments"].to_json,
+          user_id: module_record.user_id
+        )
+        item.save!
+        item.id
       end
     end
   end
