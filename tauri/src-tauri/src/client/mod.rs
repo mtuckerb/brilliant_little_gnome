@@ -13,6 +13,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
+mod validation;
+pub use validation::{SessionValidation, SHARE_BLOCKED_INCONCLUSIVE, SHARE_BLOCKED_INVALID};
+
 pub const API_VERSION: &str = "1.40";
 const FRESH_CACHE_SECONDS: i64 = 600;
 const PAGE_SAFETY_LIMIT: usize = 2000;
@@ -63,6 +66,22 @@ impl BrightspaceClient {
     }
 
     pub fn is_degraded(&self) -> bool { *self.degraded.read() }
+
+    /// Validate a candidate Brightspace session key against the known-good
+    /// auth endpoint before it is shared/synced to another device. Reuses
+    /// the same `/users/whoami` liveness signal as `maybe_mark_auth_failure`,
+    /// but never logs the key and fails closed (a misconfigured or
+    /// unreachable endpoint yields `Inconclusive`, not `Valid`).
+    pub async fn validate_session(&self, host: &str, cookie: &str) -> SessionValidation {
+        let probe_url = match validation::validation_probe_url(host) {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::warn!("auth validation: cannot resolve probe url: {e}");
+                return SessionValidation::Inconclusive;
+            }
+        };
+        validation::probe_session(&self.http, &probe_url, cookie).await
+    }
 
     pub async fn store_credentials(
         &self,
@@ -115,6 +134,12 @@ impl BrightspaceClient {
     /// a paired device's credentials.
     pub fn emit_auth_captured(&self, host: &str) -> std::result::Result<(), tauri::Error> {
         self.app.emit("auth-captured", host)
+    }
+
+    /// Emit a non-secret, actionable auth-share failure message for UI paths
+    /// that adopt or publish credentials outside the primary login command.
+    pub fn emit_auth_share_blocked(&self, message: &str) -> std::result::Result<(), tauri::Error> {
+        self.app.emit("auth-share-blocked", message)
     }
 
     /// Probe `/users/whoami` to confirm the session is genuinely dead
