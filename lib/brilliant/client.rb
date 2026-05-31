@@ -176,6 +176,20 @@ class BrilliantClient
               sync_course_content(course_id, toc) if toc
               archive_cache(toc_path) if toc
 
+              # Refresh overview/syllabus metadata alongside course content so
+              # downstream view/download/Zotero flows do not retain expired
+              # Brightspace attachment URLs.
+              begin
+                overview = get_overview(course_id, force_refresh: true)
+                if overview
+                  course_record = Course.find_by(org_unit_id: course_id.to_s)
+                  course_record.update_columns(overview_raw: overview.to_json) if course_record
+                  puts "[Sync] Overview refreshed for #{course_id}"
+                end
+              rescue => overview_error
+                puts "[Sync] Overview refresh failed for #{course_id} (non-fatal): #{overview_error.message}"
+              end
+
               sleep 0.5
               @sync_status[:current_task] = "#{short_name} - Syncing Assignments..."
               assign_path = "/d2l/api/le/#{@api_version}/#{course_id}/dropbox/folders/"
