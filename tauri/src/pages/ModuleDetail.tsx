@@ -47,8 +47,28 @@ export default function ModuleDetail() {
     return modules.find((m) => m.brightspace_id === current.parent_id) ?? null;
   }, [current, modules]);
 
+  function isDownloadableFile(it: ContentItem) {
+    const type = it.item_type?.toLowerCase();
+    if (type) return type === "file";
+    return !it.url;
+  }
+
+  async function openItemInBrightspace(it: ContentItem) {
+    if (!courseId) return;
+    const url = it.url ?? (bsHost ? topicViewUrl(bsHost, courseId, it.brightspace_id) : null);
+    if (!url) {
+      setError(`${it.title}: Brightspace URL is not available.`);
+      return;
+    }
+    await api.openUrl(url);
+  }
+
   async function downloadItem(it: ContentItem) {
     if (!courseId) return;
+    if (!isDownloadableFile(it)) {
+      await openItemInBrightspace(it);
+      return;
+    }
     const key = `item:${it.id}`;
     setDownloading((s) => ({ ...s, [key]: true }));
     setError(null);
@@ -77,7 +97,7 @@ export default function ModuleDetail() {
   }
 
   async function sendItemToZotero(it: ContentItem) {
-    if (!courseId) return;
+    if (!courseId || !isDownloadableFile(it)) return;
     const key = `item:${it.id}`;
     setZoteroBusy((s) => ({ ...s, [key]: true }));
     await runZotero(toast, it.title, () =>
@@ -197,38 +217,42 @@ export default function ModuleDetail() {
           <p className="has-text-grey is-size-7">No items in this module.</p>
         ) : (
           <ul>
-            {items.map((it) => (
-              <li key={it.id} className="py-2 is-flex is-align-items-center" style={{ gap: 8, borderTop: "1px solid #f0f0f0" }}>
-                <span className="icon is-small has-text-grey"><i className="far fa-file"></i></span>
-                {it.url ? (
-                  <a href={it.url} target="_blank" rel="noopener noreferrer">{it.title}</a>
-                ) : (
-                  <span>{it.title}</span>
-                )}
-                {it.item_type && <span className="tag is-light is-small">{it.item_type}</span>}
-                {it.is_hidden && <span className="tag is-light is-small">hidden</span>}
-                <button
-                  className="button is-small is-white ml-auto"
-                  title="Download this file"
-                  disabled={downloading[`item:${it.id}`]}
-                  onClick={() => downloadItem(it)}
-                >
-                  <span className="icon is-small">
-                    <i className={`fas ${downloading[`item:${it.id}`] ? "fa-circle-notch fa-spin" : "fa-download"}`}></i>
-                  </span>
-                </button>
-                <button
-                  className="button is-small is-white"
-                  title="Send this file to Zotero"
-                  disabled={zoteroBusy[`item:${it.id}`]}
-                  onClick={() => sendItemToZotero(it)}
-                >
-                  <span className="icon is-small">
-                    <i className={`fas ${zoteroBusy[`item:${it.id}`] ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i>
-                  </span>
-                </button>
-              </li>
-            ))}
+            {items.map((it) => {
+              const downloadable = isDownloadableFile(it);
+              const itemKey = `item:${it.id}`;
+              return (
+                <li key={it.id} className="py-2 is-flex is-align-items-center" style={{ gap: 8, borderTop: "1px solid #f0f0f0" }}>
+                  <span className="icon is-small has-text-grey"><i className="far fa-file"></i></span>
+                  {it.url ? (
+                    <a href={it.url} target="_blank" rel="noopener noreferrer">{it.title}</a>
+                  ) : (
+                    <span>{it.title}</span>
+                  )}
+                  {it.item_type && <span className="tag is-light is-small">{it.item_type}</span>}
+                  {it.is_hidden && <span className="tag is-light is-small">hidden</span>}
+                  <button
+                    className="button is-small is-white ml-auto"
+                    title={downloadable ? "Download this file" : "Open in Brightspace"}
+                    disabled={downloading[itemKey]}
+                    onClick={() => downloadItem(it)}
+                  >
+                    <span className="icon is-small">
+                      <i className={`fas ${downloading[itemKey] ? "fa-circle-notch fa-spin" : downloadable ? "fa-download" : "fa-up-right-from-square"}`}></i>
+                    </span>
+                  </button>
+                  <button
+                    className="button is-small is-white"
+                    title={downloadable ? "Send this file to Zotero" : "Only downloadable files can be sent to Zotero"}
+                    disabled={!downloadable || zoteroBusy[itemKey]}
+                    onClick={() => sendItemToZotero(it)}
+                  >
+                    <span className="icon is-small">
+                      <i className={`fas ${zoteroBusy[itemKey] ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
