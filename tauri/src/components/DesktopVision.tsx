@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { AuthStatus, SyncStatus } from "../types";
-import SidebarCourseList from "./SidebarCourseList";
+import CourseRows from "./CourseRows";
 import StatusBar from "./StatusBar";
 import GnomeSync from "./GnomeSync";
 
@@ -18,7 +18,7 @@ interface Props {
 
 const SIDEBAR_WIDTH = 240;
 
-export default function DesktopLayout({ auth, sync, onAuthChange, children }: Props) {
+export default function DesktopVision({ auth, sync, onAuthChange, children }: Props) {
   const [search, setSearch] = useState("");
   const location = useLocation();
 
@@ -54,7 +54,7 @@ export default function DesktopLayout({ auth, sync, onAuthChange, children }: Pr
           }}
         >
           <SidebarBrand sync={sync} authOk={authOk} />
-          <SidebarCourseList filter={search} />
+          <CourseRows filter={search} />
           <SidebarFooter
             search={search}
             onSearchChange={setSearch}

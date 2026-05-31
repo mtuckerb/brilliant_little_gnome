@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { DiscussionForum, DiscussionTopic } from "../types";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { discussionForumUrl, discussionTopicUrl } from "../lib/brightspace";
 import RichText from "../components/RichText";
@@ -46,7 +46,7 @@ export default function Discussions() {
 
   return (
     <div>
-      {courseId && <CourseHeader courseId={courseId} />}
+      {courseId && <HeaderBand courseId={courseId} />}
       <div className="is-flex is-align-items-center is-flex-wrap-wrap mb-3" style={{ gap: 8 }}>
         <h1 className="title mb-0"><i className="fas fa-comments mr-2"></i>Discussions</h1>
         <span style={{ flex: "1 1 auto" }} />

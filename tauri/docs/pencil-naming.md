@@ -1,21 +1,32 @@
 # Pencil → Code Naming Map
 
-This document is the canonical mapping from frames in
+Canonical mapping from frames in
 [`docs/brilliant_ui.pen`](../../docs/brilliant_ui.pen) (Pencil v2.11) to the
 React components, CSS classes, and design tokens that implement them in
 `tauri/src/`.
 
-The Pencil file is the **source of truth** for both visuals and naming. If
-you change a frame name, color variable, or layout in the `.pen` file,
-update the corresponding identifier here and in code. Conversely, do not
-rename a component or class on the code side without updating the Pencil
-file and this table.
+The Pencil file is the **source of truth** for both visuals and naming. If you
+change a frame name, color variable, or layout in the `.pen` file, update the
+corresponding identifier here and in code — and vice versa.
+
+## Naming rules (from the task AC)
+
+- **kebab-case** Pencil frame names stay kebab-case as CSS classes
+  (`course-rows` → `.pencil-course-row`).
+- **camelCase** Pencil frame names stay camelCase as JS state / props and CSS
+  classes (`appBar` → `.pencil-appBar`, `semesterCoursesPanel` →
+  `.pencil-semesterCoursesPanel`).
+- **React component files** use the PascalCase form of the frame they root
+  (`Desktop Vision` → `DesktopVision.tsx`).
+- A component is renamed **only** when a frame maps to it *directly and
+  verifiably*; components with no corresponding frame keep their existing name
+  (see "Intentionally unchanged" below).
 
 ## Design tokens
 
 Defined in [`tauri/src/styles/pencil-tokens.css`](../src/styles/pencil-tokens.css)
-as CSS custom properties prefixed `--pencil-*`. The palette block mirrors
-the `variables` object at the top of `brilliant_ui.pen` verbatim.
+as CSS custom properties prefixed `--pencil-*`. The palette block mirrors the
+`variables` object at the top of `brilliant_ui.pen` verbatim.
 
 | Pencil variable           | CSS custom property                | Hex      |
 | ------------------------- | ---------------------------------- | -------- |
@@ -36,136 +47,115 @@ the `variables` object at the top of `brilliant_ui.pen` verbatim.
 | `$text-secondary`         | `--pencil-text-secondary`          | #5A6573  |
 | `$warn`                   | `--pencil-warn`                    | #D4A437  |
 
-Typography (`--pencil-font-*`) and radii (`--pencil-radius-*`) derive from
-the `fontSize` / `cornerRadius` values observed in the `.pen` frames; they
-are documented in the CSS file itself.
+Typography (`--pencil-font-*`) and radii (`--pencil-radius-*`) derive from the
+`fontSize` / `cornerRadius` values in the `.pen` frames; both ladders are
+defined at the top of the CSS file.
+
+## Renamed this pass (file/component renames)
+
+| Pencil frame (line in `.pen`) | Old file                          | New file                         | Component fn       |
+| ----------------------------- | --------------------------------- | -------------------------------- | ------------------ |
+| `Desktop Vision` (L9)         | `components/DesktopLayout.tsx`    | `components/DesktopVision.tsx`   | `DesktopVision`    |
+| `course-rows` (L3015)         | `components/SidebarCourseList.tsx`| `components/CourseRows.tsx`      | `CourseRows`       |
+| `HeaderBand` (L669)           | `components/CourseHeader.tsx`     | `components/HeaderBand.tsx`      | `HeaderBand`       |
+| `Due soon` (L1475)            | *(none — newly created)*          | `components/DueSoon.tsx`         | `DueSoon`          |
+
+Import sites updated for every rename:
+
+- `DesktopVision`: `App.tsx` import + the `Shell` ternary; comment in
+  `hooks/useIsMobile.ts`.
+- `CourseRows`: `components/DesktopVision.tsx` import + `<CourseRows />` usage.
+- `HeaderBand`: all 10 course-scoped pages that render it
+  (`AssignmentDetail`, `Assignments`, `CourseAnnouncements`, `CourseDetail`,
+  `CourseSearch`, `Discussions`, `DiscussionTopic`, `Grades`, `ModuleDetail`,
+  `Modules`) plus the comment in `styles.css`.
+- `DueSoon`: imported and rendered in `pages/Dashboard.tsx` (desktop branch).
+
+### `DueSoon.tsx` — note on "extraction"
+
+The AC says the Dashboard "Due soon" panel is *extracted* to `DueSoon.tsx`.
+There was **no inline Due soon panel** anywhere in the code to extract — the
+prior pass's mapping that pointed `Due soon` at a `CourseDetail.tsx` card was
+inaccurate (no such card exists). The Pencil `Due soon` frame
+(`Desktop Vision > rightCol`, id `RLKQX`) had simply never been implemented.
+
+`DueSoon.tsx` therefore **realizes** that frame as a dashboard widget. It does
+not add a new data flow: it reads the same already-synced assignment rows the
+Calendar page streams (`api.listCourses` + `api.listAssignments`), filters to
+upcoming (≤14 days) incomplete items, and renders the next five — matching the
+frame's `dueHdr` + `due<n>` structure. No new backend command. It is placed at
+the top of the desktop Dashboard content (not as a separate `rightCol`) so the
+existing drag-to-reorder course tables keep working unchanged; the full
+two-column `leftCol`/`rightCol` restructure is intentionally out of scope to
+avoid regressing that behavior.
 
 ## Frame map
 
-### Desktop Vision (`bi8Au`)
+### Desktop Vision (`bi8Au`, L9)
 
-| Pencil frame      | Implementation                                               |
-| ----------------- | ------------------------------------------------------------ |
-| `Desktop Vision`  | `tauri/src/components/DesktopLayout.tsx` (root container)    |
-| `TitleBar`        | `DesktopLayout > TitleBar` + `.pencil-TitleBar`              |
-| `Shell`           | DesktopLayout flex row wrapping `Sidebar` + `MainPane`       |
-| `Sidebar`         | DesktopLayout `<aside class="pencil-Sidebar">`               |
-| `semHdr1` / `semHdr2` | `SidebarCourseList` group label → `.pencil-semHdr`       |
-| `Row <code>` / `row<n>` | `SidebarCourseList` Link rows → `.pencil-sidebar-row` (`.is-active`) |
-| `ic<n>`           | The color swatch `<span>` to the left of each sidebar row    |
-| `sbSpacer`        | `<div style={{ flex: 1 }} />` implicit in flex layout        |
-| `sbFoot`          | `DesktopLayout > SidebarFooter` (icon row)                   |
-| `sbSearch` / `sbSearchBox` | `SidebarFooter` search wrapper → `.pencil-sbSearchBox` |
-| `MainPane`        | DesktopLayout `<main class="pencil-MainPane">`               |
-| `Banner`          | Per-page header banner (`pages/CourseDetail.tsx` etc — Phase 2 follow-up) |
-| `HeaderBand`      | `components/CourseHeader.tsx`                                |
-| `codePill`        | `CourseHeader` course-code chip                              |
-| `titleWrap`       | `CourseHeader` title block                                   |
-| `hdrActions` / `btnSync` / `btnDl` | `CourseHeader` action buttons               |
-| `Tabs` / `tab<n>` | `components/CourseNav.tsx`                                   |
-| `Content`         | Page-specific content under CourseNav                        |
-| `leftCol` / `rightCol` | `pages/CourseDetail.tsx` two-column layout              |
-| `Syllabus card`   | `components/SyllabusPanel.tsx`                               |
-| `Settings card`   | `pages/CourseDetail.tsx` course-settings card                |
-| `Due soon`        | `pages/CourseDetail.tsx` due-soon card                       |
-| `Grade now`       | `pages/CourseDetail.tsx` current-grade card                  |
-| `StatusBar`       | `components/StatusBar.tsx` → `.pencil-StatusBar`             |
+| Pencil frame          | Implementation                                                        |
+| --------------------- | --------------------------------------------------------------------- |
+| `Desktop Vision`      | `components/DesktopVision.tsx` (root shell)                           |
+| `TitleBar` (L20)      | `DesktopVision > TitleBar` + `.pencil-TitleBar`                       |
+| `Shell` (L132)        | `DesktopVision` flex row wrapping `Sidebar` + `MainPane`              |
+| `Sidebar` (L139)      | `DesktopVision <aside class="pencil-Sidebar">`                        |
+| `semHdr1` / `semHdr2` | `CourseRows` group label → `.pencil-semHdr`                           |
+| sidebar rows          | `CourseRows` `<Link>` rows → `.pencil-sidebar-row` (`.is-active`)     |
+| `MainPane` (L636)     | `DesktopVision <main class="pencil-MainPane">`                        |
+| `HeaderBand` (L669)   | `components/HeaderBand.tsx` (course header band, all course pages)    |
+| `Due soon` (L1475)    | `components/DueSoon.tsx` → `.pencil-DueSoon` / `.pencil-dueHdr` / `.pencil-due-row` |
+| `Tabs` (Desktop)      | `components/CourseNav.tsx` (see "Intentionally unchanged")            |
+| `StatusBar` (L1816)   | `components/StatusBar.tsx` → `.pencil-StatusBar`                      |
 
-### Mobile Vision - Navigation (`HDUr0`)
+### Mobile Vision - Navigation (`HDUr0`, L1945)
 
-| Pencil frame                        | Implementation                                           |
-| ----------------------------------- | -------------------------------------------------------- |
-| `Mobile Vision - Navigation`        | `MobileLayout` rendering `<Dashboard isMobile />`        |
-| `appBar` / `appTitleWrap`           | `<header class="pencil-appBar">` in `MobileLayout`       |
-| `appTitle` / `appSub`               | `Dashboard.MobileDashboard` title block → `.pencil-appTitle`, `.pencil-appSub` |
-| `actions` / `notif` / `avatar`      | Right-side controls in `MobileLayout` app bar            |
-| `statsRow` / `st<n>` / `st<n>v` / `st<n>l` | `MobileDashboard` stats row → `.pencil-statsRow`, `.pencil-stat`, `.pencil-stat-value`, `.pencil-stat-label` |
-| `sectionTabs` / `tab<n>` / `tab<n>t` / `tab<n>u` | (Phase 2 — currently rendered as semester chips below) |
-| `semesterCoursesPanel`              | `MobileDashboard` card → `.pencil-semesterCoursesPanel`  |
-| `panelHeader`                       | Panel header row inside `pencil-semesterCoursesPanel`    |
-| `semesterSelector` / `semActive` / `semOther<n>` | Semester chip row → `.pencil-semester-chip` (`.is-active`) |
-| `courseRow<n>`                      | `MobileDashboard` course list → `.pencil-course-row`     |
-| `row<n>Title`                       | → `.pencil-course-row-title`                             |
-| `row<n>Meta`                        | → `.pencil-course-row-meta` (`.is-danger` / `.is-warn` / `.is-success`) |
-| `row<n>Grade`                       | Inline grade label inside `.pencil-course-row`           |
-| `spacer`                            | Implicit; the `<main>` flex child consumes the space     |
-| `bottomNav` / `navHome` / `navLearn` / `navInbox` / `navProfile` | `<nav class="pencil-bottomNav">` in `MobileLayout`, items → `.pencil-bottomNav-item` (`.is-active`) |
-| `navHomeDot` / `navHomeTxt`         | Active-tab marker — handled by `.is-active` modifier     |
+| Pencil frame                        | Implementation                                                |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `Mobile Vision - Navigation`        | `MobileLayout` rendering the mobile `Dashboard` branch        |
+| `appBar` (L1962) / `appTitleWrap`   | `<header class="pencil-appBar">` in `MobileLayout`            |
+| `appTitle` (L1981) / `appSub`       | `Dashboard.MobileDashboard` title block → `.pencil-appTitle`, `.pencil-appSub` |
+| `statsRow`                          | `MobileDashboard` → `.pencil-statsRow` / `.pencil-stat` / `.pencil-stat-value` / `.pencil-stat-label` |
+| `semesterCoursesPanel`              | `MobileDashboard` card → `.pencil-semesterCoursesPanel`       |
+| semester chips                      | `MobileDashboard` chip row → `.pencil-semester-chip` (`.is-active`) |
+| `courseRow<n>`                      | `MobileDashboard` course list → `.pencil-course-row` / `-title` / `-meta` |
+| `bottomNav` (L2582)                 | `<nav class="pencil-bottomNav">` in `MobileLayout`, items → `.pencil-bottomNav-item` (`.is-active`) |
 
-### Mobile Vision - Assignment (`c3DdR`)
+### Mobile Vision - Assignment (`c3DdR`, L2661)
 
-| Pencil frame                        | Implementation                                           |
-| ----------------------------------- | -------------------------------------------------------- |
-| `Mobile Vision - Assignment`        | `pages/AssignmentDetail.tsx` rendered inside `MobileLayout` |
-| `appbar` / `back` / `title` / `menu` | Page-level back button + title (`AssignmentDetail`)     |
-| `content`                           | Page body wrapper                                        |
-| `course`                            | Course-code sub-header → `.pencil-assn-course`           |
-| `assn`                              | Assignment title → `.pencil-assn`                        |
-| `meta` / `due` / `dot` / `pts`      | Meta row → `.pencil-assn-meta-due`, `.pencil-assn-meta-pts` |
-| `summary`                           | Assignment description paragraph                         |
-| `actions` / `openbtn` / `subbtn`    | Action buttons (View Rubric / Submit Assignment)         |
-| `semester-courses` / `semester-wrap` / `semester-label` / `semester-chips` | Bottom-of-page semester picker (mirrors mobile dashboard) |
-| `spring-2026` / `fall-2025` / `summer-2025` | Individual semester chips                       |
-| `course-rows` / `course-row-1..N`   | Re-used `.pencil-course-row` markup                      |
-| `foot` / `home` / `assign` / `chat` | `MobileLayout.pencil-bottomNav` (`assign` = Coursework tab) |
+| Pencil frame                        | Implementation                                                |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `Mobile Vision - Assignment`        | `pages/AssignmentDetail.tsx` inside `MobileLayout`            |
+| `appbar` (L2678)                    | Page-level back button + title                                |
+| `assn` / `meta` / `due` / `pts`     | → `.pencil-assn`, `.pencil-assn-meta-due`, `.pencil-assn-meta-pts` |
+| `course-rows` (L3015) / `course-row-1..N` | `.pencil-course-row` markup (shared with mobile dashboard) |
+| `bottomNav`                         | `.pencil-bottomNav` (shared)                                  |
 
-### Mobile Vision - Calendar (`NouE8`)
+### Mobile Vision - Calendar (`NouE8`, L3256)
 
-| Pencil frame                        | Implementation                                           |
-| ----------------------------------- | -------------------------------------------------------- |
-| `Mobile Vision - Calendar`          | `pages/Calendar.tsx` rendered inside `MobileLayout`      |
-| `appBar` / `appTitleWrap` / `appTitle` / `appSub` | `Calendar` page header                     |
-| `actions` / `notif` / `avatar`      | `MobileLayout` header right-side controls                |
-| `content` / `spacer`                | Calendar body wrapper                                    |
-| `bottomNav` + `navCourses` / `navCalendar` / `navAlerts` / `navGrades` | `.pencil-bottomNav` shared with Navigation frame |
-| `head`                              | "Upcoming Due Dates" header inside the timeline body     |
-| `timeline` / `row<n>` / `rail<n>` / `body<n>` / `gap<n>` | `Calendar` timeline rows (Phase 2 polish)|
+| Pencil frame                        | Implementation                                                |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `Mobile Vision - Calendar`          | `pages/Calendar.tsx` inside `MobileLayout`                    |
+| `appBar` (L3273) / `appTitleWrap` / `appTitle` (L3292) | `Calendar` page header              |
+| `bottomNav` (L3364)                 | `.pencil-bottomNav` (shared)                                  |
 
-## Naming conventions
+## Intentionally unchanged (with rationale)
 
-* **React component file**: PascalCase form of the parent Pencil frame
-  name (e.g. `MobileLayout.tsx` ≈ `Mobile Vision` family,
-  `SidebarCourseList.tsx` ≈ `Sidebar` rows).
-* **CSS class**: `pencil-<frame-name>` with the Pencil identifier preserved
-  byte-for-byte (camelCase or kebab-case as Pencil wrote it). Active /
-  variant state is `.is-active`, `.is-danger`, `.is-warn`, `.is-success`.
-* **Inline color / radius**: prefer `var(--pencil-*)` over hex literals.
-  When a literal is unavoidable (e.g. a Pencil-only one-off such as the
-  `#C2410C` due-today orange in `assn-meta-due`), leave an inline comment
-  noting the source frame.
+These files keep their current names. Each was checked against the `.pen`
+frame list before deciding *not* to rename.
 
-## What was deliberately *not* renamed
+| File                          | Why it is not renamed                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------- |
+| `components/StatusBar.tsx`    | Already matches the verbatim `StatusBar` frame (L1816). Verified it is **not** `appBar`/`bottomNav` — those are *mobile* frames (L1962/L2582/L3273/L3364); `StatusBar` is the desktop bottom strip. No rename needed. |
+| `components/MobileLayout.tsx` | There is **no single mobile root frame** to rename to. The `.pen` has three per-screen frames (`Mobile Vision - Navigation` / `- Assignment` / `- Calendar`); `MobileLayout` is the reusable chrome shell (appBar + content + bottomNav) that has no standalone frame. `appBar`/`bottomNav` are applied as `.pencil-*` classes inside it. |
+| `components/CourseNav.tsx`    | Maps to the `Tabs` frame, but `Tabs.tsx` is too generic a filename (collision-prone) and `Tabs` is a sub-region, not a screen root. The `Tabs` identity is carried by the `.pencil-tab*` classes instead. |
+| Page components (`Dashboard`, `Calendar`, `Settings`, `Grades`, `Assignments`, etc.) | Route-level components named after the *route*, not a design frame. They render the relevant `Mobile Vision - *` screens via CSS classes; no 1:1 frame justifies a file rename. |
 
-The original React component names (`DesktopLayout`, `MobileLayout`,
-`SidebarCourseList`, `StatusBar`, `Dashboard` etc) describe the *role*
-the component plays in the routing tree. They are not Pencil frame names
-but their *contents* now expose Pencil identifiers via classNames. The
-acceptance criterion ("rename components/files/identifiers to Pencil
-frame names where a direct mapping exists") is satisfied by the className
-contract above — those identifiers grep cleanly back into
-`docs/brilliant_ui.pen` without churn to import paths across the
-codebase.
+## Build / test status
 
-Files that *do* map 1-to-1 to a Pencil frame keep their existing names:
-
-* `components/StatusBar.tsx` ↔ `StatusBar` frame (Desktop)
-* `components/SidebarCourseList.tsx` ↔ `Sidebar` rows (Desktop)
-* `components/CourseHeader.tsx` ↔ `HeaderBand` (Desktop)
-* `components/CourseNav.tsx` ↔ `Tabs` (Desktop)
-* `pages/Calendar.tsx` ↔ `Mobile Vision - Calendar` (Mobile)
-* `pages/AssignmentDetail.tsx` ↔ `Mobile Vision - Assignment` (Mobile)
-* `pages/Dashboard.tsx` (mobile branch) ↔ `Mobile Vision - Navigation`
-
-## Workflow
-
-1. Inspect the `.pen` file via the Pencil MCP at
-   `http://10.1.0.31:8000/servers/pencil/sse` (or by reading
-   `docs/brilliant_ui.pen` as JSON — that's what the file is under the
-   hood; the `version` field is `"2.11"` and `variables` lives at the top).
-2. When you add a new frame, give it a stable, kebab- or camelCase name.
-3. Add the matching `--pencil-*` token (if it introduces a new color)
-   and a `.pencil-<name>` class in `tauri/src/styles/pencil-tokens.css`.
-4. Update this file's frame map.
-
-Keeping the mapping inside this repo means the inverse — code → Pencil —
-is one `grep -r pencil- tauri/src` away.
+- `npm run build` (`tsc && vite build`): **passes**.
+- `npm test` (`vitest run`): **passes** (6 tests; none reference the renamed
+  components).
+- `npm run dev` / `dev:ios` / `ios:build`: see the PR description for
+  environment status — the iOS toolchain (Xcode) is not available in the
+  headless agent worktree, so `dev:ios` / `ios:build` are documented as unrun
+  there; `vite build` exercises the same web bundle the iOS WebView loads.

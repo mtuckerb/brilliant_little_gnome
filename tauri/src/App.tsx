@@ -4,7 +4,7 @@ import { parseCoursePath, recordCourseVisit } from "./lib/courseLastTab";
 import { listen } from "@tauri-apps/api/event";
 import { api, onAppEvent } from "./api";
 import type { AuthStatus, SyncStatus } from "./types";
-import DesktopLayout from "./components/DesktopLayout";
+import DesktopVision from "./components/DesktopVision";
 import MobileLayout from "./components/MobileLayout";
 import { useIsMobile } from "./hooks/useIsMobile";
 import Dashboard from "./pages/Dashboard";
@@ -104,7 +104,7 @@ function AppInner() {
     );
   }
 
-  const Shell = isMobile ? MobileLayout : DesktopLayout;
+  const Shell = isMobile ? MobileLayout : DesktopVision;
   return (
     <Shell auth={auth} sync={sync} onAuthChange={setAuth}>
       <CourseTabRecorder />

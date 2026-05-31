@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 // Track whether the viewport is in the mobile range. 640px is the standard
 // "phone" cutoff — below it we render MobileLayout, above we render
-// DesktopLayout. The hook subscribes to resize so the shell swaps live
+// DesktopVision. The hook subscribes to resize so the shell swaps live
 // during window dragging on a desktop (helpful during the iPad-on-the-side
 // kind of workflow Tucker does).
 

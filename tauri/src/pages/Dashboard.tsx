@@ -5,6 +5,7 @@ import { courseLabel, displayCourseCode, displayCourseName, displayCourseSemeste
 import { getLastCoursePath } from "../lib/courseLastTab";
 import { compareSemestersDesc, parseSemester } from "../lib/semester";
 import { useIsMobile } from "../hooks/useIsMobile";
+import DueSoon from "../components/DueSoon";
 
 export default function Dashboard() {
   const [courses, setCourses] = useState<Course[] | null>(null);
@@ -177,6 +178,8 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      <DueSoon />
 
       {orderedSemesters.map((sem) => {
         const list = bySemester[sem];

@@ -281,3 +281,67 @@
   font-size: var(--pencil-font-xs);
   color: var(--pencil-text-secondary);
 }
+
+/* --- Desktop Vision > Due soon (frame RLKQX) --------------------- */
+
+.pencil-DueSoon {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--pencil-bg-pane);
+  border: 1px solid var(--pencil-border-soft);
+  border-radius: var(--pencil-radius-lg);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.pencil-dueHdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pencil-dueHdr .icon {
+  color: var(--pencil-text-secondary);
+}
+
+.pencil-dueHdr-label {
+  font-size: var(--pencil-font-md);
+  font-weight: 600;
+  color: var(--pencil-text-primary);
+}
+
+.pencil-due-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--pencil-bg-pane-alt);
+  border-radius: var(--pencil-radius-md);
+  padding: 10px 8px;
+  text-decoration: none;
+}
+
+.pencil-due-row-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pencil-due-row-title {
+  font-size: var(--pencil-font-sm);
+  font-weight: 600;
+  color: var(--pencil-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pencil-due-row-meta {
+  font-size: var(--pencil-font-xs);
+  color: var(--pencil-text-secondary);
+}
+
+.pencil-due-row-meta.is-warn {
+  color: var(--pencil-warn);
+}

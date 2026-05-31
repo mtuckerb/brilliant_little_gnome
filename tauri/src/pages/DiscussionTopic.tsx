@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { DiscussionPost, DiscussionTopic as DTopic } from "../types";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { discussionTopicUrl } from "../lib/brightspace";
 import RichText from "../components/RichText";
@@ -133,7 +133,7 @@ export default function DiscussionTopicPage() {
 
   return (
     <div>
-      {courseId && <CourseHeader courseId={courseId} />}
+      {courseId && <HeaderBand courseId={courseId} />}
       <div className="mb-3">
         <Link to={`/course/${courseId}/discussions`} className="is-size-7">
           <i className="fas fa-arrow-left mr-1"></i>back to discussions

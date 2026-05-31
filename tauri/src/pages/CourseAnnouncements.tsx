@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../api";
 import type { Notification } from "../types";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 import RichText from "../components/RichText";
 import SyntheticTaskModal from "../components/SyntheticTaskModal";
 
@@ -53,7 +53,7 @@ export default function CourseAnnouncements() {
 
   return (
     <div>
-      {id && <CourseHeader courseId={id} />}
+      {id && <HeaderBand courseId={id} />}
 
       <div className="box">
         <div className="is-flex is-justify-content-space-between is-align-items-center mb-3">

@@ -5,7 +5,7 @@ import { type Course } from "../types";
 import SyllabusPanel from "../components/SyllabusPanel";
 import SyntheticTasksPanel from "../components/SyntheticTasksPanel";
 import { triggerDownload } from "../lib/download";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 import { runZotero } from "../lib/zotero";
 import { useToast } from "../components/ToastProvider";
 
@@ -118,7 +118,7 @@ export default function CourseDetail() {
 
   return (
     <div>
-      <CourseHeader courseId={course.org_unit_id} onCourseUpdated={setCourse} />
+      <HeaderBand courseId={course.org_unit_id} onCourseUpdated={setCourse} />
 
       <div className="is-flex is-align-items-center is-flex-wrap-wrap mb-4" style={{ gap: 12 }}>
         <label className="is-flex is-align-items-center" style={{ gap: 8 }}>

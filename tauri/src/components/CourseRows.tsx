@@ -22,7 +22,7 @@ interface Group {
   courses: Course[];
 }
 
-export default function SidebarCourseList({ filter }: Props) {
+export default function CourseRows({ filter }: Props) {
   const [courses, setCourses] = useState<Course[]>([]);
   const location = useLocation();
   const activeCourseId = parseCoursePath(location.pathname)?.courseId ?? null;
