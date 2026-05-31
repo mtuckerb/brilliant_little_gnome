@@ -31,8 +31,11 @@ pub async fn setup_cookies(
         .client
         .store_credentials(&state.pool, &host, &cookie_string, uid.as_deref(), user_id.as_deref())
         .await?;
+    // Pre-share validation gates the device sync: the key is stored locally
+    // above, but is only shared to peers if it validates as live. A failure
+    // here surfaces an actionable, key-free error to the caller.
     #[cfg(feature = "p2p")]
-    state.mirror_credentials_to_loro().await;
+    state.mirror_credentials_to_loro().await?;
     Ok(AuthStatus {
         authenticated: state.client.is_configured(),
         degraded: state.client.is_degraded(),
@@ -67,6 +70,22 @@ pub async fn export_auth(state: AppStateArg<'_>) -> Result<AuthExport> {
         .client
         .cookie_clone()
         .ok_or_else(|| AppError::Other("Not signed in — nothing to export".into()))?;
+    // Manual paste-export is also a share path: validate the key against the
+    // known-good auth endpoint before handing it out, and fail closed.
+    use crate::client::SessionValidation;
+    match state.client.validate_session(&host, &cookie).await {
+        SessionValidation::Valid => {}
+        SessionValidation::Invalid => {
+            return Err(AppError::BadRequest(
+                crate::client::SHARE_BLOCKED_INVALID.into(),
+            ))
+        }
+        SessionValidation::Inconclusive => {
+            return Err(AppError::Other(
+                crate::client::SHARE_BLOCKED_INCONCLUSIVE.into(),
+            ))
+        }
+    }
     Ok(AuthExport { host, cookie })
 }
 
@@ -135,8 +154,14 @@ pub async fn open_login_window(app: AppHandle, host: String) -> Result<()> {
                         let cookie_str = all.join("; ");
                         let st = app_for_task.state::<std::sync::Arc<crate::state::AppState>>();
                         let _ = st.client.store_credentials(&st.pool, &host_for_task, &cookie_str, None, None).await;
+                        // Validate-before-share also gates this capture path,
+                        // not just the primary command path. If the freshly
+                        // captured key fails validation it is not shared; emit
+                        // an actionable, key-free event so the UI can react.
                         #[cfg(feature = "p2p")]
-                        st.mirror_credentials_to_loro().await;
+                        if let Err(e) = st.mirror_credentials_to_loro().await {
+                            let _ = app_for_task.emit("auth-share-blocked", e.to_string());
+                        }
                         let _ = app_for_task.emit("auth-captured", &host_for_task);
                         let _ = win.close();
                         break;

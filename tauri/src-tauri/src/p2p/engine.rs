@@ -26,6 +26,7 @@
 
 #![allow(dead_code)]
 
+use crate::client::SessionValidation;
 use crate::error::{AppError, Result};
 use crate::p2p::bridge::Bridge;
 use crate::p2p::doc::SyncDoc;
@@ -614,6 +615,25 @@ async fn handle_inbound(
                 warn!("ignoring BootstrapCredentials: no pool wired");
                 return;
             };
+            match client.validate_session(&host, &cookie).await {
+                SessionValidation::Valid => {}
+                SessionValidation::Invalid => {
+                    warn!(
+                        "rejected BootstrapCredentials from {from}: Brightspace auth validation failed"
+                    );
+                    let _ = client.emit_auth_share_blocked(crate::client::SHARE_BLOCKED_INVALID);
+                    return;
+                }
+                SessionValidation::Inconclusive => {
+                    warn!(
+                        "rejected BootstrapCredentials from {from}: Brightspace auth validation inconclusive"
+                    );
+                    let _ =
+                        client.emit_auth_share_blocked(crate::client::SHARE_BLOCKED_INCONCLUSIVE);
+                    return;
+                }
+            }
+
             match client
                 .store_credentials(
                     pool,

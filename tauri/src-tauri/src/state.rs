@@ -54,34 +54,49 @@ impl AppState {
     }
 
     /// Push the current Brightspace cookie + host into the Loro doc so
-    /// paired peers pick up the fresh session. Called after every
-    /// `store_credentials` so the aggregate session lifetime across the
-    /// device fleet stays as long as possible — when one device's auth
-    /// expires, another peer's session takes over silently.
-    ///
-    /// Best-effort: any failure (no sync engine running, transient Loro
-    /// error) is logged and swallowed. The credentials are already saved
-    /// locally before this is called.
+    /// paired peers pick up the fresh session. This is the device-sync
+    /// publish point for Brightspace credentials, so it validates the key
+    /// against the configured known-good auth endpoint first and proceeds
+    /// only when confirmed live (`Valid`). An expired/incorrect key
+    /// (`Invalid`) or an unverifiable one (`Inconclusive` — endpoint
+    /// unreachable or misconfigured) fails closed and returns an actionable,
+    /// key-free error instead of mirroring. Returns `Ok(())` (no-op) when
+    /// sync is not enabled or there is nothing to share.
     #[cfg(feature = "p2p")]
-    pub async fn mirror_credentials_to_loro(&self) {
-        let Some(engine) = self.sync_engine() else { return };
+    pub async fn mirror_credentials_to_loro(&self) -> Result<()> {
+        let Some(engine) = self.sync_engine() else { return Ok(()) };
+        use crate::client::SessionValidation;
+        use crate::error::AppError;
         use crate::p2p::bridge::{LocalChange, PrefField};
+
+        let (Some(cookie), Some(host)) = (self.client.cookie_clone(), self.client.host_clone())
+        else {
+            return Ok(());
+        };
+
+        match self.client.validate_session(&host, &cookie).await {
+            SessionValidation::Valid => {}
+            SessionValidation::Invalid => {
+                return Err(AppError::BadRequest(
+                    crate::client::SHARE_BLOCKED_INVALID.into(),
+                ));
+            }
+            SessionValidation::Inconclusive => {
+                return Err(AppError::Other(
+                    crate::client::SHARE_BLOCKED_INCONCLUSIVE.into(),
+                ));
+            }
+        }
+
         let bridge = engine.bridge();
-        if let Some(cookie) = self.client.cookie_clone() {
-            if let Err(e) = bridge
-                .apply_local(LocalChange::Pref(PrefField::BrightspaceCookie(cookie)))
-                .await
-            {
-                tracing::warn!("apply_local brightspace_cookie: {e}");
-            }
-        }
-        if let Some(host) = self.client.host_clone() {
-            if let Err(e) = bridge
-                .apply_local(LocalChange::Pref(PrefField::BrightspaceHost(host)))
-                .await
-            {
-                tracing::warn!("apply_local brightspace_host: {e}");
-            }
-        }
+        bridge
+            .apply_local(LocalChange::Pref(PrefField::BrightspaceCookie(cookie)))
+            .await
+            .map_err(|e| AppError::Other(format!("apply_local brightspace_cookie: {e}")))?;
+        bridge
+            .apply_local(LocalChange::Pref(PrefField::BrightspaceHost(host)))
+            .await
+            .map_err(|e| AppError::Other(format!("apply_local brightspace_host: {e}")))?;
+        Ok(())
     }
 }
