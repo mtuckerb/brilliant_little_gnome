@@ -101,6 +101,7 @@ module Brilliant
         begin
           changes_detected = []
           newly_created = []
+          updated_content = []
 
           notifications_to_upsert.each do |n|
             existing = existing_notifications[n[:external_id]]
@@ -122,6 +123,11 @@ module Brilliant
 
               if content_changed || date_changed
                 changes_detected << n
+                # A Content row that changed in place is a Brightspace
+                # "Content Updated" notification. Fan it out as a Zotero
+                # UPDATE (not a create) so the existing library item is
+                # refreshed without duplication.
+                updated_content << n if n[:notification_type].to_s == 'Content'
               end
             end
           end
@@ -132,6 +138,12 @@ module Brilliant
           # the row's first appearance so subsequent sync passes can't create
           # duplicate Zotero items. Failures here MUST NOT abort the batch.
           push_new_content_to_zotero(newly_created)
+
+          # Refresh Zotero items for Content rows that changed in place
+          # ("Content Updated" notifications). Resolves each by external_id
+          # and PATCHes the existing item; never creates duplicates. Failures
+          # here MUST NOT abort the batch.
+          push_updated_content_to_zotero(updated_content)
 
           if publish_event_flag && !@session_changes
             # Only publish immediately if we aren't currently in a big sync session
@@ -160,6 +172,26 @@ module Brilliant
             Brilliant::Zotero.push_content(n)
           rescue => e
             puts "[Sync::NotificationService] Zotero push failed for #{n[:external_id]}: #{e.message}"
+          end
+        end
+      end
+
+      # Fan out in-place Content changes ("Content Updated" notifications) to
+      # Zotero as updates. Mirror of push_new_content_to_zotero but routes
+      # through Brilliant::Zotero.update_content, which resolves the existing
+      # library item by external_id and refreshes it in place (no duplicates).
+      # Quiet no-op when Zotero is disabled/unavailable; per-item failures are
+      # swallowed so notification sync is never blocked.
+      def push_updated_content_to_zotero(updated_items)
+        return if updated_items.nil? || updated_items.empty?
+        return unless defined?(Brilliant::Zotero) && Brilliant::Zotero.enabled?
+
+        updated_items.each do |n|
+          next unless n[:notification_type].to_s == 'Content'
+          begin
+            Brilliant::Zotero.update_content(n)
+          rescue => e
+            puts "[Sync::NotificationService] Zotero update failed for #{n[:external_id]}: #{e.message}"
           end
         end
       end
