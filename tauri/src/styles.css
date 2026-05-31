@@ -68,11 +68,11 @@ body { background: #fdfdfd; min-height: 100vh; margin: 0; }
      horizontal space on a 390px viewport. */
   .box { padding: 14px; border-radius: 12px; }
 
-  /* The desktop breadcrumb above CourseHeader is redundant on mobile:
+  /* The desktop breadcrumb above HeaderBand is redundant on mobile:
      the bottom tab bar handles top-level nav and the in-page title
      already names the section. Hiding it reclaims a row of vertical
      space everywhere it appears (Assignments list, AssignmentDetail,
-     CourseHeader, etc). */
+     HeaderBand, etc). */
   .breadcrumb { display: none; }
 
   /* Bulma's .level is a single row that never wraps. On 390px this

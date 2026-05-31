@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment, ContentItem, ContentModule, DiscussionTopic } from "../types";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 
 // Per-course search. Reuses the data the app has already synced: assignments,
 // modules + items, discussion topics. Filters client-side by case-insensitive
@@ -114,7 +114,7 @@ export default function CourseSearch() {
 
   return (
     <div>
-      {courseId && <CourseHeader courseId={courseId} />}
+      {courseId && <HeaderBand courseId={courseId} />}
       <div className="box">
         <h2 className="title is-5 mb-3">
           <i className="fas fa-magnifying-glass mr-2 has-text-grey"></i>Search this course

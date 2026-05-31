@@ -11,7 +11,7 @@ import {
   type Course,
 } from "../types";
 import { fmtNum } from "../lib/format";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { assignmentSubmitUrl, quizSummaryUrl } from "../lib/brightspace";
 import RichText from "../components/RichText";
@@ -118,7 +118,7 @@ export default function AssignmentDetail() {
             <li className="is-active"><a>Assignment unavailable</a></li>
           </ul>
         </nav>
-        {id && <CourseHeader courseId={id} />}
+        {id && <HeaderBand courseId={id} />}
         <div className="notification is-warning is-light">
           <p className="has-text-weight-semibold">We couldn't load this assignment.</p>
           <p className="is-size-7 mt-1">{err}</p>
@@ -435,7 +435,7 @@ export default function AssignmentDetail() {
           <li className="is-active"><a>{a.name}</a></li>
         </ul>
       </nav>
-      {id && <CourseHeader courseId={id} />}
+      {id && <HeaderBand courseId={id} />}
 
       <div className="box">
         <div className="is-flex is-align-items-center" style={{ gap: 6 }}>

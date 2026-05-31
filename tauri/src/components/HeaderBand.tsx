@@ -33,7 +33,7 @@ const BANNER_HEIGHT_MOBILE = 84;
 // between sub-pages doesn't re-fetch.
 const bannerCache = new Map<string, string | null>();
 
-export default function CourseHeader({ courseId, onCourseUpdated }: Props) {
+export default function HeaderBand({ courseId, onCourseUpdated }: Props) {
   const [course, setCourse] = useState<Course | null>(null);
   const [bannerDataUrl, setBannerDataUrl] = useState<string | null>(
     () => bannerCache.get(courseId) ?? null,

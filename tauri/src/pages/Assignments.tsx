@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 import SyntheticTaskModal from "../components/SyntheticTaskModal";
 
 const EXIT_MS = 280;
@@ -56,7 +56,7 @@ export default function Assignments() {
           <li className="is-active"><a>Assignments</a></li>
         </ul>
       </nav>
-      {id && <CourseHeader courseId={id} />}
+      {id && <HeaderBand courseId={id} />}
       <div className="box">
         <div className="level is-flex is-flex-wrap-wrap" style={{ gap: 8 }}>
           <div className="level-left"><h2 className="title is-4"><i className="fas fa-tasks mr-2"></i>Assignments</h2></div>

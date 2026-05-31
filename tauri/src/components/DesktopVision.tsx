@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { AuthStatus, SyncStatus } from "../types";
-import SidebarCourseList from "./SidebarCourseList";
+import CourseRows from "./CourseRows";
 import StatusBar from "./StatusBar";
 import GnomeSync from "./GnomeSync";
 
@@ -18,7 +18,7 @@ interface Props {
 
 const SIDEBAR_WIDTH = 240;
 
-export default function DesktopLayout({ auth, sync, onAuthChange, children }: Props) {
+export default function DesktopVision({ auth, sync, onAuthChange, children }: Props) {
   const [search, setSearch] = useState("");
   const location = useLocation();
 
@@ -37,24 +37,24 @@ export default function DesktopLayout({ auth, sync, onAuthChange, children }: Pr
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
         overflow: "hidden",
-        background: "#F4F5F7",
+        background: "var(--pencil-bg-app)",
       }}
     >
       <TitleBar />
 
       <div style={{ flex: "1 1 auto", display: "flex", overflow: "hidden" }}>
         <aside
+          className="pencil-Sidebar"
           style={{
             width: SIDEBAR_WIDTH,
             flex: "0 0 auto",
-            background: "#2A3744",
             display: "flex",
             flexDirection: "column",
             borderRight: "1px solid rgba(0,0,0,0.2)",
           }}
         >
           <SidebarBrand sync={sync} authOk={authOk} />
-          <SidebarCourseList filter={search} />
+          <CourseRows filter={search} />
           <SidebarFooter
             search={search}
             onSearchChange={setSearch}
@@ -63,10 +63,10 @@ export default function DesktopLayout({ auth, sync, onAuthChange, children }: Pr
         </aside>
 
         <main
+          className="pencil-MainPane"
           style={{
             flex: "1 1 auto",
             overflow: "auto",
-            background: "#F4F5F7",
           }}
         >
           <div style={{ padding: "20px 24px" }}>{children}</div>
@@ -81,11 +81,10 @@ export default function DesktopLayout({ auth, sync, onAuthChange, children }: Pr
 function TitleBar() {
   return (
     <div
+      className="pencil-TitleBar"
       style={{
         height: 32,
         flex: "0 0 auto",
-        background: "#1F2A33",
-        color: "#9DA9B5",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -94,7 +93,7 @@ function TitleBar() {
         borderBottom: "1px solid rgba(0,0,0,0.3)",
       }}
     >
-      <span style={{ fontWeight: 600, color: "#FFFFFF" }}>Brilliant</span>
+      <span style={{ fontWeight: 600, color: "var(--pencil-text-on-dark)" }}>Brilliant</span>
     </div>
   );
 }
@@ -109,14 +108,14 @@ function SidebarBrand({ sync, authOk }: { sync: SyncStatus | null; authOk: boole
         gap: 12,
         padding: "16px 14px",
         textDecoration: "none",
-        color: "#FFFFFF",
+        color: "var(--pencil-text-on-dark)",
         borderBottom: "1px solid rgba(0,0,0,0.2)",
       }}
     >
       <GnomeSync size={44} brightspaceSync={sync} brightspaceOk={authOk} />
       <div style={{ display: "flex", flexDirection: "column" }}>
         <span style={{ fontWeight: 700, fontSize: 15 }}>Brilliant</span>
-        <span style={{ fontSize: 11, color: "#9DA9B5" }}>Dashboard</span>
+        <span style={{ fontSize: 11, color: "var(--pencil-text-on-dark-dim)" }}>Dashboard</span>
       </div>
     </Link>
   );

@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { ContentItem, ContentModule } from "../types";
 import { triggerDownload } from "../lib/download";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 import { runZotero } from "../lib/zotero";
 import { useToast } from "../components/ToastProvider";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
@@ -102,7 +102,7 @@ export default function ModuleDetail() {
   if (!current) {
     return (
       <div>
-        {courseId && <CourseHeader courseId={courseId} />}
+        {courseId && <HeaderBand courseId={courseId} />}
         <div className="notification is-warning is-light">Module not found in this course.</div>
         <Link to={`/course/${courseId}/content`}>← back to modules</Link>
       </div>
@@ -111,7 +111,7 @@ export default function ModuleDetail() {
 
   return (
     <div>
-      {courseId && <CourseHeader courseId={courseId} />}
+      {courseId && <HeaderBand courseId={courseId} />}
 
       <nav className="breadcrumb mb-3">
         <ul>

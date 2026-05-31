@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { GradeRow, GradeStats } from "../types";
 import { fmtNum, fmtPct } from "../lib/format";
 import { canSpeculateGrade, isActuallyGraded } from "../lib/grades";
-import CourseHeader from "../components/CourseHeader";
+import HeaderBand from "../components/HeaderBand";
 
 function gradeColor(score: number | null): string {
   if (score === null) return "is-light";
@@ -105,7 +105,7 @@ export default function Grades() {
           <li className="is-active"><a>Grades</a></li>
         </ul>
       </nav>
-      {id && <CourseHeader courseId={id} />}
+      {id && <HeaderBand courseId={id} />}
 
       <div className="box">
         <div className="level mb-5">
