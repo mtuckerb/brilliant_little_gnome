@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment, ContentItem, ContentModule, DiscussionTopic } from "../types";
 import HeaderBand from "../components/HeaderBand";
+import { fmtAssignmentDueDate } from "../lib/format";
 
 // Per-course search. Reuses the data the app has already synced: assignments,
 // modules + items, discussion topics. Filters client-side by case-insensitive
@@ -71,7 +72,7 @@ export default function CourseSearch() {
         kind: "assignment",
         title: a.name,
         href: `/course/${courseId}/assignments/${a.id}`,
-        hint: a.due_date ? `Due ${new Date(a.due_date).toLocaleDateString()}` : undefined,
+        hint: `Due ${fmtAssignmentDueDate(a.due_date)}`,
       }),
     );
     (modules ?? []).filter((m) => fuzzy(q, m.title)).forEach((m) =>

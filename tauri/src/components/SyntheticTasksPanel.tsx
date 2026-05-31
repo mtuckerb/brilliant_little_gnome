@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment } from "../types";
 import SyntheticTaskModal from "./SyntheticTaskModal";
+import { fmtAssignmentDueDate } from "../lib/format";
 
 // Course Overview's quick-look at the user's hand-rolled tasks for this
 // course. Auto-extraction (split-on-headings, etc.) is deferred — this
@@ -12,20 +13,6 @@ interface Props {
   courseId: string;
 }
 
-function fmtDue(d: string | null): string {
-  if (!d) return "—";
-  try {
-    return new Date(d).toLocaleString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return d;
-  }
-}
 
 export default function SyntheticTasksPanel({ courseId }: Props) {
   const [items, setItems] = useState<Assignment[] | null>(null);
@@ -89,7 +76,7 @@ export default function SyntheticTasksPanel({ courseId }: Props) {
                   </Link>
                   {a.optional && <span className="tag is-light is-small ml-2">optional</span>}
                 </td>
-                <td className="has-text-grey is-size-7" style={{ whiteSpace: "nowrap" }}>{fmtDue(a.due_date)}</td>
+                <td className="has-text-grey is-size-7" style={{ whiteSpace: "nowrap" }}>{fmtAssignmentDueDate(a.due_date)}</td>
                 <td style={{ width: 32 }}>
                   <button
                     className="button is-small is-white"

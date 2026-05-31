@@ -10,7 +10,7 @@ import {
   type AssignmentDetailPayload,
   type Course,
 } from "../types";
-import { fmtNum } from "../lib/format";
+import { fmtAssignmentDueDate, fmtNum } from "../lib/format";
 import HeaderBand from "../components/HeaderBand";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { assignmentSubmitUrl, quizSummaryUrl } from "../lib/brightspace";
@@ -168,15 +168,7 @@ export default function AssignmentDetail() {
     // existing rich content sections (rubric, feedback, instructions,
     // submissions) render below in the same order as the desktop view
     // so we don't drop information — we just relayout the chrome.
-    const dueLabel = a.due_date
-      ? new Date(a.due_date).toLocaleString(undefined, {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        })
-      : "No due date";
+    const dueLabel = fmtAssignmentDueDate(a.due_date);
     const courseName = course ? displayCourseName(course) : null;
     const courseCode = course ? displayCourseCode(course) : null;
     return (
@@ -456,9 +448,7 @@ export default function AssignmentDetail() {
         <div className="content is-size-6">
           <p>
             <strong>Due:</strong>{" "}
-            {a.due_date
-              ? new Date(a.due_date).toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" })
-              : <span className="has-text-grey">no due date</span>}
+            {fmtAssignmentDueDate(a.due_date)}
           </p>
           {a.completed_at && (
             <p><strong>Completed:</strong> {new Date(a.completed_at).toLocaleString()}</p>
