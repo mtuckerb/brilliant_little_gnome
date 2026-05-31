@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { GradeRow, GradeStats } from "../types";
-import { fmtNum, fmtPct } from "../lib/format";
+import { fmtAssignmentDueDate, fmtNum, fmtPct } from "../lib/format";
 import { canSpeculateGrade, isActuallyGraded } from "../lib/grades";
 import HeaderBand from "../components/HeaderBand";
 
@@ -218,7 +218,7 @@ export default function Grades() {
                     </div>
                   </td>
                   <td className="has-text-centered is-size-7">
-                    {g.due_date ? new Date(g.due_date).toLocaleDateString([], { month: "short", day: "numeric" }) : "-"}
+                    {fmtAssignmentDueDate(g.due_date)}
                   </td>
                   <td className="has-text-centered is-size-7">{fmtPct(g.rel_weight)}</td>
                   <td className="has-text-centered is-size-7" style={{ fontFamily: "monospace" }}>{points}</td>

@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { courseLabel, type Assignment, type Course } from "../types";
 import BrightspaceLink, { useBrightspaceHost } from "./BrightspaceLink";
 import { assignmentSubmitUrl } from "../lib/brightspace";
+import { fmtAssignmentDueDate } from "../lib/format";
 
 // Single-row presentation used by both Calendar and Assignments. Caller owns
 // "show completed" state and the leaving-animation set; this component is just
@@ -48,7 +49,7 @@ export default function AssignmentRow({ assignment: a, course: c, leaving, onTog
         {a.synthetic && <span className="tag is-info is-light ml-2">synthetic</span>}
       </div>
       <span className="has-text-grey is-size-7" style={{ flex: "0 0 auto" }}>
-        {a.due_date && new Date(a.due_date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}
+        {fmtAssignmentDueDate(a.due_date)}
       </span>
       {onDelete && (
         <button

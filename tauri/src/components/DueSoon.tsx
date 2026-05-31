@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, onAppEvent } from "../api";
 import type { Assignment, Course } from "../types";
+import { fmtAssignmentDueDate } from "../lib/format";
 
 // Pencil frame: "Due soon" (Desktop Vision > rightCol, frame id RLKQX).
 //
@@ -25,13 +26,6 @@ const LOOKAHEAD_DAYS = 14;
 const MAX_ITEMS = 5;
 const SOON_MS = 48 * 3_600_000;
 
-function relativeDue(due: Date): string {
-  return due.toLocaleString(undefined, {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 export default function DueSoon() {
   const [items, setItems] = useState<Item[] | null>(null);
@@ -115,7 +109,7 @@ export default function DueSoon() {
             <div className="pencil-due-row-col">
               <span className="pencil-due-row-title">{a.name}</span>
               <span className={`pencil-due-row-meta${soon ? " is-warn" : ""}`}>
-                {relativeDue(due)}
+                {fmtAssignmentDueDate(a.due_date)}
               </span>
             </div>
           </Link>

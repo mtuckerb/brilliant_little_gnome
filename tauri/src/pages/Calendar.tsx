@@ -5,6 +5,7 @@ import type { Assignment, Course, UserPreferences } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { courseLabel } from "../types";
+import { fmtAssignmentDueDate } from "../lib/format";
 
 type Row = { assignment: Assignment; course: Course };
 const EXIT_MS = 280;
@@ -115,8 +116,7 @@ export default function Calendar() {
               {upcoming.map(({ assignment: a, course: c }, ix) => {
                 const due = new Date(a.due_date!);
                 const overdue = due < now && !a.completed;
-                const dayLabel = due.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-                const timeLabel = due.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+                const dueLabel = fmtAssignmentDueDate(a.due_date);
                 return (
                   <li key={a.id} style={{ borderTop: ix === 0 ? "none" : "1px solid #f0f0f0" }}>
                     <Link
@@ -141,7 +141,7 @@ export default function Calendar() {
                       <div style={{ flex: "1 1 auto", minWidth: 0 }}>
                         <div className="is-size-7 has-text-grey" style={{ marginBottom: 2 }}>
                           <span className={overdue ? "has-text-danger has-text-weight-bold" : "has-text-weight-semibold"}>
-                            {dayLabel} · {timeLabel}
+                            {dueLabel}
                           </span>
                           {a.completed && <span className="tag is-success is-light is-small ml-2">done</span>}
                           {overdue && <span className="tag is-danger is-light is-small ml-2">overdue</span>}
