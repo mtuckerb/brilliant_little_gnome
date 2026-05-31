@@ -136,6 +136,12 @@ impl BrightspaceClient {
         self.app.emit("auth-captured", host)
     }
 
+    /// Emit a non-secret, actionable auth-share failure message for UI paths
+    /// that adopt or publish credentials outside the primary login command.
+    pub fn emit_auth_share_blocked(&self, message: &str) -> std::result::Result<(), tauri::Error> {
+        self.app.emit("auth-share-blocked", message)
+    }
+
     /// Probe `/users/whoami` to confirm the session is genuinely dead
     /// before flipping the app into "degraded" state. A surprising number
     /// of 401/403s come from individual endpoints (resource-scoped perms,
