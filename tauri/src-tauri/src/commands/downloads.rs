@@ -70,6 +70,10 @@ pub async fn download_module_archive(
     course_id: String,
     module_id: String,
 ) -> Result<DownloadBytes> {
+    // Preflight the session before the expensive module walk (see
+    // download_course_archive for rationale).
+    state.client.preflight_auth().await?;
+
     // Pull the module title for both the archive name and the top-level folder
     // inside the zip. Falls back to the raw id if the row has been pruned.
     let row: Option<(String,)> = sqlx::query_as(
@@ -93,6 +97,12 @@ pub async fn download_module_archive(
     let mut failures = Vec::new();
     collect_module(&mut zip, &state, &course_id, &module_node, "", &mut seen, &mut failures).await?;
 
+    // If the session expired mid-walk every live fetch 403'd and the zip is
+    // useless — surface the auth failure (toast already emitted by the probe)
+    // instead of saving an archive full of nothing.
+    if state.client.is_degraded() {
+        return Err(AppError::Unauthenticated);
+    }
     if zip.entry_count() == 0 {
         return Err(AppError::Other("No downloadable files found in this module.".to_string()));
     }
@@ -118,6 +128,10 @@ pub async fn download_course_archive(
     course_id: String,
 ) -> Result<DownloadBytes> {
     tracing::info!("download_course_archive start course={}", course_id);
+    // Preflight: confirm the session is live before the expensive course walk.
+    // A dead session would otherwise 403 every per-item fetch and emit a zip
+    // full of skips — fail fast with a single "session expired" toast instead.
+    state.client.preflight_auth().await?;
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
     let modules = toc.get("Modules").and_then(|m| m.as_array()).cloned().unwrap_or_default();
 
@@ -165,6 +179,12 @@ pub async fn download_course_archive(
         zip.entry_count(),
         failures.len()
     );
+    // If the session expired mid-batch every live fetch 403'd and the zip is
+    // useless — surface the auth failure (toast already emitted by the probe)
+    // instead of saving an archive full of nothing.
+    if state.client.is_degraded() {
+        return Err(AppError::Unauthenticated);
+    }
     if zip.entry_count() == 0 {
         return Err(AppError::Other(format!(
             "No downloadable files found in this course. {} failures encountered. \
@@ -663,7 +683,7 @@ fn unique_path(seen: &mut HashSet<String>, candidate: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{filename_with_extension, sanitize, unique_filesystem_path, unique_path};
+    use super::{filename_with_extension, sanitize, topic_download_path, unique_filesystem_path, unique_path};
     use std::{collections::HashSet, fs};
 
     #[test]
@@ -710,6 +730,21 @@ mod tests {
         fs::write(dir.path().join("report_1.pdf"), b"existing").expect("seed second collision");
 
         assert_eq!(unique_filesystem_path(dir.path(), "report.pdf"), dir.path().join("report_2.pdf"));
+    }
+
+    #[test]
+    fn downloads_bulk_topic_path_matches_single_file_auth_path() {
+        // Regression: the bulk archive loop must fetch topic files through the
+        // exact same authenticated LE endpoint the single-file
+        // `download_topic_file` command uses. If these ever diverge, bulk
+        // downloads can silently lose auth and 403 every item.
+        assert_eq!(
+            topic_download_path("476750", "12009482"),
+            format!(
+                "/d2l/api/le/{}/476750/content/topics/12009482/file",
+                crate::client::API_VERSION
+            )
+        );
     }
 }
 

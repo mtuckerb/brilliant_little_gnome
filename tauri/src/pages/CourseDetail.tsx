@@ -76,7 +76,16 @@ export default function CourseDetail() {
       triggerDownload(payload);
     } catch (e) {
       console.error("download_course_archive failed", e);
-      alert(`Download failed: ${String((e as { message?: string })?.message ?? e)}`);
+      const msg = String((e as { message?: string })?.message ?? e);
+      if (msg.toLowerCase().includes("authentication required")) {
+        toast.show(
+          "Your Brightspace session expired. Sign in again (status indicator, top right), then retry the download.",
+          "is-danger",
+          8000,
+        );
+      } else {
+        toast.show(`Download failed: ${msg}`, "is-danger", 6000);
+      }
     } finally {
       setDownloading(false);
     }

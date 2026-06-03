@@ -90,7 +90,17 @@ export default function ModuleDetail() {
       const payload = await api.downloadModuleArchive(courseId, moduleId);
       triggerDownload(payload);
     } catch (e) {
-      setError(`${current?.title ?? "module"}: ${String((e as { message?: string })?.message ?? e)}`);
+      const msg = String((e as { message?: string })?.message ?? e);
+      if (msg.toLowerCase().includes("authentication required")) {
+        toast.show(
+          "Your Brightspace session expired. Sign in again (status indicator, top right), then retry the download.",
+          "is-danger",
+          8000,
+        );
+        setError(null);
+      } else {
+        setError(`${current?.title ?? "module"}: ${msg}`);
+      }
     } finally {
       setModuleZipping(false);
     }
