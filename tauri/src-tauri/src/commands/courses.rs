@@ -182,6 +182,7 @@ pub async fn update_course_color(state: AppStateArg<'_>, id: String, color: Opti
         .bind(&id)
         .execute(&state.pool)
         .await?;
+    state.events.course_updated(&id);
     #[cfg(feature = "p2p")]
     {
         use crate::p2p::bridge::LocalChange;
