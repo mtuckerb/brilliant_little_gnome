@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { listen } from "@tauri-apps/api/event";
 import { api, onAppEvent } from "../api";
 import { type Course, displayCourseCode, displayCourseName, stripLeadingCode } from "../types";
 import { compareSemestersDesc, parseSemester } from "../lib/semester";
@@ -37,14 +38,20 @@ export default function CourseRows({ filter }: Props) {
   useEffect(() => {
     refresh();
     let prev: string | null = null;
-    const unlisten = onAppEvent((e) => {
+    const unlistenAppEvent = onAppEvent((e) => {
       if (e.kind === "sync_status_changed") {
         const next = e.status.status;
         if (prev === "syncing" && next !== "syncing") refresh();
         prev = next;
       }
     });
-    return () => { unlisten.then((fn) => fn()).catch(() => {}); };
+    const unlistenCourseUpdated = listen<{ course_id: string }>("course:updated", () => {
+      refresh();
+    });
+    return () => {
+      unlistenAppEvent.then((fn) => fn()).catch(() => {});
+      unlistenCourseUpdated.then((fn) => fn()).catch(() => {});
+    };
   }, [refresh]);
 
   // Group + sort + (optional) text filter.
