@@ -83,6 +83,43 @@ impl BrightspaceClient {
         validation::probe_session(&self.http, &probe_url, cookie).await
     }
 
+    /// Live preflight check for expensive bulk operations (course/module
+    /// archives). Probes `/users/whoami` directly via `validate_session` —
+    /// bypassing the JSON cache — so a dead session fails fast with a single
+    /// "session expired" toast instead of 403-ing every per-item fetch and
+    /// emitting a zip full of skips. Only blocks when the session is
+    /// definitively `Invalid` (or no credentials exist); an `Inconclusive`
+    /// probe (network blip, gateway hiccup) is allowed through so a transient
+    /// failure can't strand a legitimate export. On a definitive failure it
+    /// reuses `commit_auth_failure`, so the same `authentication_failure`
+    /// app-event the rest of the client emits drives the toast.
+    pub async fn preflight_auth(&self) -> Result<()> {
+        let host = self.host.read().clone();
+        let cookie = self.cookie.read().clone();
+        let (Some(host), Some(cookie)) = (host, cookie) else {
+            // No credentials at all — definitively unauthenticated.
+            self.commit_auth_failure(StatusCode::UNAUTHORIZED);
+            return Err(AppError::Unauthenticated);
+        };
+
+        match self.validate_session(&host, &cookie).await {
+            SessionValidation::Valid => {
+                *self.degraded.write() = false;
+                Ok(())
+            }
+            SessionValidation::Invalid => {
+                tracing::warn!("preflight auth: session expired; aborting bulk download");
+                self.commit_auth_failure(StatusCode::FORBIDDEN);
+                Err(AppError::Unauthenticated)
+            }
+            SessionValidation::Inconclusive => {
+                // Couldn't confirm the session is dead — don't block the export.
+                tracing::warn!("preflight auth: probe inconclusive; proceeding with download");
+                Ok(())
+            }
+        }
+    }
+
     pub async fn store_credentials(
         &self,
         pool: &SqlitePool,
