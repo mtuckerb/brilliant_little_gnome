@@ -6,10 +6,14 @@ import { useIsMobile } from "../hooks/useIsMobile";
 
 interface Props {
   onComplete: (auth: AuthStatus) => void;
+  /** Pre-fill the host (e.g. when re-authenticating an existing session). */
+  initialHost?: string;
+  /** Re-auth mode tweaks the heading/copy for an already-set-up account. */
+  reauth?: boolean;
 }
 
-export default function Setup({ onComplete }: Props) {
-  const [host, setHost] = useState("courses.maine.edu");
+export default function Setup({ onComplete, initialHost, reauth }: Props) {
+  const [host, setHost] = useState(initialHost || "courses.maine.edu");
   const [cookies, setCookies] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -41,8 +45,12 @@ export default function Setup({ onComplete }: Props) {
 
   return (
     <div className="main-content container" style={{ maxWidth: 640 }}>
-      <h1 className="title">Welcome to Brilliant</h1>
-      <p className="subtitle">Connect to your Brightspace account.</p>
+      <h1 className="title">{reauth ? "Re-authenticate" : "Welcome to Brilliant"}</h1>
+      <p className="subtitle">
+        {reauth
+          ? "Your Brightspace session expired. Refresh it below."
+          : "Connect to your Brightspace account."}
+      </p>
       {isMobile && (
         <div className="notification is-info is-light">
           <p className="mb-2"><strong>On mobile?</strong> The easiest path is to sign in once on a desktop or laptop and then pair this phone with it.</p>

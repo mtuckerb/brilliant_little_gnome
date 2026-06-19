@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { parseCoursePath, recordCourseVisit } from "./lib/courseLastTab";
 import { listen } from "@tauri-apps/api/event";
 import { api, onAppEvent } from "./api";
@@ -27,6 +27,23 @@ import Archive from "./pages/Archive";
 import { ToastProvider, useToast } from "./components/ToastProvider";
 import DownloadsTray from "./components/DownloadsTray";
 import { useExternalLinkInterceptor } from "./hooks/useExternalLinkInterceptor";
+
+// In-shell re-authentication screen. Reachable while the session is degraded
+// (tappable auth dot / Settings) so the phone isn't a dead end when it has no
+// native sign-in — it surfaces the cookie-paste + re-pair flow. Reuses Setup.
+function Reauth({ onComplete, host }: { onComplete: (a: AuthStatus) => void; host: string | null }) {
+  const navigate = useNavigate();
+  return (
+    <Setup
+      reauth
+      initialHost={host ?? undefined}
+      onComplete={(a) => {
+        onComplete(a);
+        navigate("/dashboard");
+      }}
+    />
+  );
+}
 
 function CourseTabRecorder() {
   const location = useLocation();
@@ -126,6 +143,7 @@ function AppInner() {
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/archive" element={<Archive />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/reauth" element={<Reauth onComplete={setAuth} host={auth.host} />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
       <DownloadsTray />

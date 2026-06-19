@@ -117,13 +117,15 @@ export default function MobileLayout({ auth, sync, children }: Props) {
           <span style={{ fontWeight: 700 }}>Brilliant</span>
         </Link>
         <span style={{ flex: "1 1 auto" }} />
-        <span
+        <Link
+          to="/reauth"
           className="icon is-small"
-          title={auth.degraded ? "Session expired" : "Authenticated"}
-          style={{ color: authDot }}
+          title={auth.degraded ? "Session expired — tap to re-authenticate" : "Account — tap to re-authenticate"}
+          aria-label={auth.degraded ? "Session expired, re-authenticate" : "Account"}
+          style={{ color: authDot, textDecoration: "none" }}
         >
           <i className="fas fa-circle" style={{ fontSize: "0.55rem" }}></i>
-        </span>
+        </Link>
       </header>
 
       <PullToRefresh
