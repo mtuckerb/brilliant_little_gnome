@@ -105,6 +105,10 @@ pub async fn sync_all(state: Arc<AppState>, force: bool) -> Result<()> {
         tracing::warn!("notifications sync failed: {}", e);
     }
 
+    // Re-persist + re-share the session cookie if Brightspace rotated it during
+    // this sync, so paired devices stay authenticated without a manual re-login.
+    state.refresh_shared_credentials().await;
+
     // Done.
     set_done(&state);
     state.events.sync_done();

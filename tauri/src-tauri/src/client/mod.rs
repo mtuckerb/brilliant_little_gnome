@@ -165,6 +165,34 @@ impl BrightspaceClient {
     pub fn uid_clone(&self) -> Option<String> { self.uid.read().clone() }
     pub fn user_id_clone(&self) -> Option<String> { self.user_id.read().clone() }
 
+    /// Absorb a rotated Brightspace session cookie from a response's
+    /// `Set-Cookie` headers. Brightspace periodically reissues
+    /// `d2lSessionVal` / `d2lSecureSessionVal` to extend the session; we don't
+    /// run a reqwest cookie jar (cookies are attached as a static header), so
+    /// without this those rotations are discarded and the stored cookie ages
+    /// out — which on a sync-enabled device also strands paired peers on a
+    /// stale shared cookie. This replaces only the rotated values in the
+    /// in-memory cookie string (preserving order and any other cookies) and
+    /// returns true if anything changed, so the sync layer can persist +
+    /// re-share the fresh value. Never clears or corrupts the cookie: empty or
+    /// unparsable Set-Cookie entries are ignored.
+    pub fn absorb_rotated_cookie(&self, headers: &header::HeaderMap) -> bool {
+        let set_cookies: Vec<&str> = headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|hv| hv.to_str().ok())
+            .collect();
+        let mut guard = self.cookie.write();
+        let Some(current) = guard.clone() else { return false };
+        match merge_rotated_cookie(&current, &set_cookies) {
+            Some(updated) => {
+                *guard = Some(updated);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Emit the same `auth-captured` event the desktop login flow does.
     /// Used by the P2P bootstrap path to wake up the React layer (which
     /// re-fetches auth-status and starts a sync) after the joiner adopts
@@ -319,6 +347,9 @@ impl BrightspaceClient {
             .header(header::COOKIE, cookie)
             .send()
             .await?;
+
+        // Pick up any rotated session cookie before the body consumes `resp`.
+        self.absorb_rotated_cookie(resp.headers());
 
         let status = resp.status();
         if status.is_success() {
@@ -805,10 +836,102 @@ fn age_seconds(updated_at: &str) -> i64 {
     }
 }
 
+/// Merge any rotated `d2lSessionVal` / `d2lSecureSessionVal` from a set of
+/// `Set-Cookie` header strings into `current`, preserving order and other
+/// cookies. Returns `Some(new_cookie)` only when a tracked value actually
+/// changed, `None` when nothing rotated. Never drops or blanks an existing
+/// cookie — empty or unparsable Set-Cookie entries are ignored, so a bad
+/// response can't corrupt the stored session.
+fn merge_rotated_cookie(current: &str, set_cookies: &[&str]) -> Option<String> {
+    const ROTATING: [&str; 2] = ["d2lSessionVal", "d2lSecureSessionVal"];
+    let mut updates: Vec<(&str, &str)> = Vec::new();
+    for sc in set_cookies {
+        let first = sc.split(';').next().unwrap_or("");
+        let Some((name, value)) = first.split_once('=') else { continue };
+        let (name, value) = (name.trim(), value.trim());
+        if ROTATING.contains(&name) && !value.is_empty() {
+            updates.push((name, value));
+        }
+    }
+    if updates.is_empty() {
+        return None;
+    }
+
+    let mut pairs: Vec<(String, String)> = current
+        .split(';')
+        .filter_map(|p| {
+            let p = p.trim();
+            if p.is_empty() {
+                return None;
+            }
+            let (n, v) = p.split_once('=')?;
+            Some((n.trim().to_string(), v.trim().to_string()))
+        })
+        .collect();
+
+    let mut changed = false;
+    for (n, v) in updates {
+        match pairs.iter_mut().find(|(pn, _)| pn == n) {
+            Some(slot) if slot.1 != v => {
+                slot.1 = v.to_string();
+                changed = true;
+            }
+            Some(_) => {}
+            None => {
+                pairs.push((n.to_string(), v.to_string()));
+                changed = true;
+            }
+        }
+    }
+    if !changed {
+        return None;
+    }
+    Some(
+        pairs
+            .iter()
+            .map(|(n, v)| format!("{n}={v}"))
+            .collect::<Vec<_>>()
+            .join("; "),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_discussion_resource_path, BrightspaceClient};
+    use super::{is_discussion_resource_path, merge_rotated_cookie, BrightspaceClient};
     use reqwest::StatusCode;
+
+    #[test]
+    fn rotated_secure_cookie_is_merged_in_place() {
+        let current = "d2lSessionVal=AAA; d2lSecureSessionVal=BBB; other=keep";
+        let got = merge_rotated_cookie(current, &["d2lSecureSessionVal=CCC; Path=/; HttpOnly"]);
+        assert_eq!(
+            got.as_deref(),
+            Some("d2lSessionVal=AAA; d2lSecureSessionVal=CCC; other=keep")
+        );
+    }
+
+    #[test]
+    fn unchanged_value_yields_none() {
+        let current = "d2lSessionVal=AAA; d2lSecureSessionVal=BBB";
+        assert_eq!(merge_rotated_cookie(current, &["d2lSecureSessionVal=BBB; Path=/"]), None);
+    }
+
+    #[test]
+    fn untracked_or_empty_set_cookies_are_ignored() {
+        let current = "d2lSessionVal=AAA; d2lSecureSessionVal=BBB";
+        // An unrelated cookie and an empty value must not touch the session.
+        assert_eq!(merge_rotated_cookie(current, &["analytics=1; Path=/", "d2lSessionVal=; Path=/"]), None);
+    }
+
+    #[test]
+    fn both_session_cookies_rotate_at_once() {
+        let current = "d2lSessionVal=AAA; d2lSecureSessionVal=BBB";
+        let got = merge_rotated_cookie(
+            current,
+            &["d2lSessionVal=NEW1; Path=/", "d2lSecureSessionVal=NEW2; Secure"],
+        );
+        assert_eq!(got.as_deref(), Some("d2lSessionVal=NEW1; d2lSecureSessionVal=NEW2"));
+    }
 
     #[test]
     fn discussion_forum_and_topic_403s_are_resource_scoped() {
