@@ -47,7 +47,7 @@ pub async fn sync_all(state: Arc<AppState>, force: bool) -> Result<()> {
     state.events.sync_progress("starting", 0.0);
 
     // 1) Refresh course list.
-    let course_list = match courses::sync_enrollments(&state).await {
+    let enrollment = match courses::sync_enrollments(&state).await {
         Ok(list) => list,
         Err(e) => {
             tracing::error!("enrollments sync failed: {}", e);
@@ -56,9 +56,22 @@ pub async fn sync_all(state: Arc<AppState>, force: bool) -> Result<()> {
             return Err(e);
         }
     };
+    // A newly-available course's announcements predate the global notification
+    // high-water mark, so the normal `?since=` delta feed (step 4) would skip
+    // them. When any course is new this pass — or the caller forced a sync — do
+    // a since-less notification pull so that history backfills. Tying it to
+    // `force` lets a manual "Sync" recover announcements for a course that
+    // already appeared in an earlier pass (when only its delta window was new).
+    let backfill_notifications = force || !enrollment.new_ids.is_empty();
+    if backfill_notifications {
+        tracing::info!(
+            "notification backfill this sync (force={}, new_courses={:?})",
+            force, enrollment.new_ids,
+        );
+    }
 
     // 2) Drop archived/dropped courses.
-    let active_ids = active_course_ids(&state, &course_list).await?;
+    let active_ids = active_course_ids(&state, &enrollment.all_ids).await?;
     let total = (active_ids.len() as f64).max(1.0) + 1.0;
     let completed = Arc::new(AtomicUsize::new(0));
 
@@ -88,18 +101,12 @@ pub async fn sync_all(state: Arc<AppState>, force: bool) -> Result<()> {
 
     // 4) Notifications (global feed/alerts).
     set_status(&state, SyncState::Syncing, "notifications", (active_ids.len() as f64) / total);
-    if let Err(e) = notifications::sync(&state).await {
+    if let Err(e) = notifications::sync(&state, backfill_notifications).await {
         tracing::warn!("notifications sync failed: {}", e);
     }
 
     // Done.
-    {
-        let mut st = state.sync_status.write();
-        st.status = SyncState::Idle;
-        st.current_task = None;
-        st.progress = 1.0;
-        st.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
-    }
+    set_done(&state);
     state.events.sync_done();
     Ok(())
 }
@@ -111,13 +118,7 @@ pub async fn sync_course(state: Arc<AppState>, course_id: &str) -> Result<()> {
     sync_course_data(&state, course_id).await;
     mark_course_synced(&state, course_id).await;
 
-    {
-        let mut st = state.sync_status.write();
-        st.status = SyncState::Idle;
-        st.current_task = None;
-        st.progress = 1.0;
-        st.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
-    }
+    set_done(&state);
     state.events.course_updated(course_id);
     state.events.sync_done();
     Ok(())
@@ -147,16 +148,38 @@ async fn sync_course_data(state: &AppState, course_id: &str) {
 }
 
 fn set_status(state: &AppState, status: SyncState, task: &str, progress: f64) {
-    let mut st = state.sync_status.write();
-    st.status = status;
-    st.current_task = Some(task.to_string());
-    st.progress = progress;
+    let snapshot = {
+        let mut st = state.sync_status.write();
+        st.status = status;
+        st.current_task = Some(task.to_string());
+        st.progress = progress;
+        st.clone()
+    };
+    state.events.sync_status_changed(&snapshot);
 }
 
 fn set_error(state: &AppState, msg: &str) {
-    let mut st = state.sync_status.write();
-    st.status = SyncState::Error;
-    st.current_task = Some(msg.to_string());
+    let snapshot = {
+        let mut st = state.sync_status.write();
+        st.status = SyncState::Error;
+        st.current_task = Some(msg.to_string());
+        st.clone()
+    };
+    state.events.sync_status_changed(&snapshot);
+}
+
+/// Mark the sync run finished: flip to Idle, stamp `last_sync_at`, and emit the
+/// `syncing → idle` transition the frontend keys its post-sync refreshes off.
+fn set_done(state: &AppState) {
+    let snapshot = {
+        let mut st = state.sync_status.write();
+        st.status = SyncState::Idle;
+        st.current_task = None;
+        st.progress = 1.0;
+        st.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
+        st.clone()
+    };
+    state.events.sync_status_changed(&snapshot);
 }
 
 /// Intersect the just-synced enrollment IDs with the local DB's active set.

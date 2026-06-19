@@ -10,16 +10,24 @@ use crate::error::Result;
 use crate::state::AppState;
 use serde_json::Value;
 
-pub async fn sync(state: &AppState) -> Result<()> {
+pub async fn sync(state: &AppState, full_refresh: bool) -> Result<()> {
     // Snapshot the previous high-water mark BEFORE we start fetching, so the
     // window we use to filter is stable across the two endpoint calls.
-    let since: Option<String> = sqlx::query_scalar(
-        "SELECT last_notification_sync_at FROM user_preferences LIMIT 1",
-    )
-    .fetch_optional(&state.pool)
-    .await
-    .ok()
-    .flatten();
+    //
+    // `full_refresh` drops the `?since=` delta entirely so the server returns
+    // its full recent window. Used when a course just became available: its
+    // announcements were posted before our global high-water mark, so a delta
+    // pull would never see them. Upserts are idempotent, so re-pulling the
+    // window only refreshes existing rows.
+    let since: Option<String> = if full_refresh {
+        None
+    } else {
+        sqlx::query_scalar("SELECT last_notification_sync_at FROM user_preferences LIMIT 1")
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten()
+    };
     let since_ref = since.as_deref();
 
     // Unified feed.
