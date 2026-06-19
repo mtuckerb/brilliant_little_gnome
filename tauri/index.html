@@ -2,6 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Without width=device-width the iOS WKWebView lays the page out at its
+         default ~980px and scales it down, so the desktop shell (navrail) gets
+         crammed onto the phone and useIsMobile() never trips. device-width makes
+         window.innerWidth report real CSS px (~390) so MobileLayout renders.
+         viewport-fit=cover is required for the env(safe-area-inset-*) the
+         shells use to be non-zero on notched devices. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <link rel="icon" type="image/png" href="/logo.png" />
     <link rel="apple-touch-icon" href="/logo.png" />
     <link rel="stylesheet" href="/vendor/bulma.min.css" />
