@@ -5,15 +5,33 @@
 use crate::error::Result;
 use crate::state::AppState;
 use serde_json::Value;
+use std::collections::HashSet;
 
-pub async fn sync_enrollments(state: &AppState) -> Result<Vec<String>> {
+/// Result of an enrollment sync: every enrolled course id, plus the subset that
+/// didn't exist in the local DB before this pass. The caller uses `new_ids` to
+/// trigger a since-less notification backfill — a freshly-available course's
+/// announcements predate the global notification high-water mark, so the normal
+/// `?since=` delta feed would never surface them.
+pub struct EnrollmentSync {
+    pub all_ids: Vec<String>,
+    pub new_ids: Vec<String>,
+}
+
+pub async fn sync_enrollments(state: &AppState) -> Result<EnrollmentSync> {
     let enrollments = state.client.get_enrollments(&state.pool, false).await?;
     let host = state.client.host_clone();
+    let existing: HashSet<String> = sqlx::query_scalar::<_, String>("SELECT org_unit_id FROM courses")
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .collect();
     let mut ids = Vec::with_capacity(enrollments.len());
+    let mut new_ids = Vec::new();
 
     for e in &enrollments {
         let Some(ou) = e.get("OrgUnit") else { continue; };
         let Some(id) = ou.get("Id").and_then(value_to_id) else { continue; };
+        let is_new = !existing.contains(&id);
         let raw_name = ou.get("Name").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string();
         // Brightspace's `OrgUnit.Code` at this institution is a section/banner code
         // like "2620.UMS06-S.40963.1" — useless to students. We instead extract a
@@ -94,9 +112,12 @@ pub async fn sync_enrollments(state: &AppState) -> Result<Vec<String>> {
             }
         }
 
+        if is_new {
+            new_ids.push(id.clone());
+        }
         ids.push(id);
     }
-    Ok(ids)
+    Ok(EnrollmentSync { all_ids: ids, new_ids })
 }
 
 fn value_to_id(v: &Value) -> Option<String> {

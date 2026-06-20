@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { getName, getVersion, getTauriVersion } from "@tauri-apps/api/app";
 import { api } from "../api";
 import SyncPanel from "../components/SyncPanel";
@@ -49,6 +50,17 @@ export default function Settings() {
   return (
     <div>
       <h1 className="title"><i className="fas fa-cog mr-2"></i>Settings</h1>
+      <div className="box">
+        <h2 className="title is-5">Brightspace account</h2>
+        <p className="is-size-7 has-text-grey mb-3">
+          Session expired or switched accounts? Re-authenticate to refresh your
+          Brightspace login (paste cookies, or re-pair with a signed-in desktop).
+        </p>
+        <Link to="/reauth" className="button is-primary is-light">
+          <span className="icon"><i className="fas fa-right-to-bracket"></i></span>
+          <span>Re-authenticate</span>
+        </Link>
+      </div>
       <div className="box">
         <h2 className="title is-5">Profile</h2>
         <div className="field">

@@ -1224,8 +1224,9 @@ mod tests {
         }
         let got = bridge.doc.get_course_overlay(id).unwrap();
         assert_eq!(got.is_pinned, Some(true));
-        assert_eq!(got.custom_name.as_deref(), Some("Intro to Psychology"));
         assert_eq!(got.custom_color.as_deref(), Some("#abcdef"));
+        // CustomName is written twice above ("Intro to Psychology" then
+        // "Calculus I"); last write wins, so the final overlay holds the latter.
         assert_eq!(got.custom_name.as_deref(), Some("Calculus I"));
         assert_eq!(got.custom_code.as_deref(), Some("MAT-101"));
         assert_eq!(got.units, Some(3.0));

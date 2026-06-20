@@ -1,7 +1,38 @@
 import { type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { AuthStatus, SyncStatus } from "../types";
+import { api, onAppEvent } from "../api";
 import GnomeSync from "./GnomeSync";
+import PullToRefresh from "./PullToRefresh";
+
+// Trigger a sync and resolve only once it actually finishes, so the
+// pull-to-refresh spinner reflects real progress. We subscribe to the sync
+// status transition first (avoiding a race), then kick a forced sync unless one
+// is already running. A timeout backstops the promise so the spinner can never
+// hang if the done-event is missed.
+async function syncAndWait(): Promise<void> {
+  let sawSyncing = false;
+  let settled = false;
+  let resolveDone: () => void = () => {};
+  const done = new Promise<void>((r) => (resolveDone = r));
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    unlistenP.then((fn) => fn()).catch(() => {});
+    resolveDone();
+  };
+  const timer = setTimeout(finish, 45000);
+  const unlistenP = onAppEvent((e) => {
+    if (e.kind !== "sync_status_changed") return;
+    if (e.status.status === "syncing") sawSyncing = true;
+    else if (sawSyncing) finish();
+  });
+  const st = await api.syncStatus().catch(() => null);
+  if (st?.status === "syncing") sawSyncing = true;
+  else await api.syncAll(true).catch(() => {});
+  await done;
+}
 
 // iPhone-sized mobile shell. Matches the three Pencil frames
 // (`Mobile Vision - Navigation` HDUr0, `Mobile Vision - Assignment` c3DdR,
@@ -86,24 +117,23 @@ export default function MobileLayout({ auth, sync, children }: Props) {
           <span style={{ fontWeight: 700 }}>Brilliant</span>
         </Link>
         <span style={{ flex: "1 1 auto" }} />
-        <span
+        <Link
+          to="/reauth"
           className="icon is-small"
-          title={auth.degraded ? "Session expired" : "Authenticated"}
-          style={{ color: authDot }}
+          title={auth.degraded ? "Session expired — tap to re-authenticate" : "Account — tap to re-authenticate"}
+          aria-label={auth.degraded ? "Session expired, re-authenticate" : "Account"}
+          style={{ color: authDot, textDecoration: "none" }}
         >
           <i className="fas fa-circle" style={{ fontSize: "0.55rem" }}></i>
-        </span>
+        </Link>
       </header>
 
-      <main
-        style={{
-          flex: "1 1 auto",
-          overflow: "auto",
-          background: "var(--pencil-bg-app)",
-        }}
+      <PullToRefresh
+        onRefresh={syncAndWait}
+        style={{ flex: "1 1 auto", background: "var(--pencil-bg-app)" }}
       >
         <div style={{ padding: "12px 12px 16px 12px" }}>{children}</div>
-      </main>
+      </PullToRefresh>
 
       <nav
         className="pencil-bottomNav"

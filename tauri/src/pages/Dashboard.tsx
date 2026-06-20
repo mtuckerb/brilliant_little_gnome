@@ -172,7 +172,7 @@ export default function Dashboard() {
           <p className="has-text-grey">{courses.length} active course{courses.length === 1 ? "" : "s"}</p>
         </div>
         <div className="level-right">
-          <button className="button is-small" onClick={() => api.syncAll(false)}>
+          <button className="button is-small" onClick={() => api.syncAll(true)}>
             <span className="icon"><i className="fas fa-sync"></i></span>
             <span>Sync</span>
           </button>

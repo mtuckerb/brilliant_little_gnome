@@ -1,6 +1,7 @@
 // EventBus — emits structured events to the React frontend via Tauri's emit API.
 // Replaces the SSE channel from the Ruby app.
 
+use crate::models::SyncStatus;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -29,6 +30,22 @@ impl EventBus {
 
     pub fn sync_done(&self) {
         self.emit("sync:done", ());
+    }
+
+    /// Emit the unified `app-event` the frontend's `onAppEvent` listener
+    /// consumes. The React side (App banner, sidebar `CourseRows`, `DueSoon`,
+    /// Dashboard) keys course/assignment refreshes off the `syncing → idle`
+    /// transition carried here. The legacy `sync:progress`/`sync:done`
+    /// channels above are kept for any direct subscribers, but this is the
+    /// canonical signal the discriminated-union frontend actually listens for.
+    pub fn sync_status_changed(&self, status: &SyncStatus) {
+        self.emit(
+            "app-event",
+            SyncStatusChangedEvent {
+                kind: "sync_status_changed",
+                status: status.clone(),
+            },
+        );
     }
 
     pub fn sync_error(&self, message: &str) {
@@ -67,6 +84,12 @@ impl EventBus {
             },
         );
     }
+}
+
+#[derive(Serialize, Clone)]
+struct SyncStatusChangedEvent {
+    kind: &'static str,
+    status: SyncStatus,
 }
 
 #[derive(Serialize, Clone)]

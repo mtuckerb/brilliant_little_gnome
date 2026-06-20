@@ -107,4 +107,47 @@ impl AppState {
             .map_err(|e| AppError::Other(format!("apply_local brightspace_host: {e}")))?;
         Ok(())
     }
+
+    /// Persist a rotated Brightspace cookie and re-share it to paired peers.
+    ///
+    /// Called at the end of a successful sync. `client.absorb_rotated_cookie`
+    /// keeps the in-memory cookie current as Brightspace reissues the session
+    /// during normal API calls; here we notice when that live value has
+    /// diverged from what's stored, write it back (so it survives restart and
+    /// is what the P2P bootstrap hands new peers), and re-mirror it into the
+    /// Loro doc. The mirror runs the live-session validation gate and fails
+    /// closed, so a bad value is never shared. The net effect: a paired phone
+    /// stays authenticated as the desktop's session renews, with no manual
+    /// re-login. No-ops when nothing rotated.
+    pub async fn refresh_shared_credentials(&self) {
+        let (Some(cookie), Some(host)) = (self.client.cookie_clone(), self.client.host_clone())
+        else {
+            return;
+        };
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT brightspace_cookie FROM user_preferences LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten();
+        if stored.as_deref() == Some(cookie.as_str()) {
+            return; // nothing rotated since the last share
+        }
+        if let Err(e) = sqlx::query(
+            "UPDATE user_preferences SET brightspace_cookie = ?, brightspace_host = ?, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM user_preferences LIMIT 1)",
+        )
+        .bind(&cookie)
+        .bind(&host)
+        .execute(&self.pool)
+        .await
+        {
+            tracing::warn!("refresh_shared_credentials: persist failed: {e}");
+            return;
+        }
+        tracing::info!("Brightspace session cookie rotated — persisted and re-sharing to peers");
+        #[cfg(feature = "p2p")]
+        if let Err(e) = self.mirror_credentials_to_loro().await {
+            tracing::warn!("refresh_shared_credentials: mirror failed: {e}");
+        }
+    }
 }
