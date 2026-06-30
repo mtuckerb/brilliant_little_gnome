@@ -11,6 +11,13 @@ use crate::error::Result;
 use crate::state::AppState;
 use serde_json::Value;
 
+// Per-course news returns a course's *entire* announcement history. On the first
+// sync that's a large backlog (completed past courses included), so only
+// announcements newer than this arrive unread — older history is stored but
+// pre-marked read so it populates the course Announcements view without flooding
+// the notifications feed. Genuinely new announcements are always within window.
+const UNREAD_WINDOW_DAYS: i64 = 14;
+
 pub async fn sync(state: &AppState, course_id: &str) -> Result<()> {
     let items = state.client.get_course_news(&state.pool, course_id, false).await?;
     let mut upserted = 0u32;
@@ -57,11 +64,13 @@ async fn upsert_news_item(state: &AppState, course_id: &str, item: &Value) -> Re
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    // ON CONFLICT preserves is_read and url so re-syncing never re-marks an
-    // announcement unread or clobbers a feed-sourced web link.
+    // New rows land unread only if recent; the deep backlog lands read. The
+    // ON CONFLICT clause never touches is_read (or url), so re-syncing never
+    // re-marks an announcement unread or clobbers a feed-sourced web link.
+    let is_read = if date.as_deref().map_or(false, is_recent) { 0 } else { 1 };
     sqlx::query(
         "INSERT INTO notifications (external_id, notification_type, title, body, date, course_id, urgency, is_personal, is_read, url, created_at, updated_at)
-         VALUES (?, 'News', ?, ?, ?, ?, 1, 0, 0, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         VALUES (?, 'News', ?, ?, ?, ?, 1, 0, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT(external_id) DO UPDATE SET
             title = excluded.title,
             body = excluded.body,
@@ -74,6 +83,7 @@ async fn upsert_news_item(state: &AppState, course_id: &str, item: &Value) -> Re
     .bind(body)
     .bind(date)
     .bind(course_id)
+    .bind(is_read)
     .execute(&state.pool)
     .await?;
 
@@ -119,6 +129,13 @@ fn value_to_id(v: &Value) -> Option<String> {
         .or_else(|| v.as_str().map(|s| s.to_string()))
 }
 
+/// True if the announcement's start is within the recent unread window.
+fn is_recent(ts: &str) -> bool {
+    parse(ts).map_or(false, |t| {
+        t >= chrono::Utc::now() - chrono::Duration::days(UNREAD_WINDOW_DAYS)
+    })
+}
+
 fn is_future(ts: &str) -> bool {
     parse(ts).map_or(false, |t| t > chrono::Utc::now())
 }
@@ -135,8 +152,17 @@ fn parse(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{news_is_visible, value_to_id};
+    use super::{is_recent, news_is_visible, value_to_id};
     use serde_json::json;
+
+    #[test]
+    fn recent_window_marks_only_fresh_announcements_unread() {
+        let now = chrono::Utc::now();
+        let fresh = (now - chrono::Duration::days(1)).to_rfc3339();
+        let stale = (now - chrono::Duration::days(60)).to_rfc3339();
+        assert!(is_recent(&fresh));
+        assert!(!is_recent(&stale));
+    }
 
     #[test]
     fn room_change_announcement_is_visible() {
