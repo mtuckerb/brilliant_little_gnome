@@ -656,6 +656,16 @@ impl BrightspaceClient {
         Ok(ensure_array(&data))
     }
 
+    /// A course's announcements ("News" items). This is the authoritative,
+    /// complete per-course list — unlike the global `/lp/feed/`, which only
+    /// surfaces a subset of course announcements, so it's the source we use to
+    /// avoid silently dropping things like a "room change" notice.
+    pub async fn get_course_news(&self, pool: &SqlitePool, course_id: &str, force_refresh: bool) -> Result<Vec<Value>> {
+        let path = format!("/d2l/api/le/{}/{}/news/", API_VERSION, course_id);
+        let data = self.do_get(pool, &path, force_refresh).await?;
+        Ok(ensure_array(&data))
+    }
+
     pub async fn get_overview(&self, pool: &SqlitePool, course_id: &str, force_refresh: bool) -> Result<Value> {
         let path = format!("/d2l/api/le/{}/{}/overview", API_VERSION, course_id);
         self.do_get(pool, &path, force_refresh).await
