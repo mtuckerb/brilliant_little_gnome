@@ -82,8 +82,22 @@ export default function Dashboard() {
     );
   }
 
+  async function togglePin(c: Course) {
+    const next = !c.is_pinned;
+    // Optimistic: flip the icon immediately, then re-fetch to re-sort
+    // (pinned courses float to the top of their semester).
+    setCourses((prev) =>
+      prev ? prev.map((x) => (x.org_unit_id === c.org_unit_id ? { ...x, is_pinned: next } : x)) : prev,
+    );
+    try {
+      await api.setCoursePinned(c.org_unit_id, next);
+    } finally {
+      refresh();
+    }
+  }
+
   if (isMobile) {
-    return <MobileDashboard courses={courses} />;
+    return <MobileDashboard courses={courses} onTogglePin={togglePin} />;
   }
 
   // Group courses under the normalized semester label so "Spring 2025" and
@@ -211,12 +225,26 @@ export default function Dashboard() {
                   title="Drag to reorder. Hold ⌥/Alt while dropping to move across semesters."
                 >
                   <td>
+                    <button
+                      type="button"
+                      className="button is-white is-small px-1 mr-1"
+                      title={c.is_pinned ? "Unpin course" : "Pin course"}
+                      aria-label={c.is_pinned ? "Unpin course" : "Pin course"}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(c); }}
+                      onDragStart={(e) => e.preventDefault()}
+                    >
+                      <span className="icon is-small">
+                        <i
+                          className={`fas fa-thumbtack ${c.is_pinned ? "has-text-warning" : "has-text-grey-light"}`}
+                          style={{ opacity: c.is_pinned ? 1 : 0.55, transform: c.is_pinned ? "none" : "rotate(40deg)" }}
+                        ></i>
+                      </span>
+                    </button>
                     <Link
                       to={getLastCoursePath(c.org_unit_id)}
                       className="has-text-weight-bold"
                       style={{ color: c.custom_color || undefined }}
                     >
-                      {c.is_pinned && <i className="fas fa-thumbtack has-text-warning mr-2"></i>}
                       {courseLabel(c)}
                     </Link>
                   </td>
@@ -241,7 +269,7 @@ export default function Dashboard() {
 
 interface Stat { value: string; label: string }
 
-function MobileDashboard({ courses }: { courses: Course[] }) {
+function MobileDashboard({ courses, onTogglePin }: { courses: Course[]; onTogglePin: (c: Course) => void }) {
   // Stats are derivable from the courses list alone — no extra fetches on
   // load. Grade roll-up + due-date counts can move into here once we
   // batch-load grades summary per course; for v1 the simple counts read
@@ -346,9 +374,22 @@ function MobileDashboard({ courses }: { courses: Course[] }) {
                   </div>
                   <div className="pencil-course-row-meta">
                     {displayCourseCode(c) ?? ""}
-                    {c.is_pinned && <i className="fas fa-thumbtack ml-2 has-text-warning"></i>}
                   </div>
                 </div>
+                <button
+                  type="button"
+                  className="button is-white is-small px-2"
+                  title={c.is_pinned ? "Unpin course" : "Pin course"}
+                  aria-label={c.is_pinned ? "Unpin course" : "Pin course"}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(c); }}
+                >
+                  <span className="icon">
+                    <i
+                      className={`fas fa-thumbtack ${c.is_pinned ? "has-text-warning" : "has-text-grey-light"}`}
+                      style={{ opacity: c.is_pinned ? 1 : 0.55, transform: c.is_pinned ? "none" : "rotate(40deg)" }}
+                    ></i>
+                  </span>
+                </button>
                 <span className="icon" style={{ color: "var(--pencil-text-secondary)" }}>
                   <i className="fas fa-chevron-right"></i>
                 </span>

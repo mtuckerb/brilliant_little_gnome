@@ -62,7 +62,10 @@ pub async fn sync_enrollments(state: &AppState) -> Result<EnrollmentSync> {
                 name = excluded.name,
                 code = CASE WHEN courses.custom_name IS NULL OR courses.custom_name = '' THEN excluded.code ELSE courses.code END,
                 semester = COALESCE(excluded.semester, courses.semester),
-                is_pinned = excluded.is_pinned,
+                -- is_pinned is intentionally NOT updated here: Brightspace's
+                -- PinDate only seeds it on first insert; after that it's
+                -- user-controlled in Brilliant (set_course_pinned), so a sync
+                -- must never clobber the user's pin/unpin choice.
                 banner_url = COALESCE(excluded.banner_url, courses.banner_url),
                 last_accessed_at = COALESCE(excluded.last_accessed_at, courses.last_accessed_at),
                 updated_at = CURRENT_TIMESTAMP",
@@ -92,25 +95,11 @@ pub async fn sync_enrollments(state: &AppState) -> Result<EnrollmentSync> {
             tracing::warn!("drain pending course overlay {}: {}", id, e);
         }
 
-        // T-017: `is_pinned` is Class-B (per §10). Brightspace
-        // populates it from the user's PinDate, but the column is
-        // user-overridable in principle, so we mirror the
-        // sync-derived value into Loro. If a peer hasn't run
-        // Brightspace sync yet, this gives them the right starting
-        // point; if they have, the apply_remote path is idempotent.
-        #[cfg(feature = "p2p")]
-        if let Some(engine) = state.sync_engine() {
-            if let Err(e) = engine
-                .bridge()
-                .apply_local(crate::p2p::bridge::LocalChange::Course {
-                    id: id.clone(),
-                    field: crate::p2p::doc::CourseField::IsPinned(is_pinned),
-                })
-                .await
-            {
-                tracing::warn!("apply_local sync is_pinned {}: {}", id, e);
-            }
-        }
+        // NB: we deliberately do NOT mirror the Brightspace-derived is_pinned
+        // into Loro on every sync — that would overwrite a peer's user-set
+        // pin/unpin. The pin state seeds from Brightspace on first insert and
+        // is thereafter owned by the user; `set_course_pinned` mirrors the
+        // user's explicit choice to peers.
 
         if is_new {
             new_ids.push(id.clone());
