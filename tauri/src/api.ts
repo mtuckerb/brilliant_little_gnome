@@ -49,6 +49,8 @@ export const api = {
   getCourse: (id: string) => invoke<Course>("get_course", { id }),
   reorderCourses: (orderedIds: string[]) =>
     invoke<void>("reorder_courses", { orderedIds }),
+  setCoursePinned: (id: string, pinned: boolean) =>
+    invoke<void>("set_course_pinned", { id, pinned }),
   updateCourseColor: (id: string, color: string) =>
     invoke<void>("update_course_color", { id, color }),
   updateCourseName: (id: string, name: string) =>

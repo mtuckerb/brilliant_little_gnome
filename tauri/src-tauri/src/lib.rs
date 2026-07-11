@@ -137,6 +137,7 @@ pub fn run() {
             commands::courses::list_courses,
             commands::courses::get_course,
             commands::courses::reorder_courses,
+            commands::courses::set_course_pinned,
             commands::courses::update_course_color,
             commands::courses::update_course_name,
             commands::courses::update_course_code,

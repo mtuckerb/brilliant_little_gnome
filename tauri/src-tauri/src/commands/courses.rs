@@ -69,6 +69,36 @@ pub async fn reorder_courses(state: AppStateArg<'_>, ordered_ids: Vec<String>) -
     Ok(())
 }
 
+/// Pin or unpin a course. Brightspace seeds the initial pin state from the
+/// user's PinDate, but from then on this is user-controlled in Brilliant (the
+/// enrollment sync no longer overwrites it), and the choice mirrors to peers.
+#[tauri::command]
+pub async fn set_course_pinned(state: AppStateArg<'_>, id: String, pinned: bool) -> Result<()> {
+    sqlx::query("UPDATE courses SET is_pinned = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+        .bind(pinned as i64)
+        .bind(&id)
+        .execute(&state.pool)
+        .await?;
+    #[cfg(feature = "p2p")]
+    {
+        use crate::p2p::bridge::LocalChange;
+        use crate::p2p::doc::CourseField;
+        if let Some(engine) = state.sync_engine() {
+            if let Err(e) = engine
+                .bridge()
+                .apply_local(LocalChange::Course {
+                    id: id.clone(),
+                    field: CourseField::IsPinned(pinned),
+                })
+                .await
+            {
+                tracing::warn!("apply_local is_pinned {}: {}", id, e);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn extract_course_code(full_name: &str) -> Option<String> {
     let code_re = regex::Regex::new(r"(?i)([A-Z]{2,4})\s*-?\s*(\d{3,4})").ok()?;
     let captures = code_re.captures(full_name)?;
