@@ -21,6 +21,7 @@ pub struct PrefsPatch {
     pub historic_units: Option<f64>,
     pub default_semester: Option<String>,
     pub api_enabled: Option<bool>,
+    pub api_key: Option<String>,
     pub api_listen_all: Option<bool>,
     pub api_port: Option<i64>,
     pub calendar_show_empty_days: Option<bool>,
@@ -65,6 +66,10 @@ pub async fn update_prefs(state: AppStateArg<'_>, patch: PrefsPatch) -> Result<U
     if let Some(v) = patch.api_enabled {
         sqlx::query("UPDATE user_preferences SET api_enabled = ?, updated_at = CURRENT_TIMESTAMP")
             .bind(v as i64).execute(pool).await?;
+    }
+    if let Some(v) = patch.api_key.as_ref() {
+        sqlx::query("UPDATE user_preferences SET api_key = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(v).execute(pool).await?;
     }
     if let Some(v) = patch.api_listen_all {
         sqlx::query("UPDATE user_preferences SET api_listen_all = ?, updated_at = CURRENT_TIMESTAMP")
