@@ -110,6 +110,26 @@ pub fn run() {
                         }
                     }
                 }
+
+                // Auto-start the optional REST server if the user left it
+                // enabled, so external integrations (e.g. the daily vault
+                // sync) can reach it without anyone opening Settings and
+                // clicking "Start server". Mirrors the rest_api_start command.
+                let api_enabled: i64 =
+                    sqlx::query_scalar("SELECT api_enabled FROM user_preferences LIMIT 1")
+                        .fetch_one(&state.pool)
+                        .await
+                        .unwrap_or(0);
+                if api_enabled != 0 {
+                    match crate::rest_api::start(state.clone()).await {
+                        Ok(h) => {
+                            *state.rest_handle.lock().await = Some(h);
+                            tracing::info!("rest api: auto-started at launch");
+                        }
+                        Err(e) => tracing::warn!("rest api: auto-start failed: {e}"),
+                    }
+                }
+
                 anyhow::Ok(())
             })?;
 
