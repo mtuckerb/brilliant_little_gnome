@@ -62,6 +62,7 @@ pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
         .route("/api/v1/courses", get(list_courses))
         .route("/api/v1/courses/reorder", post(reorder_courses))
         .route("/api/v1/courses/:id", get(get_course))
+        .route("/api/v1/courses/:id/export", get(export_course))
         .route("/api/v1/courses/:id/grades/summary", get(grades_summary))
         .route("/api/v1/courses/:id/assignments/summary", get(assignments_summary))
         .route("/api/v1/notifications", get(notifications))
@@ -232,6 +233,30 @@ async fn list_courses(AxState(state): AxState<Arc<AppState>>) -> std::result::Re
         .map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null))
         .collect();
     Ok(Json(Value::Array(arr)))
+}
+
+/// Stream the whole course as a zip (module tree + files, with HTML content
+/// pages / overview / announcements converted to Markdown) so an external
+/// integration like gbrain can fetch it daily and unpack it into an Obsidian
+/// vault. Same builder the in-app "Download All" uses.
+async fn export_course(
+    AxState(state): AxState<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> std::result::Result<Response, Response> {
+    match crate::commands::downloads::build_course_archive(&state, &id).await {
+        Ok((bytes, _failures)) => {
+            let mut resp = Response::new(Body::from(bytes));
+            resp.headers_mut()
+                .insert(header::CONTENT_TYPE, "application/zip".parse().unwrap());
+            if let Ok(cd) =
+                format!("attachment; filename=\"Brilliant-{}.zip\"", id).parse()
+            {
+                resp.headers_mut().insert(header::CONTENT_DISPOSITION, cd);
+            }
+            Ok(resp)
+        }
+        Err(e) => Err(api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
 }
 
 async fn get_course(

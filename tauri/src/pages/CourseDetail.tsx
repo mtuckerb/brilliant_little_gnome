@@ -74,6 +74,8 @@ export default function CourseDetail() {
       const payload = await api.downloadCourseArchive(course.org_unit_id);
       console.info("download_course_archive done", payload);
       triggerDownload(payload);
+      const where = payload.saved_path ? ` → ${payload.saved_path}` : " to your Downloads folder";
+      toast.show(`Saved ${payload.filename}${where}`, "is-success", 7000);
     } catch (e) {
       console.error("download_course_archive failed", e);
       const msg = String((e as { message?: string })?.message ?? e);

@@ -11,6 +11,7 @@ pub mod discussions;
 pub mod overview;
 pub mod assignment_detail;
 pub mod downloads;
+pub mod htmlmd;
 pub mod zotero;
 pub mod import_old;
 
