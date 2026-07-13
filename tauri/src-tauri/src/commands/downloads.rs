@@ -95,7 +95,7 @@ pub async fn download_module_archive(
     let mut zip = zip_writer::Builder::new();
     let mut seen = HashSet::new();
     let mut failures = Vec::new();
-    collect_module(&mut zip, &state, &course_id, &module_node, "", &mut seen, &mut failures).await?;
+    collect_module(&mut zip, state.inner().as_ref(), &course_id, &module_node, "", &mut seen, &mut failures).await?;
 
     // If the session expired mid-walk every live fetch 403'd and the zip is
     // useless — surface the auth failure (toast already emitted by the probe)
@@ -127,28 +127,53 @@ pub async fn download_course_archive(
     state: AppStateArg<'_>,
     course_id: String,
 ) -> Result<DownloadBytes> {
-    tracing::info!("download_course_archive start course={}", course_id);
-    // Preflight: confirm the session is live before the expensive course walk.
-    // A dead session would otherwise 403 every per-item fetch and emit a zip
-    // full of skips — fail fast with a single "session expired" toast instead.
+    let (bytes, _failures) = build_course_archive(state.inner().as_ref(), &course_id).await?;
+    let filename = format!("Brilliant-{}.zip", course_id);
+    let saved_path = save_download_file(&state.app, &filename, &bytes)?;
+    tracing::info!("download_course_archive saved {}", saved_path.display());
+    let payload = DownloadBytes {
+        bytes_base64: None,
+        mime: Some("application/zip".to_string()),
+        filename,
+        saved_path: Some(saved_path.display().to_string()),
+    };
+    emit_saved(&app, &payload);
+    Ok(payload)
+}
+
+/// Build a full course archive (zip bytes + failure notes) WITHOUT writing to
+/// disk. Shared by the Tauri command above (which saves) and the REST
+/// `/courses/:id/export` endpoint (which streams it back for gbrain to unpack
+/// into the vault). HTML content pages, the course overview, and announcements
+/// are converted to Markdown so the archive reads natively in an Obsidian
+/// vault; binary files (PDF/docx/images/…) are included as-is.
+pub(crate) async fn build_course_archive(
+    state: &crate::state::AppState,
+    course_id: &str,
+) -> Result<(Vec<u8>, Vec<String>)> {
+    tracing::info!("build_course_archive start course={}", course_id);
+    // Preflight: confirm the session is live before the expensive walk so a
+    // dead session fails fast instead of producing a zip full of 403 skips.
     state.client.preflight_auth().await?;
-    let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
+    let toc = state.client.get_toc(&state.pool, course_id, false).await?;
     let modules = toc.get("Modules").and_then(|m| m.as_array()).cloned().unwrap_or_default();
 
     let mut zip = zip_writer::Builder::new();
     let mut seen = HashSet::new();
     let mut failures = Vec::new();
     for m in &modules {
-        if let Err(e) = collect_module(&mut zip, &state, &course_id, m, "Table_of_Contents/", &mut seen, &mut failures).await {
+        if let Err(e) = collect_module(&mut zip, state, course_id, m, "Table_of_Contents/", &mut seen, &mut failures).await {
             tracing::warn!("module skipped during course archive: {}", e);
             failures.push(format!("module {} skipped: {}", module_title(m), e));
         }
     }
 
-    collect_assignment_files(&mut zip, &state, &course_id, &mut seen, &mut failures).await;
-    collect_overview_attachments(&mut zip, &state, &course_id, &mut seen, &mut failures).await;
+    collect_assignment_files(&mut zip, state, course_id, &mut seen, &mut failures).await;
+    collect_overview_attachments(&mut zip, state, course_id, &mut seen, &mut failures).await;
+    collect_overview_markdown(&mut zip, state, course_id, &mut seen).await;
+    collect_announcements_markdown(&mut zip, state, course_id, &mut seen).await;
 
-    // Best-effort: fetch the course overview attachment if one exists.
+    // Best-effort: fetch the course overview attachment (syllabus) if one exists.
     let overview_path = format!("/d2l/api/le/{}/{}/overview", crate::client::API_VERSION, course_id);
     if let Ok(ov) = state.client.do_get(&state.pool, &overview_path, false).await {
         if let Some(att_url) = ov
@@ -174,14 +199,11 @@ pub async fn download_course_archive(
     }
 
     tracing::info!(
-        "download_course_archive course={} entries={} failures={}",
+        "build_course_archive course={} entries={} failures={}",
         course_id,
         zip.entry_count(),
         failures.len()
     );
-    // If the session expired mid-batch every live fetch 403'd and the zip is
-    // useless — surface the auth failure (toast already emitted by the probe)
-    // instead of saving an archive full of nothing.
     if state.client.is_degraded() {
         return Err(AppError::Unauthenticated);
     }
@@ -194,19 +216,65 @@ pub async fn download_course_archive(
         )));
     }
     add_download_warnings(&mut zip, &failures);
+    Ok((zip.finish(), failures))
+}
 
-    let bytes = zip.finish();
-    let filename = format!("Brilliant-{}.zip", course_id);
-    let saved_path = save_download_file(&state.app, &filename, &bytes)?;
-    tracing::info!("download_course_archive saved {}", saved_path.display());
-    let payload = DownloadBytes {
-        bytes_base64: None,
-        mime: Some("application/zip".to_string()),
-        filename,
-        saved_path: Some(saved_path.display().to_string()),
-    };
-    emit_saved(&app, &payload);
-    Ok(payload)
+/// Convert the course overview HTML to `_Overview.md`.
+async fn collect_overview_markdown(
+    zip: &mut zip_writer::Builder,
+    state: &crate::state::AppState,
+    course_id: &str,
+    seen: &mut HashSet<String>,
+) {
+    let path = format!("/d2l/api/le/{}/{}/overview", crate::client::API_VERSION, course_id);
+    if let Ok(ov) = state.client.do_get(&state.pool, &path, false).await {
+        let html = ov
+            .pointer("/Description/Html")
+            .and_then(|v| v.as_str())
+            .or_else(|| ov.pointer("/Description/Text").and_then(|v| v.as_str()));
+        if let Some(h) = html {
+            if !h.trim().is_empty() {
+                let md = crate::commands::htmlmd::html_to_markdown(h);
+                let entry = unique_path(seen, "_Overview.md");
+                zip.add_file(&entry, format!("# Course Overview\n\n{}\n", md).as_bytes());
+            }
+        }
+    }
+}
+
+/// Roll the course's announcements (already synced into `notifications`) into a
+/// single `_Announcements.md`, newest first.
+async fn collect_announcements_markdown(
+    zip: &mut zip_writer::Builder,
+    state: &crate::state::AppState,
+    course_id: &str,
+    seen: &mut HashSet<String>,
+) {
+    let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT title, body, date FROM notifications \
+         WHERE notification_type = 'News' AND course_id = ? ORDER BY date DESC NULLS LAST",
+    )
+    .bind(course_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    if rows.is_empty() {
+        return;
+    }
+    let mut md = String::from("# Announcements\n\n");
+    for (title, body, date) in rows {
+        md.push_str(&format!("## {}\n\n", title));
+        if let Some(d) = date {
+            md.push_str(&format!("*{}*\n\n", &d[..d.len().min(10)]));
+        }
+        if let Some(b) = body {
+            md.push_str(crate::commands::htmlmd::html_to_markdown(&b).trim());
+            md.push_str("\n\n");
+        }
+        md.push_str("---\n\n");
+    }
+    let entry = unique_path(seen, "_Announcements.md");
+    zip.add_file(&entry, md.as_bytes());
 }
 
 /// Download the course's overview attachment (syllabus PDF) straight to disk
@@ -376,7 +444,7 @@ fn topic_download_path(course_id: &str, topic_id: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 async fn collect_module(
     zip: &mut zip_writer::Builder,
-    state: &AppStateArg<'_>,
+    state: &crate::state::AppState,
     course_id: &str,
     node: &Value,
     parent_prefix: &str,
@@ -411,10 +479,23 @@ async fn collect_module(
             }
             let path = topic_download_path(course_id, &topic_id);
             match state.client.fetch_bytes(&path).await {
-                Ok((bytes, _mime, name)) => {
-                    let fname = name.unwrap_or_else(|| filename_with_extension(&topic_title, None));
-                    let entry = unique_path(seen, &format!("{}{}", folder, fname));
-                    zip.add_file(&entry, &bytes);
+                Ok((bytes, mime, name)) => {
+                    // HTML content pages → Markdown so they're readable in the
+                    // vault; everything else (PDF/docx/images/…) stays as-is.
+                    let is_html = mime.as_deref().map_or(false, |m| m.contains("html"))
+                        || name.as_deref().map_or(false, |n| {
+                            let l = n.to_ascii_lowercase();
+                            l.ends_with(".html") || l.ends_with(".htm")
+                        });
+                    if is_html {
+                        let md = crate::commands::htmlmd::html_to_markdown(&String::from_utf8_lossy(&bytes));
+                        let entry = unique_path(seen, &format!("{}{}.md", folder, sanitize(&topic_title)));
+                        zip.add_file(&entry, format!("# {}\n\n{}\n", topic_title, md).as_bytes());
+                    } else {
+                        let fname = name.unwrap_or_else(|| filename_with_extension(&topic_title, None));
+                        let entry = unique_path(seen, &format!("{}{}", folder, fname));
+                        zip.add_file(&entry, &bytes);
+                    }
                 }
                 Err(e) => {
                     tracing::debug!("topic {} skipped: {}", topic_id, e);
@@ -435,7 +516,7 @@ async fn collect_module(
 
 async fn collect_assignment_files(
     zip: &mut zip_writer::Builder,
-    state: &AppStateArg<'_>,
+    state: &crate::state::AppState,
     course_id: &str,
     seen: &mut HashSet<String>,
     failures: &mut Vec<String>,
@@ -466,7 +547,7 @@ async fn collect_assignment_files(
 
 async fn collect_overview_attachments(
     zip: &mut zip_writer::Builder,
-    state: &AppStateArg<'_>,
+    state: &crate::state::AppState,
     course_id: &str,
     seen: &mut HashSet<String>,
     failures: &mut Vec<String>,
@@ -479,7 +560,7 @@ async fn collect_overview_attachments(
 
 async fn add_attachments(
     zip: &mut zip_writer::Builder,
-    state: &AppStateArg<'_>,
+    state: &crate::state::AppState,
     seen: &mut HashSet<String>,
     failures: &mut Vec<String>,
     folder: &str,
@@ -498,7 +579,7 @@ async fn add_attachments(
 
 async fn add_attachment(
     zip: &mut zip_writer::Builder,
-    state: &AppStateArg<'_>,
+    state: &crate::state::AppState,
     seen: &mut HashSet<String>,
     failures: &mut Vec<String>,
     folder: &str,

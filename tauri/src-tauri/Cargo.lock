@@ -656,6 +656,7 @@ dependencies = [
  "cookie_store 0.21.1",
  "crc32fast",
  "dirs 5.0.1",
+ "ego-tree",
  "futures",
  "hex",
  "hmac",
