@@ -12,6 +12,7 @@ pub mod overview;
 pub mod assignment_detail;
 pub mod downloads;
 pub mod htmlmd;
+pub mod updates;
 pub mod zotero;
 pub mod import_old;
 

@@ -70,6 +70,12 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     }
 
+    // Desktop-only: OTA self-update. Mobile updates via the App Store / TestFlight.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
     builder
         .setup(|app| {
             #[cfg(not(debug_assertions))]
@@ -141,6 +147,36 @@ pub fn run() {
                 }
             });
 
+            // Desktop OTA: check for an update on launch and notify the UI (the
+            // Settings → Updates panel + a toast). Non-fatal — a missing/404
+            // endpoint (no release yet) just logs at debug.
+            #[cfg(desktop)]
+            {
+                let handle3 = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri::Emitter;
+                    use tauri_plugin_updater::UpdaterExt;
+                    match handle3.updater() {
+                        Ok(updater) => match updater.check().await {
+                            Ok(Some(u)) => {
+                                let _ = handle3.emit(
+                                    "update://available",
+                                    serde_json::json!({
+                                        "version": u.version,
+                                        "current_version": u.current_version,
+                                        "notes": u.body,
+                                    }),
+                                );
+                                tracing::info!("update available: {}", u.version);
+                            }
+                            Ok(None) => tracing::debug!("updater: up to date"),
+                            Err(e) => tracing::debug!("updater: check failed: {e}"),
+                        },
+                        Err(e) => tracing::debug!("updater: unavailable: {e}"),
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -158,6 +194,8 @@ pub fn run() {
             commands::courses::get_course,
             commands::courses::reorder_courses,
             commands::courses::set_course_pinned,
+            commands::updates::check_for_updates,
+            commands::updates::install_update,
             commands::courses::update_course_color,
             commands::courses::update_course_name,
             commands::courses::update_course_code,

@@ -92,6 +92,15 @@ function AppInner() {
       api.syncAll(false).catch(() => {});
     });
 
+    // Desktop OTA: the Rust side checks for updates on launch and emits this.
+    const unlistenUpdate = listen<{ version?: string }>("update://available", (e) => {
+      toast.show(
+        `Update ${e.payload?.version ?? ""} available — Settings → Software update to install.`,
+        "is-info",
+        9000,
+      );
+    });
+
     const interval = setInterval(() => {
       api.syncStatus().then(setSync).catch(() => {});
     }, 4000);
@@ -100,6 +109,7 @@ function AppInner() {
       clearInterval(interval);
       unlistenP.then((fn) => fn()).catch(() => {});
       unlistenAuthCaptured.then((fn) => fn()).catch(() => {});
+      unlistenUpdate.then((fn) => fn()).catch(() => {});
     };
   }, []);
 

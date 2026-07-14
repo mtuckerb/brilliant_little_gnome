@@ -25,8 +25,17 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/mtuckerb/brilliant_little_gnome/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3RTVDMkRCODEzQzU5OApSV1NZeFJPNExWeCtDT3ZhRzR2OExRYUVnSnpQS2xkcHhhZWNtTlNIekZrVnJHcHJCU3pMZzhsYQo="
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",

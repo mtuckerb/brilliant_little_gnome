@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getName, getVersion, getTauriVersion } from "@tauri-apps/api/app";
-import { api } from "../api";
+import { api, type UpdateInfo } from "../api";
 import SyncPanel from "../components/SyncPanel";
 import type { UserPreferences } from "../types";
 import { devServerHost } from "../buildInfo";
@@ -302,6 +302,8 @@ export default function Settings() {
         </div>
       </div>
 
+      <UpdatesBox />
+
       <ExportAuthBox />
 
       <ImportFromOldBrilliantBox />
@@ -377,6 +379,73 @@ function ImportFromOldBrilliantBox() {
       </button>
       {result && <p className="help has-text-success-dark mt-3">{result}</p>}
       {err && <p className="help is-danger mt-3">{err}</p>}
+    </div>
+  );
+}
+
+function UpdatesBox() {
+  const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  // undefined = not checked yet; null = up to date; object = update available
+  const [update, setUpdate] = useState<UpdateInfo | null | undefined>(undefined);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function check() {
+    setChecking(true);
+    setErr(null);
+    try {
+      setUpdate(await api.checkForUpdates());
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function install() {
+    setInstalling(true);
+    setErr(null);
+    try {
+      // On success the app downloads, installs, and restarts — this won't return.
+      await api.installUpdate();
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+      setInstalling(false);
+    }
+  }
+
+  return (
+    <div className="box">
+      <h2 className="title is-5">Software update</h2>
+      <p className="is-size-7 has-text-grey mb-3">
+        The desktop app updates over-the-air. (On mobile, updates come from the App Store.)
+      </p>
+      {update && update.version && (
+        <div className="notification is-info is-light">
+          <strong>Update available: {update.version}</strong> — you have {update.current_version}.
+          {update.notes && (
+            <p className="is-size-7 mt-1" style={{ whiteSpace: "pre-wrap" }}>{update.notes}</p>
+          )}
+        </div>
+      )}
+      {update === null && <p className="has-text-success mb-3">You're on the latest version.</p>}
+      {err && <div className="notification is-danger is-light">{err}</div>}
+      <div className="field is-grouped">
+        <div className="control">
+          <button className={`button ${checking ? "is-loading" : ""}`} onClick={check} disabled={checking || installing}>
+            <span className="icon"><i className="fas fa-arrows-rotate"></i></span>
+            <span>Check for updates</span>
+          </button>
+        </div>
+        {update && update.version && (
+          <div className="control">
+            <button className={`button is-primary ${installing ? "is-loading" : ""}`} onClick={install} disabled={installing}>
+              <span className="icon"><i className="fas fa-download"></i></span>
+              <span>Install &amp; restart</span>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
