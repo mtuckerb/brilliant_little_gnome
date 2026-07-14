@@ -68,6 +68,9 @@ pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
         .route("/api/v1/notifications", get(notifications))
         .route("/api/v1/dashboard/summary", get(dashboard_summary))
         .route("/api/v1/assignments", post(create_assignment))
+        // Native MCP (Model Context Protocol) server over Streamable HTTP, so
+        // agents get Brilliant as first-class tools. Same bearer auth.
+        .route("/mcp", post(mcp_handle))
         .layer(middleware::from_fn_with_state(state.clone(), require_api_key));
 
     let app = Router::new()
@@ -157,6 +160,144 @@ fn api_error(code: StatusCode, msg: String) -> Response {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body))
         .unwrap()
+}
+
+// ---- MCP (Model Context Protocol) over Streamable HTTP -------------------
+//
+// A minimal, dependency-free MCP server sharing this axum app + bearer auth.
+// JSON-RPC 2.0. Handles `initialize`, `tools/list`, `tools/call`, `ping`, and
+// silently 202s notifications. Tools reuse the REST handlers above so there's
+// one source of truth for the data.
+
+const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
+
+async fn mcp_handle(AxState(state): AxState<Arc<AppState>>, Json(req): Json<Value>) -> Response {
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let params = req.get("params").cloned().unwrap_or(Value::Null);
+
+    // A JSON-RPC message with no `id` is a notification — ack with 202, no body.
+    let Some(id) = req.get("id").cloned() else {
+        return StatusCode::ACCEPTED.into_response();
+    };
+
+    let result: std::result::Result<Value, (i64, String)> = match method.as_str() {
+        "initialize" => Ok(json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "brilliant", "version": env!("CARGO_PKG_VERSION") }
+        })),
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({ "tools": mcp_tool_defs() })),
+        "tools/call" => mcp_tools_call(&state, &params).await,
+        other => Err((-32601, format!("Method not found: {other}"))),
+    };
+
+    let payload = match result {
+        Ok(v) => json!({ "jsonrpc": "2.0", "id": id, "result": v }),
+        Err((code, message)) => {
+            json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+        }
+    };
+    Json(payload).into_response()
+}
+
+fn mcp_tool_defs() -> Value {
+    let course_arg = json!({
+        "type": "object",
+        "properties": { "course_id": { "type": "string", "description": "course org_unit_id" } },
+        "required": ["course_id"]
+    });
+    json!([
+        { "name": "list_courses", "description": "List all Brightspace courses (org_unit_id, code, name, semester, status, pins).", "inputSchema": { "type": "object", "properties": {} } },
+        { "name": "get_course", "description": "Get one course by org_unit_id.", "inputSchema": course_arg },
+        { "name": "grades_summary", "description": "Grade rows + roll-up (earned/possible, projected) for a course.", "inputSchema": course_arg },
+        { "name": "assignments_summary", "description": "Assignment list + due dates for a course.", "inputSchema": course_arg },
+        { "name": "list_notifications", "description": "Recent notifications / course announcements.", "inputSchema": { "type": "object", "properties": { "limit": { "type": "integer" } } } },
+        { "name": "dashboard_summary", "description": "Cross-course dashboard summary.", "inputSchema": { "type": "object", "properties": {} } },
+        { "name": "export_course", "description": "Export a whole course (module tree + files, plus Markdown for content pages, overview, and announcements) as a zip saved to dest_dir. Returns the saved path. Unzip to browse in a vault.", "inputSchema": {
+            "type": "object",
+            "properties": {
+                "course_id": { "type": "string", "description": "course org_unit_id" },
+                "dest_dir": { "type": "string", "description": "absolute directory to write the .zip into" }
+            },
+            "required": ["course_id", "dest_dir"]
+        } }
+    ])
+}
+
+async fn mcp_tools_call(state: &Arc<AppState>, params: &Value) -> std::result::Result<Value, (i64, String)> {
+    let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let cid = args.get("course_id").and_then(|v| v.as_str()).map(String::from);
+    let need_cid = || cid.clone().ok_or_else(|| "course_id required".to_string());
+
+    let data: std::result::Result<Value, String> = match name {
+        "list_courses" => unwrap_json(list_courses(AxState(state.clone())).await),
+        "dashboard_summary" => unwrap_json(dashboard_summary(AxState(state.clone())).await),
+        "get_course" => match need_cid() {
+            Ok(id) => unwrap_json(get_course(AxState(state.clone()), Path(id)).await),
+            Err(e) => Err(e),
+        },
+        "grades_summary" => match need_cid() {
+            Ok(id) => unwrap_json(grades_summary(AxState(state.clone()), Path(id), Query(HashMap::new())).await),
+            Err(e) => Err(e),
+        },
+        "assignments_summary" => match need_cid() {
+            Ok(id) => unwrap_json(assignments_summary(AxState(state.clone()), Path(id), Query(HashMap::new())).await),
+            Err(e) => Err(e),
+        },
+        "list_notifications" => {
+            let mut q = HashMap::new();
+            if let Some(l) = args.get("limit").and_then(|v| v.as_i64()) {
+                q.insert("limit".to_string(), l.to_string());
+            }
+            unwrap_json(notifications(AxState(state.clone()), Query(q)).await)
+        }
+        "export_course" => {
+            match (cid.clone(), args.get("dest_dir").and_then(|v| v.as_str())) {
+                (Some(id), Some(dest)) => mcp_export_course(state, &id, dest).await,
+                (None, _) => Err("course_id required".to_string()),
+                (_, None) => Err("dest_dir required".to_string()),
+            }
+        }
+        other => return Err((-32602, format!("Unknown tool: {other}"))),
+    };
+
+    Ok(match data {
+        Ok(v) => {
+            let text = serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string());
+            json!({ "content": [{ "type": "text", "text": text }], "isError": false })
+        }
+        Err(msg) => json!({ "content": [{ "type": "text", "text": format!("Error: {msg}") }], "isError": true }),
+    })
+}
+
+/// Pull the `Value` out of a REST handler's `Result<Json<Value>, Response>`.
+fn unwrap_json(r: std::result::Result<Json<Value>, Response>) -> std::result::Result<Value, String> {
+    match r {
+        Ok(Json(v)) => Ok(v),
+        Err(_) => Err("tool call failed (check the app log)".to_string()),
+    }
+}
+
+async fn mcp_export_course(
+    state: &Arc<AppState>,
+    course_id: &str,
+    dest_dir: &str,
+) -> std::result::Result<Value, String> {
+    let (bytes, failures) = crate::commands::downloads::build_course_archive(state, course_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let dir = std::path::Path::new(dest_dir);
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {dest_dir}: {e}"))?;
+    let path = dir.join(format!("Brilliant-{course_id}.zip"));
+    std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(json!({
+        "saved_path": path.display().to_string(),
+        "bytes": bytes.len(),
+        "warnings": failures.len(),
+        "note": "zip bundle written; unzip to browse (module tree + files + _Overview.md + _Announcements.md)"
+    }))
 }
 
 // ---- handlers ----------------------------------------------------------
