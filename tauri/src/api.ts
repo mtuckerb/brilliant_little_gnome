@@ -7,6 +7,12 @@ export interface ZoteroResult {
   failures: string[];
   collection_key: string | null;
 }
+
+export interface UpdateInfo {
+  version: string;
+  current_version: string;
+  notes: string | null;
+}
 import type {
   Course,
   GradeRow,
@@ -38,6 +44,10 @@ export const api = {
   openLoginWindow: (host: string) =>
     invoke<void>("open_login_window", { host }),
   clearAuth: () => invoke<void>("clear_auth"),
+
+  // OTA self-update (desktop). Mobile returns null / an error (App Store).
+  checkForUpdates: () => invoke<UpdateInfo | null>("check_for_updates"),
+  installUpdate: () => invoke<void>("install_update"),
 
   // Preferences
   getPrefs: () => invoke<UserPreferences>("get_prefs"),

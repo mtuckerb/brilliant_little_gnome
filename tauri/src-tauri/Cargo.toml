@@ -97,6 +97,10 @@ keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "l
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 tauri-plugin-barcode-scanner = "2"
 
+# OTA self-update — desktop only. Mobile updates through the App Store / TestFlight.
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+tauri-plugin-updater = "2"
+
 [dev-dependencies]
 # Used by p2p::persistence integration tests for ephemeral data dirs.
 tempfile = "=3.14.0"
