@@ -302,6 +302,42 @@ export default function Settings() {
         </div>
       </div>
 
+      <div className="box">
+        <h2 className="title is-5">Spotify</h2>
+        <p className="is-size-7 has-text-grey mb-3">
+          Used to read course playlist tracklists (e.g. MUH-105's unit playlists) so they
+          can be taken to Apple Music. Metadata only — no audio. Create a free app at{" "}
+          <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noreferrer">
+            developer.spotify.com/dashboard
+          </a>{" "}
+          and paste its Client ID + Secret here. Stored on this device only — never synced to
+          paired devices.
+        </p>
+        <div className="field">
+          <label className="label is-small">Client ID</label>
+          <div className="control">
+            <input
+              className="input"
+              value={prefs.spotify_client_id ?? ""}
+              onChange={(e) => update("spotify_client_id", e.target.value)}
+              placeholder="e.g. 4f9a1c…"
+            />
+          </div>
+        </div>
+        <div className="field">
+          <label className="label is-small">Client Secret</label>
+          <div className="control">
+            <input
+              className="input"
+              type="password"
+              value={prefs.spotify_client_secret ?? ""}
+              onChange={(e) => update("spotify_client_secret", e.target.value)}
+              placeholder="kept on this device"
+            />
+          </div>
+        </div>
+      </div>
+
       <UpdatesBox />
 
       <ExportAuthBox />
