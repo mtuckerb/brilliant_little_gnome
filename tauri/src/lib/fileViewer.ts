@@ -12,10 +12,13 @@ export const SUPPORTED_VIEWER_EXTENSIONS = [
   "ppt",
   "pptx",
   "rtf",
+  "html",
+  "htm",
+  "txt",
 ] as const;
 
 export type SupportedViewerExtension = (typeof SUPPORTED_VIEWER_EXTENSIONS)[number];
-export type ViewerKind = "native" | "legacyOffice" | "text" | "markdown" | "csv" | "rtf" | "officeXml" | "external";
+export type ViewerKind = "native" | "legacyOffice" | "text" | "markdown" | "csv" | "rtf" | "html" | "officeXml" | "external";
 
 export interface ViewerRoute {
   supported: boolean;
@@ -45,6 +48,14 @@ export function routeFileToViewer(nameOrUrl: string, sizeBytes?: number | null):
       return { supported: true, extension, kind: "markdown" };
     case "csv":
       return { supported: true, extension, kind: "csv" };
+    case "html":
+    case "htm":
+      // Brightspace authors a lot of module pages as standalone HTML files.
+      // They're the same first-party HTML we already render for module
+      // descriptions, so the viewer shows them rather than handing off.
+      return { supported: true, extension, kind: "html" };
+    case "txt":
+      return { supported: true, extension, kind: "text" };
     case "rtf":
       return { supported: true, extension, kind: "rtf" };
     case "docx":

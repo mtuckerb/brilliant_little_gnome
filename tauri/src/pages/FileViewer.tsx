@@ -3,14 +3,24 @@ import { useLocation, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../api";
-import { extensionForFile, objectUrlFromBase64, routeFileToViewer } from "../lib/fileViewer";
+import RichText from "../components/RichText";
+import { extensionForFile, objectUrlFromBase64, routeFileToViewer, type ViewerRoute } from "../lib/fileViewer";
 import { extractOfficeText } from "../lib/officeText";
 import { triggerDownload } from "../lib/download";
 
+// Two ways in:
+//   { url, name, size }         — an assignment attachment, fetched by URL.
+//   { courseId, topicId, name } — a content topic, fetched through Brightspace's
+//                                 topic/file endpoint. Used by the Modules tree,
+//                                 where an item's stored URL may be missing or
+//                                 extension-less; the server's Content-Disposition
+//                                 tells us what we actually got.
 interface ViewerState {
   url?: string | null;
   name?: string | null;
   size?: number | null;
+  courseId?: string | null;
+  topicId?: string | null;
 }
 
 export default function FileViewer() {
@@ -18,8 +28,18 @@ export default function FileViewer() {
   const location = useLocation();
   const state = (location.state ?? {}) as ViewerState;
   const sourceUrl = state.url ?? "";
+  const courseId = state.courseId ?? "";
+  const topicId = state.topicId ?? "";
+  const isTopic = Boolean(courseId && topicId);
   const filename = state.name || "Attachment";
-  const route = useMemo(() => routeFileToViewer(filename || sourceUrl, state.size), [filename, sourceUrl, state.size]);
+  // Routed twice: once from the name we were handed (a cheap gate that skips
+  // the fetch for anything we can't render), then again from the filename the
+  // server reports, which is the authoritative one.
+  const preRoute = useMemo(
+    () => routeFileToViewer(filename || sourceUrl, state.size),
+    [filename, sourceUrl, state.size],
+  );
+  const [route, setRoute] = useState<ViewerRoute>(preRoute);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [payload, setPayload] = useState<{ bytes_base64: string; mime: string | null; filename: string } | null>(null);
   const [text, setText] = useState<string | null>(null);
@@ -35,20 +55,36 @@ export default function FileViewer() {
       setText(null);
       setObjectUrl(null);
       setPayload(null);
+      setRoute(preRoute);
       try {
-        if (!sourceUrl) throw new Error("Attachment URL is missing.");
-        if (!route.supported) throw new Error(route.reason === "too_large" ? "File too large to preview." : "File type is not supported for preview.");
-        const next = await api.previewAttachment(sourceUrl, filename);
+        if (!isTopic && !sourceUrl) throw new Error("Attachment URL is missing.");
+        if (preRoute.reason === "too_large") throw new Error("File too large to preview.");
+        // A topic's name often carries no extension, so an "unsupported"
+        // verdict here means "unknown yet" — fetch and let the real filename
+        // decide.
+        if (!preRoute.supported && !isTopic) throw new Error("File type is not supported for preview.");
+
+        const next = isTopic
+          ? await api.previewTopicFile(courseId, topicId)
+          : await api.previewAttachment(sourceUrl, filename);
         if (cancelled) return;
         setPayload(next);
+
+        const eff = routeFileToViewer(next.filename || filename);
+        setRoute(eff);
         const created = objectUrlFromBase64(next.bytes_base64, next.mime);
         revoke = created.revoke;
         setObjectUrl(created.url);
-        if (route.kind === "officeXml") {
-          setText(extractOfficeText(created.bytes, extensionForFile(filename)) || "No readable text found in this Office document.");
-        } else if (route.kind === "legacyOffice") {
+
+        if (!eff.supported) throw new Error("File type is not supported for preview.");
+        if (eff.kind === "officeXml") {
+          setText(
+            extractOfficeText(created.bytes, extensionForFile(next.filename || filename)) ||
+              "No readable text found in this Office document.",
+          );
+        } else if (eff.kind === "legacyOffice") {
           setErr("This legacy Office format cannot be rendered reliably in the mobile WebView. Use Open externally to view it.");
-        } else if (["text", "markdown", "csv", "rtf"].includes(route.kind)) {
+        } else if (["text", "markdown", "csv", "rtf", "html"].includes(eff.kind)) {
           setText(new TextDecoder().decode(created.bytes));
         }
       } catch (e) {
@@ -62,7 +98,7 @@ export default function FileViewer() {
       cancelled = true;
       revoke?.();
     };
-  }, [sourceUrl, filename, route.kind, route.reason, route.supported]);
+  }, [sourceUrl, filename, courseId, topicId, isTopic, preRoute]);
 
   function openExternally() {
     if (payload) triggerDownload(payload);
@@ -72,7 +108,7 @@ export default function FileViewer() {
   return (
     <div>
       <nav className="level mb-3">
-        <div className="level-left"><h1 className="title is-5 mb-0">{filename}</h1></div>
+        <div className="level-left"><h1 className="title is-5 mb-0">{payload?.filename || filename}</h1></div>
         <div className="level-right buttons">
           <button className="button" onClick={() => navigate(-1)}>Close</button>
           <button className="button is-link is-light" onClick={openExternally}>Open externally</button>
@@ -95,13 +131,19 @@ export default function FileViewer() {
         <iframe title={filename} src={objectUrl} style={{ width: "100%", height: "75vh", border: "1px solid #ddd", borderRadius: 6 }} />
       )}
 
+      {!loading && !err && text != null && route.kind === "html" && (
+        <div className="box" style={{ overflow: "auto", maxHeight: "75vh" }}>
+          <RichText content={text} format="html" />
+        </div>
+      )}
+
       {!loading && !err && text != null && route.kind === "markdown" && (
         <div className="box content" style={{ overflow: "auto", maxHeight: "75vh" }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
         </div>
       )}
 
-      {!loading && !err && text != null && route.kind !== "native" && route.kind !== "markdown" && (
+      {!loading && !err && text != null && !["native", "markdown", "html"].includes(route.kind) && (
         <pre className="box" style={{ whiteSpace: "pre-wrap", overflow: "auto", maxHeight: "75vh" }}>{text}</pre>
       )}
     </div>
