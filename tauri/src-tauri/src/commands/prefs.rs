@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[tauri::command]
 pub async fn get_prefs(state: AppStateArg<'_>) -> Result<UserPreferences> {
     let prefs = sqlx::query_as::<_, UserPreferences>(
-        "SELECT id, display_name, time_zone, brightspace_host, api_enabled, api_key, api_listen_all, api_port, jwt_secret, historic_gpa, historic_units, default_semester, brightspace_uid, brightspace_user_id, last_login_at, calendar_show_empty_days, zotero_user_id, zotero_api_key , zotero_use_local, zotero_local_base_url, zotero_local_user_id, zotero_basic_auth_user, zotero_basic_auth_pass FROM user_preferences LIMIT 1",
+        "SELECT id, display_name, time_zone, brightspace_host, api_enabled, api_key, api_listen_all, api_port, jwt_secret, historic_gpa, historic_units, default_semester, brightspace_uid, brightspace_user_id, last_login_at, calendar_show_empty_days, zotero_user_id, zotero_api_key , zotero_use_local, zotero_local_base_url, zotero_local_user_id, zotero_basic_auth_user, zotero_basic_auth_pass, spotify_client_id, spotify_client_secret FROM user_preferences LIMIT 1",
     )
     .fetch_one(&state.pool)
     .await?;
@@ -32,6 +32,8 @@ pub struct PrefsPatch {
     pub zotero_local_user_id: Option<String>,
     pub zotero_basic_auth_user: Option<String>,
     pub zotero_basic_auth_pass: Option<String>,
+    pub spotify_client_id: Option<String>,
+    pub spotify_client_secret: Option<String>,
 }
 
 #[tauri::command]
@@ -124,6 +126,20 @@ pub async fn update_prefs(state: AppStateArg<'_>, patch: PrefsPatch) -> Result<U
         let trimmed = v.trim();
         let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
         sqlx::query("UPDATE user_preferences SET zotero_basic_auth_pass = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(stored).execute(pool).await?;
+    }
+    // Spotify app credentials: device-local like the Zotero ones — deliberately
+    // NOT mirrored into Loro, so the secret never reaches a paired peer.
+    if let Some(v) = patch.spotify_client_id.as_ref() {
+        let trimmed = v.trim();
+        let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+        sqlx::query("UPDATE user_preferences SET spotify_client_id = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(stored).execute(pool).await?;
+    }
+    if let Some(v) = patch.spotify_client_secret.as_ref() {
+        let trimmed = v.trim();
+        let stored: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+        sqlx::query("UPDATE user_preferences SET spotify_client_secret = ?, updated_at = CURRENT_TIMESTAMP")
             .bind(stored).execute(pool).await?;
     }
 

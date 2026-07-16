@@ -138,6 +138,8 @@ pub struct UserPreferences {
     pub zotero_local_user_id: Option<String>,
     pub zotero_basic_auth_user: Option<String>,
     pub zotero_basic_auth_pass: Option<String>,
+    pub spotify_client_id: Option<String>,
+    pub spotify_client_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
