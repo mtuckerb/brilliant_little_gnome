@@ -14,10 +14,34 @@ use super::AppStateArg;
 use crate::error::{AppError, Result};
 use serde::Serialize;
 use serde_json::Value;
-use std::{collections::HashSet, fs, path::PathBuf};
+use std::{collections::HashSet, fs, path::PathBuf, time::Duration};
 use tauri::{AppHandle, Emitter};
 
 const DOWNLOAD_EVENT: &str = "download://saved";
+
+/// Upper bound on any single file fetch during a course archive build. The HTTP
+/// client already caps a request at 30s, but a slow-streaming body or an
+/// expensive post-fetch step (e.g. html→markdown on a pathological page) can
+/// still stall one item and, because the archive walk is sequential, drag the
+/// whole export out until the caller gives up (PSY-100 hung ~4min this way).
+/// Bounding each item and recording a timeout as a per-file failure keeps one
+/// bad topic from stalling an otherwise good archive.
+const ARCHIVE_FETCH_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// `client.fetch_bytes` with a hard per-item ceiling. Used only by the archive
+/// collectors; single-file user downloads keep the client's own timeout.
+async fn fetch_bytes_bounded(
+    state: &crate::state::AppState,
+    url_or_path: &str,
+) -> Result<(Vec<u8>, Option<String>, Option<String>)> {
+    match tokio::time::timeout(ARCHIVE_FETCH_TIMEOUT, state.client.fetch_bytes(url_or_path)).await {
+        Ok(result) => result,
+        Err(_) => Err(AppError::Other(format!(
+            "timed out after {}s",
+            ARCHIVE_FETCH_TIMEOUT.as_secs()
+        ))),
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadBytes {
@@ -181,7 +205,7 @@ pub(crate) async fn build_course_archive(
             .and_then(|v| v.as_str())
             .or_else(|| ov.pointer("/Attachment/Href").and_then(|v| v.as_str()))
         {
-            match state.client.fetch_bytes(att_url).await {
+            match fetch_bytes_bounded(state, att_url).await {
                 Ok((bytes, _mime, name)) => {
                     let fname = name
                         .or_else(|| {
@@ -479,7 +503,7 @@ async fn collect_module(
                 }
             }
             let path = topic_download_path(course_id, &topic_id);
-            match state.client.fetch_bytes(&path).await {
+            match fetch_bytes_bounded(state, &path).await {
                 Ok((bytes, mime, name)) => {
                     // HTML content pages → Markdown so they're readable in the
                     // vault; everything else (PDF/docx/images/…) stays as-is.
@@ -598,7 +622,7 @@ async fn add_attachment(
         return;
     }
 
-    match state.client.fetch_bytes(&url).await {
+    match fetch_bytes_bounded(state, &url).await {
         Ok((bytes, _mime, response_name)) => {
             let fname = response_name.unwrap_or_else(|| filename_with_extension(&name, None));
             let entry = unique_path(seen, &format!("{}{}", folder, sanitize(&fname)));
