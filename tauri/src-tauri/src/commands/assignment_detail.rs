@@ -11,7 +11,7 @@ use base64::Engine;
 use serde::Serialize;
 use serde_json::Value;
 
-const PREVIEW_MAX_BYTES: usize = 25 * 1024 * 1024;
+pub(crate) const PREVIEW_MAX_BYTES: usize = 25 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct AssignmentAttachment {

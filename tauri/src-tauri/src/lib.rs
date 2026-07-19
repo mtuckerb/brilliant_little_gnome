@@ -244,6 +244,8 @@ pub fn run() {
             // Content
             commands::content::list_modules,
             commands::content::list_items,
+            commands::content::list_course_items,
+            commands::content::preview_topic_file,
             // Discussions
             commands::discussions::list_forums,
             commands::discussions::list_topics,

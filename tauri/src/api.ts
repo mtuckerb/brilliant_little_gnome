@@ -207,6 +207,13 @@ export const api = {
     invoke<ContentModule[]>("list_modules", { courseId }),
   listItems: (moduleId: string) =>
     invoke<ContentItem[]>("list_items", { moduleId }),
+  listCourseItems: (courseId: string) =>
+    invoke<ContentItem[]>("list_course_items", { courseId }),
+  previewTopicFile: (courseId: string, topicId: string) =>
+    invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
+      "preview_topic_file",
+      { courseId, topicId },
+    ),
 
   // Discussions
   listForums: (courseId: string) =>
