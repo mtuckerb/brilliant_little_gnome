@@ -130,6 +130,8 @@ pub struct UserPreferences {
     pub last_login_at: Option<String>,
     #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
     pub calendar_show_empty_days: bool,
+    #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
+    pub cache_content: bool,
     pub zotero_user_id: Option<String>,
     pub zotero_api_key: Option<String>,
     #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]

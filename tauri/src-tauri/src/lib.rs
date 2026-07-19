@@ -246,6 +246,9 @@ pub fn run() {
             commands::content::list_items,
             commands::content::list_course_items,
             commands::content::preview_topic_file,
+            commands::content_cache::cache_course_content,
+            commands::content_cache::course_cache_status,
+            commands::content_cache::clear_course_cache,
             // Discussions
             commands::discussions::list_forums,
             commands::discussions::list_topics,

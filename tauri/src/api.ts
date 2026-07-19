@@ -209,6 +209,20 @@ export const api = {
     invoke<ContentItem[]>("list_items", { moduleId }),
   listCourseItems: (courseId: string) =>
     invoke<ContentItem[]>("list_course_items", { courseId }),
+
+  // Offline content cache (device-local; gated by prefs.cache_content)
+  cacheCourseContent: (courseId: string) =>
+    invoke<{ cached: number; skipped: number; failed: number; bytes: number }>(
+      "cache_course_content",
+      { courseId },
+    ),
+  courseCacheStatus: (courseId: string) =>
+    invoke<{ count: number; bytes: number; last_cached_at: string | null }>(
+      "course_cache_status",
+      { courseId },
+    ),
+  clearCourseCache: (courseId: string) =>
+    invoke<void>("clear_course_cache", { courseId }),
   previewTopicFile: (courseId: string, topicId: string) =>
     invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
       "preview_topic_file",

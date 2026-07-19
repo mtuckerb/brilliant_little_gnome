@@ -19,13 +19,48 @@ export default function CourseDetail() {
   const [downloading, setDownloading] = useState(false);
   const [sendingZotero, setSendingZotero] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [caching, setCaching] = useState(false);
+  const [cacheEnabled, setCacheEnabled] = useState(true);
+  const [cacheStatus, setCacheStatus] = useState<{ count: number; bytes: number } | null>(null);
   const toast = useToast();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (!id) return;
     api.getCourse(id).then(setCourse).catch((e) => setErr(String(e?.message ?? e)));
+    api.getPrefs().then((p) => setCacheEnabled(p.cache_content)).catch(() => {});
+    api.courseCacheStatus(id).then(setCacheStatus).catch(() => {});
   }, [id]);
+
+  const fmtBytes = (b: number) =>
+    b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+
+  async function onCacheOffline() {
+    if (!course) return;
+    setCaching(true);
+    try {
+      const r = await api.cacheCourseContent(course.org_unit_id);
+      toast.show(
+        `Cached ${r.cached} item${r.cached === 1 ? "" : "s"} (${fmtBytes(r.bytes)})` +
+          (r.failed ? `, ${r.failed} failed` : "") +
+          `. ${r.skipped} skipped (quizzes/links).`,
+        r.failed ? "is-warning" : "is-success",
+        7000,
+      );
+      setCacheStatus(await api.courseCacheStatus(course.org_unit_id));
+    } catch (e) {
+      toast.show(String((e as { message?: string })?.message ?? e), "is-danger", 8000);
+    } finally {
+      setCaching(false);
+    }
+  }
+
+  async function onClearCache() {
+    if (!course) return;
+    await api.clearCourseCache(course.org_unit_id).catch(() => {});
+    setCacheStatus(await api.courseCacheStatus(course.org_unit_id).catch(() => ({ count: 0, bytes: 0 })));
+    toast.show("Cleared this course's offline cache.", "is-info", 4000);
+  }
 
   if (err) return <div className="notification is-danger">{err}</div>;
   if (!course) return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
@@ -164,6 +199,28 @@ export default function CourseDetail() {
           <span className="icon"><i className={`fas ${sendingZotero ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i></span>
           <span>{sendingZotero ? "Sending…" : "Send to Zotero"}</span>
         </button>
+        {cacheEnabled && (
+          <button
+            className="button is-small is-light"
+            onClick={onCacheOffline}
+            disabled={caching}
+            title="Cache this course's files, Tools, and media on this device for offline use (quizzes are skipped)"
+          >
+            <span className="icon"><i className={`fas ${caching ? "fa-circle-notch fa-spin" : "fa-cloud-arrow-down"}`}></i></span>
+            <span>
+              {caching
+                ? "Caching…"
+                : cacheStatus && cacheStatus.count > 0
+                  ? `Offline: ${cacheStatus.count} (${fmtBytes(cacheStatus.bytes)})`
+                  : "Make available offline"}
+            </span>
+          </button>
+        )}
+        {cacheEnabled && cacheStatus && cacheStatus.count > 0 && !caching && (
+          <button className="button is-small is-white" onClick={onClearCache} title="Remove this course's offline cache">
+            <span className="icon has-text-grey"><i className="fas fa-trash-can"></i></span>
+          </button>
+        )}
       </div>
 
       <SyllabusPanel courseId={course.org_unit_id} />
