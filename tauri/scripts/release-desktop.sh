@@ -17,12 +17,25 @@ SIGN_ID="Developer ID Application: Tucker Bradford (QDWAV324SU)"
 
 [ -f "$KEY" ] || { echo "missing updater key: $KEY"; exit 1; }
 
-echo "==> Building signed desktop bundle $VER"
+# Build the .app + updater artifact FIRST, on its own. The updater tarball is
+# the only thing the OTA endpoint needs, and bundling it separately means a
+# flaky `bundle_dmg.sh` (hdiutil detach failures) can no longer abort the build
+# before the .app.tar.gz is produced — which is exactly what broke the 2.0.6
+# release.
+echo "==> Building signed desktop bundle $VER (app + updater)"
 TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY")" \
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
 APPLE_SIGNING_IDENTITY="$SIGN_ID" \
-  npm run tauri -- build --target universal-apple-darwin \
+  npm run tauri -- build --target universal-apple-darwin --bundles app \
     --config '{"productName":"Brilliant Desktop"}'
+
+# DMG is a nice-to-have for fresh installs; never let it fail the release.
+echo "==> Building DMG (best-effort)"
+TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY")" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+APPLE_SIGNING_IDENTITY="$SIGN_ID" \
+  npm run tauri -- build --target universal-apple-darwin --bundles dmg \
+    --config '{"productName":"Brilliant Desktop"}' || echo "    DMG bundling failed — continuing (OTA artifact is unaffected)"
 
 BUNDLE="src-tauri/target/universal-apple-darwin/release/bundle/macos"
 ART="$BUNDLE/Brilliant Desktop.app.tar.gz"
