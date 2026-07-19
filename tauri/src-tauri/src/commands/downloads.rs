@@ -196,6 +196,7 @@ pub(crate) async fn build_course_archive(
     collect_overview_attachments(&mut zip, state, course_id, &mut seen, &mut failures).await;
     collect_overview_markdown(&mut zip, state, course_id, &mut seen).await;
     collect_announcements_markdown(&mut zip, state, course_id, &mut seen).await;
+    collect_discussions(&mut zip, state, course_id, &mut seen, &mut failures).await;
 
     // Best-effort: fetch the course overview attachment (syllabus) if one exists.
     let overview_path = format!("/d2l/api/le/{}/{}/overview", crate::client::API_VERSION, course_id);
@@ -299,6 +300,146 @@ async fn collect_announcements_markdown(
     }
     let entry = unique_path(seen, "_Announcements.md");
     zip.add_file(&entry, md.as_bytes());
+}
+
+/// Roll every discussion topic — including classmates' posts and replies — into
+/// `Discussions/<forum>/<topic>.md`. Posts aren't synced into the DB (see
+/// `sync/discussions.rs`), so the archive is the only place they'd otherwise be
+/// missing; we fetch each topic's posts live here. A topic the user can't read
+/// (instructor-only forum) 403s and is recorded as a skip rather than aborting.
+async fn collect_discussions(
+    zip: &mut zip_writer::Builder,
+    state: &crate::state::AppState,
+    course_id: &str,
+    seen: &mut HashSet<String>,
+    failures: &mut Vec<String>,
+) {
+    // (topic_id, forum_id, forum_name, topic_name) for every synced topic.
+    let topics: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT t.brightspace_id, t.forum_id, f.name, t.name
+         FROM discussion_topics t
+         LEFT JOIN discussion_forums f
+           ON f.brightspace_id = t.forum_id AND f.course_id = t.course_id
+         WHERE t.course_id = ?
+         ORDER BY f.name, t.sort_order, t.name",
+    )
+    .bind(course_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    for (topic_id, forum_id, forum_name, topic_name) in topics {
+        // Posts can paginate, so bound the whole topic fetch rather than a
+        // single request.
+        let fetch = state
+            .client
+            .get_discussion_posts(&state.pool, course_id, &forum_id, &topic_id, false);
+        let posts = match tokio::time::timeout(ARCHIVE_FETCH_TIMEOUT, fetch).await {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => {
+                failures.push(format!("discussion topic '{}' skipped: {}", topic_name, e));
+                continue;
+            }
+            Err(_) => {
+                failures.push(format!(
+                    "discussion topic '{}' skipped: timed out after {}s",
+                    topic_name,
+                    ARCHIVE_FETCH_TIMEOUT.as_secs()
+                ));
+                continue;
+            }
+        };
+        if posts.is_empty() {
+            continue;
+        }
+        let md = render_discussion_markdown(&topic_name, &posts);
+        let folder = match forum_name.as_deref() {
+            Some(f) if !f.trim().is_empty() => format!("Discussions/{}", sanitize(f)),
+            _ => "Discussions".to_string(),
+        };
+        let entry = unique_path(seen, &format!("{}/{}.md", folder, sanitize(&topic_name)));
+        zip.add_file(&entry, md.as_bytes());
+    }
+}
+
+/// Render a topic's posts as a threaded Markdown document. Roots (posts with no
+/// parent) are ordered oldest-first; each reply is nested under its parent and
+/// indented one blockquote level per depth so the conversation structure — who
+/// replied to whom — survives in the vault.
+fn render_discussion_markdown(topic_name: &str, raw_posts: &[Value]) -> String {
+    use crate::commands::discussions::parse_post;
+    use std::collections::HashMap;
+
+    let posts: Vec<_> = raw_posts.iter().map(parse_post).collect();
+
+    // Children keyed by parent post id; roots collected separately. A post is a
+    // root if it has no parent OR its parent isn't in this set — an orphan reply
+    // (parent deleted, or dropped by pagination) must still render rather than
+    // vanish into a childless bucket.
+    let ids: std::collections::HashSet<&str> = posts.iter().map(|p| p.post_id.as_str()).collect();
+    let mut children: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut roots: Vec<usize> = Vec::new();
+    for (i, p) in posts.iter().enumerate() {
+        match &p.parent_post_id {
+            Some(pid) if !pid.is_empty() && pid != "0" && ids.contains(pid.as_str()) => {
+                children.entry(pid.clone()).or_default().push(i)
+            }
+            _ => roots.push(i),
+        }
+    }
+    let by_date = |a: &usize, b: &usize| {
+        posts[*a].posted_at.as_deref().unwrap_or("").cmp(posts[*b].posted_at.as_deref().unwrap_or(""))
+    };
+    roots.sort_by(by_date);
+    for v in children.values_mut() {
+        v.sort_by(by_date);
+    }
+
+    let mut out = format!("# {}\n\n", topic_name);
+    // Explicit stack (post index, depth) so deeply nested threads can't blow
+    // the call stack; DFS keeps a reply directly under the post it answers.
+    let mut stack: Vec<(usize, usize)> = roots.iter().rev().map(|&i| (i, 0usize)).collect();
+    while let Some((idx, depth)) = stack.pop() {
+        out.push_str(&render_one_post(&posts[idx], depth));
+        if let Some(kids) = children.get(&posts[idx].post_id) {
+            for &k in kids.iter().rev() {
+                stack.push((k, depth + 1));
+            }
+        }
+    }
+    out
+}
+
+fn render_one_post(p: &crate::commands::discussions::DiscussionPostView, depth: usize) -> String {
+    let quote = "> ".repeat(depth);
+    let author = p.author_name.as_deref().unwrap_or("Unknown");
+    let date = p.posted_at.as_deref().map(|d| &d[..d.len().min(10)]).unwrap_or("");
+    let pin = if p.is_pinned { " 📌" } else { "" };
+    let mut header = format!("**{}**", author);
+    if !date.is_empty() {
+        header.push_str(&format!(" · {}", date));
+    }
+    header.push_str(pin);
+
+    let body = p
+        .body_html
+        .as_deref()
+        .map(crate::commands::htmlmd::html_to_markdown)
+        .unwrap_or_default();
+
+    // Prefix every line (header + body) with the blockquote depth so nested
+    // replies render as nested quotes in Obsidian.
+    let mut block = String::new();
+    if let Some(subj) = p.subject.as_deref().filter(|s| !s.trim().is_empty()) {
+        block.push_str(&format!("{}_{}_\n", quote, subj.trim()));
+    }
+    block.push_str(&format!("{}{}\n", quote, header));
+    for line in body.trim().lines() {
+        block.push_str(&format!("{}{}\n", quote, line));
+    }
+    block.push_str(&format!("{}\n", quote.trim_end()));
+    block.push('\n');
+    block
 }
 
 /// Download the course's overview attachment (syllabus PDF) straight to disk
@@ -1030,5 +1171,57 @@ mod url_shortcut_tests {
     fn shortcut_body_is_crlf_and_absolute() {
         let s = internet_shortcut("/d2l/x", Some("h.edu"));
         assert_eq!(s, "[InternetShortcut]\r\nURL=https://h.edu/d2l/x\r\n");
+    }
+}
+
+#[cfg(test)]
+mod discussion_md_tests {
+    use super::render_discussion_markdown;
+    use serde_json::json;
+
+    fn post(id: i64, parent: Option<i64>, who: &str, when: &str, body: &str) -> serde_json::Value {
+        json!({
+            "PostId": id,
+            "ParentPostId": parent,
+            "PostingUserDisplayName": who,
+            "DatePosted": when,
+            "Message": { "Html": body },
+        })
+    }
+
+    #[test]
+    fn threads_nest_and_order_oldest_first() {
+        // root (Ann) → reply (Bob) → reply-to-reply (Cy); plus a later root (Dee).
+        let posts = vec![
+            post(1, None, "Ann", "2026-01-01T00:00:00Z", "<p>opening</p>"),
+            post(2, Some(1), "Bob", "2026-01-02T00:00:00Z", "<p>i agree</p>"),
+            post(3, Some(2), "Cy", "2026-01-03T00:00:00Z", "<p>me too</p>"),
+            post(4, None, "Dee", "2026-01-04T00:00:00Z", "<p>new thread</p>"),
+        ];
+        let md = render_discussion_markdown("Week 2 Discussion", &posts);
+
+        assert!(md.starts_with("# Week 2 Discussion\n"));
+        // Every classmate is present.
+        for who in ["Ann", "Bob", "Cy", "Dee"] {
+            assert!(md.contains(who), "missing author {who}");
+        }
+        // Depth shows as blockquote nesting: Bob one level, Cy two.
+        assert!(md.contains("> **Bob**"), "reply not quoted one level");
+        assert!(md.contains("> > **Cy**"), "nested reply not quoted two levels");
+        // Root posts are not quoted.
+        assert!(md.contains("**Ann**") && !md.contains("> **Ann**"));
+        // Oldest root (Ann) precedes the newer root (Dee).
+        assert!(md.find("Ann").unwrap() < md.find("Dee").unwrap());
+        // A reply sits directly under the post it answers (Bob before Cy, both after Ann).
+        assert!(md.find("Ann").unwrap() < md.find("Bob").unwrap());
+        assert!(md.find("Bob").unwrap() < md.find("Cy").unwrap());
+    }
+
+    #[test]
+    fn orphan_reply_falls_back_to_root() {
+        // Reply whose parent isn't in the set must still render (not vanish).
+        let posts = vec![post(9, Some(999), "Eve", "2026-02-01T00:00:00Z", "<p>hi</p>")];
+        let md = render_discussion_markdown("T", &posts);
+        assert!(md.contains("Eve") && md.contains("hi"));
     }
 }
