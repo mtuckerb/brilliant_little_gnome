@@ -72,7 +72,7 @@ pub async fn list_topic_posts(
     Ok(raw.iter().map(parse_post).collect())
 }
 
-fn parse_post(p: &Value) -> DiscussionPostView {
+pub(crate) fn parse_post(p: &Value) -> DiscussionPostView {
     let post_id = p
         .get("PostId")
         .and_then(value_to_id)
