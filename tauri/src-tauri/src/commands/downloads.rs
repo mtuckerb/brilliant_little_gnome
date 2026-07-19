@@ -473,7 +473,8 @@ async fn collect_module(
             if is_external_link_topic(t, url) {
                 if let Some(url) = url {
                     let entry = unique_path(seen, &format!("{}{}.url", folder, sanitize(&topic_title)));
-                    zip.add_file(&entry, internet_shortcut(url).as_bytes());
+                    let host = state.client.host_clone();
+                    zip.add_file(&entry, internet_shortcut(url, host.as_deref()).as_bytes());
                     continue;
                 }
             }
@@ -592,7 +593,8 @@ async fn add_attachment(
 
     if shortcut_link {
         let entry = unique_path(seen, &format!("{}{}.url", folder, sanitize(&name)));
-        zip.add_file(&entry, internet_shortcut(&url).as_bytes());
+        let host = state.client.host_clone();
+        zip.add_file(&entry, internet_shortcut(&url, host.as_deref()).as_bytes());
         return;
     }
 
@@ -653,8 +655,27 @@ fn filename_with_extension(name: &str, fallback_ext: Option<&str>) -> String {
     }
 }
 
-fn internet_shortcut(url: &str) -> String {
-    format!("[InternetShortcut]\r\nURL={}\r\n", url)
+/// Build a `.url` Internet Shortcut. Brightspace hands us two shapes of link:
+/// absolute (`https://youtube.com/…`) and scheme-less D2L quicklinks
+/// (`/d2l/common/dialogs/quickLink/…`). A shortcut whose `URL=` has no host is
+/// invalid — the OS can't open it — which is why the relative ones landed in
+/// the vault "corrupt". Resolve those against the Brightspace host so every
+/// shortcut is a real absolute URL.
+fn internet_shortcut(url: &str, host: Option<&str>) -> String {
+    let abs = absolutize_link(url, host);
+    format!("[InternetShortcut]\r\nURL={}\r\n", abs)
+}
+
+/// Resolve a Brightspace link to an absolute URL. Root-relative paths (`/d2l/…`)
+/// get the host prepended; anything already absolute (or, as a last resort, a
+/// relative link with no host available) is passed through unchanged.
+fn absolutize_link(url: &str, host: Option<&str>) -> String {
+    if url.starts_with('/') && !url.starts_with("//") {
+        if let Some(h) = host {
+            return format!("https://{}{}", h, url);
+        }
+    }
+    url.to_string()
 }
 
 fn add_download_warnings(zip: &mut zip_writer::Builder, failures: &[String]) {
@@ -949,5 +970,41 @@ mod zip_writer {
         let year = (now.year() - 1980).max(0) as u16;
         let date = (year << 9) | ((now.month() as u16) << 5) | (now.day() as u16);
         (time, date)
+    }
+}
+
+#[cfg(test)]
+mod url_shortcut_tests {
+    use super::{absolutize_link, internet_shortcut};
+
+    #[test]
+    fn relative_quicklink_gets_host() {
+        let out = absolutize_link("/d2l/common/dialogs/quickLink/quickLink.d2l?ou=1&type=quiz", Some("courses.maine.edu"));
+        assert_eq!(out, "https://courses.maine.edu/d2l/common/dialogs/quickLink/quickLink.d2l?ou=1&type=quiz");
+    }
+
+    #[test]
+    fn absolute_url_untouched() {
+        let out = absolutize_link("https://youtu.be/abc", Some("courses.maine.edu"));
+        assert_eq!(out, "https://youtu.be/abc");
+    }
+
+    #[test]
+    fn protocol_relative_untouched() {
+        // `//host/path` is already host-qualified; prepending would corrupt it.
+        let out = absolutize_link("//cdn.example.com/x", Some("courses.maine.edu"));
+        assert_eq!(out, "//cdn.example.com/x");
+    }
+
+    #[test]
+    fn relative_without_host_passes_through() {
+        let out = absolutize_link("/d2l/x", None);
+        assert_eq!(out, "/d2l/x");
+    }
+
+    #[test]
+    fn shortcut_body_is_crlf_and_absolute() {
+        let s = internet_shortcut("/d2l/x", Some("h.edu"));
+        assert_eq!(s, "[InternetShortcut]\r\nURL=https://h.edu/d2l/x\r\n");
     }
 }
