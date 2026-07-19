@@ -606,6 +606,37 @@ fn topic_download_path(course_id: &str, topic_id: &str) -> String {
     )
 }
 
+/// Write a topic's content into the archive. HTML pages (Brightspace content
+/// pages, cached Tool launch pages) become Markdown so they read cleanly in the
+/// vault; everything else (PDF/docx/images/…) is stored as-is. Shared by the
+/// cache-hit and live-fetch paths so both render identically.
+fn add_topic_bytes(
+    zip: &mut zip_writer::Builder,
+    seen: &mut HashSet<String>,
+    folder: &str,
+    topic_title: &str,
+    bytes: &[u8],
+    mime: Option<&str>,
+    name: Option<&str>,
+) {
+    let is_html = mime.map_or(false, |m| m.contains("html"))
+        || name.map_or(false, |n| {
+            let l = n.to_ascii_lowercase();
+            l.ends_with(".html") || l.ends_with(".htm")
+        });
+    if is_html {
+        let md = crate::commands::htmlmd::html_to_markdown(&String::from_utf8_lossy(bytes));
+        let entry = unique_path(seen, &format!("{}{}.md", folder, sanitize(topic_title)));
+        zip.add_file(&entry, format!("# {}\n\n{}\n", topic_title, md).as_bytes());
+    } else {
+        let fname = name
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| filename_with_extension(topic_title, None));
+        let entry = unique_path(seen, &format!("{}{}", folder, fname));
+        zip.add_file(&entry, bytes);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn collect_module(
     zip: &mut zip_writer::Builder,
@@ -635,6 +666,17 @@ async fn collect_module(
                 .map(String::from)
                 .unwrap_or_else(|| format!("topic_{}", topic_id));
             let url = t.get("Url").and_then(|v| v.as_str());
+
+            // Cache-first: if this topic was made available offline, use the
+            // stored bytes. This also means a cached Tool (LTI) lands as real
+            // content in the export instead of the bare .url shortcut below.
+            if let Ok(Some(cached)) =
+                crate::commands::content_cache::get_cached(&state.app, &state.pool, course_id, &topic_id).await
+            {
+                add_topic_bytes(zip, seen, &folder, &topic_title, &cached.bytes, cached.mime.as_deref(), Some(&cached.filename));
+                continue;
+            }
+
             if is_external_link_topic(t, url) {
                 if let Some(url) = url {
                     let entry = unique_path(seen, &format!("{}{}.url", folder, sanitize(&topic_title)));
@@ -646,22 +688,7 @@ async fn collect_module(
             let path = topic_download_path(course_id, &topic_id);
             match fetch_bytes_bounded(state, &path).await {
                 Ok((bytes, mime, name)) => {
-                    // HTML content pages → Markdown so they're readable in the
-                    // vault; everything else (PDF/docx/images/…) stays as-is.
-                    let is_html = mime.as_deref().map_or(false, |m| m.contains("html"))
-                        || name.as_deref().map_or(false, |n| {
-                            let l = n.to_ascii_lowercase();
-                            l.ends_with(".html") || l.ends_with(".htm")
-                        });
-                    if is_html {
-                        let md = crate::commands::htmlmd::html_to_markdown(&String::from_utf8_lossy(&bytes));
-                        let entry = unique_path(seen, &format!("{}{}.md", folder, sanitize(&topic_title)));
-                        zip.add_file(&entry, format!("# {}\n\n{}\n", topic_title, md).as_bytes());
-                    } else {
-                        let fname = name.unwrap_or_else(|| filename_with_extension(&topic_title, None));
-                        let entry = unique_path(seen, &format!("{}{}", folder, fname));
-                        zip.add_file(&entry, &bytes);
-                    }
+                    add_topic_bytes(zip, seen, &folder, &topic_title, &bytes, mime.as_deref(), name.as_deref());
                 }
                 Err(e) => {
                     tracing::debug!("topic {} skipped: {}", topic_id, e);

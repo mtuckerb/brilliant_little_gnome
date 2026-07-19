@@ -260,6 +260,26 @@ export default function Settings() {
       </div>
 
       <div className="box">
+        <h2 className="title is-5">Content</h2>
+        <div className="field">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={prefs.cache_content}
+              onChange={(e) => update("cache_content", e.target.checked)}
+            />{" "}
+            Cache course content for offline use
+          </label>
+          <p className="help">
+            When on, use each course's <strong>Make available offline</strong> button to store its files,
+            Tools, and media on this device. Cached content opens instantly and works offline, and the
+            course export reuses it. Quizzes are never cached. Turning this off makes the app fetch
+            everything live again (cached files stay on disk until you clear a course).
+          </p>
+        </div>
+      </div>
+
+      <div className="box">
         <h2 className="title is-5">REST API</h2>
         <p className="is-size-7 has-text-grey mb-3">
           Optional embedded HTTP server (axum) for external integrations. Off by default. Authenticated with a static bearer token.

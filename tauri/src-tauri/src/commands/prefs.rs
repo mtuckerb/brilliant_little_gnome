@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[tauri::command]
 pub async fn get_prefs(state: AppStateArg<'_>) -> Result<UserPreferences> {
     let prefs = sqlx::query_as::<_, UserPreferences>(
-        "SELECT id, display_name, time_zone, brightspace_host, api_enabled, api_key, api_listen_all, api_port, jwt_secret, historic_gpa, historic_units, default_semester, brightspace_uid, brightspace_user_id, last_login_at, calendar_show_empty_days, zotero_user_id, zotero_api_key , zotero_use_local, zotero_local_base_url, zotero_local_user_id, zotero_basic_auth_user, zotero_basic_auth_pass, spotify_client_id, spotify_client_secret FROM user_preferences LIMIT 1",
+        "SELECT id, display_name, time_zone, brightspace_host, api_enabled, api_key, api_listen_all, api_port, jwt_secret, historic_gpa, historic_units, default_semester, brightspace_uid, brightspace_user_id, last_login_at, calendar_show_empty_days, cache_content, zotero_user_id, zotero_api_key , zotero_use_local, zotero_local_base_url, zotero_local_user_id, zotero_basic_auth_user, zotero_basic_auth_pass, spotify_client_id, spotify_client_secret FROM user_preferences LIMIT 1",
     )
     .fetch_one(&state.pool)
     .await?;
@@ -25,6 +25,7 @@ pub struct PrefsPatch {
     pub api_listen_all: Option<bool>,
     pub api_port: Option<i64>,
     pub calendar_show_empty_days: Option<bool>,
+    pub cache_content: Option<bool>,
     pub zotero_user_id: Option<String>,
     pub zotero_api_key: Option<String>,
     pub zotero_use_local: Option<bool>,
@@ -83,6 +84,12 @@ pub async fn update_prefs(state: AppStateArg<'_>, patch: PrefsPatch) -> Result<U
     }
     if let Some(v) = patch.calendar_show_empty_days {
         sqlx::query("UPDATE user_preferences SET calendar_show_empty_days = ?, updated_at = CURRENT_TIMESTAMP")
+            .bind(v as i64).execute(pool).await?;
+    }
+    // Device-local: the cache lives on this machine's filesystem, so the toggle
+    // that governs it shouldn't ride Loro to peers with their own caches.
+    if let Some(v) = patch.cache_content {
+        sqlx::query("UPDATE user_preferences SET cache_content = ?, updated_at = CURRENT_TIMESTAMP")
             .bind(v as i64).execute(pool).await?;
     }
     // Zotero credentials: device-local on purpose. Each device may want a

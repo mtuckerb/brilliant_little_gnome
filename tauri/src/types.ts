@@ -141,6 +141,7 @@ export interface UserPreferences {
   brightspace_user_id: string | null;
   last_login_at: string | null;
   calendar_show_empty_days: boolean;
+  cache_content: boolean;
   spotify_client_id: string | null;
   spotify_client_secret: string | null;
   zotero_user_id: string | null;

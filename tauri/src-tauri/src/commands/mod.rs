@@ -7,6 +7,7 @@ pub mod notifications;
 pub mod sync;
 pub mod rest;
 pub mod content;
+pub mod content_cache;
 pub mod discussions;
 pub mod overview;
 pub mod assignment_detail;

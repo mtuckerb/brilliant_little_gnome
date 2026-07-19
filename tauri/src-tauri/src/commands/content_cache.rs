@@ -1,0 +1,331 @@
+//! Device-local content cache.
+//!
+//! A course can be "made available offline" — every cacheable topic (files,
+//! LTI Tools, ContentService media) is fetched once and stored on the local
+//! filesystem, with a metadata row in `content_cache`. Both consumers read
+//! cache-first: the in-app viewer (`preview_topic_file`) and the course export
+//! (`build_course_archive`).
+//!
+//! Quizzes and the other pure-quicklink types (discussion / dropbox / survey)
+//! are never cached — a quiz isn't downloadable content, and the user asked
+//! for them to be left untouched. Bare external links (Spotify, YouTube, …)
+//! are bookmarks, not ours to cache.
+//!
+//! The bytes live under `<app_data_dir>/content-cache/<course>/<topic>` and are
+//! intentionally NOT mirrored to Loro/P2P — cached media is large and
+//! device-local, so it must never replicate across paired devices.
+
+use super::AppStateArg;
+use crate::error::{AppError, Result};
+use serde::Serialize;
+use std::{fs, path::PathBuf, time::Duration};
+use tauri::{AppHandle, Manager};
+
+/// Per-item fetch ceiling, mirroring the export walk so one slow/huge topic
+/// can't stall a whole course cache run.
+const CACHE_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Default, Serialize)]
+pub struct CacheSummary {
+    pub cached: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub bytes: i64,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct CacheStatus {
+    pub count: i64,
+    pub bytes: i64,
+    pub last_cached_at: Option<String>,
+}
+
+/// Cached bytes + the metadata a viewer needs to route/render them.
+pub(crate) struct CachedContent {
+    pub bytes: Vec<u8>,
+    pub mime: Option<String>,
+    pub filename: String,
+}
+
+/// Master switch. Defaults to on; a missing column (older DB) also reads as on.
+pub(crate) async fn cache_enabled(pool: &sqlx::SqlitePool) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT cache_content FROM user_preferences LIMIT 1")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|v| v != 0)
+        .unwrap_or(true)
+}
+
+fn cache_root(app: &AppHandle) -> Result<PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Other(format!("could not resolve app data dir: {e}")))?
+        .join("content-cache");
+    Ok(dir)
+}
+
+/// Classify a content item into a cache kind, or `None` to skip it. Driven off
+/// the already-synced `content_items` row (item_type + url) rather than the live
+/// TOC, so no extra network call is needed to decide.
+pub(crate) fn classify(item_type: Option<&str>, url: Option<&str>) -> Option<&'static str> {
+    let t = item_type.unwrap_or_default().to_ascii_lowercase();
+    let u = url.unwrap_or_default();
+    match t.as_str() {
+        "file" => Some("file"),
+        "contentservice" => Some("media"),
+        "link" => match quicklink_type(u).as_deref() {
+            Some("lti") => Some("tool"),
+            // quiz explicitly left untouched; the other quicklinks aren't
+            // downloadable content.
+            _ => None,
+        },
+        // A typeless topic with a Brightspace-relative path behaves like a file.
+        "" if !u.is_empty() && !u.starts_with("http") => Some("file"),
+        _ => None,
+    }
+}
+
+/// Extract the `type=` value from a D2L quicklink URL (`…/quickLink.d2l?ou=…&type=quiz&…`).
+fn quicklink_type(url: &str) -> Option<String> {
+    let q = url.split('?').nth(1)?;
+    for pair in q.split('&') {
+        let mut it = pair.splitn(2, '=');
+        if it.next() == Some("type") {
+            return it.next().map(|v| v.to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+/// Look up a cached topic. Returns `None` if caching is off, nothing is cached,
+/// or the backing file has gone missing (in which case the stale row is dropped).
+pub(crate) async fn get_cached(
+    app: &AppHandle,
+    pool: &sqlx::SqlitePool,
+    course_id: &str,
+    topic_id: &str,
+) -> Result<Option<CachedContent>> {
+    if !cache_enabled(pool).await {
+        return Ok(None);
+    }
+    let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT rel_path, filename, mime FROM content_cache WHERE course_id = ? AND topic_id = ?",
+    )
+    .bind(course_id)
+    .bind(topic_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((rel_path, filename, mime)) = row else {
+        return Ok(None);
+    };
+    let full = cache_root(app)?.join(&rel_path);
+    match fs::read(&full) {
+        Ok(bytes) => Ok(Some(CachedContent { bytes, mime, filename })),
+        Err(_) => {
+            // File vanished (manual delete / cache cleared out-of-band). Drop the
+            // row so callers fall through to a live fetch.
+            let _ = sqlx::query("DELETE FROM content_cache WHERE course_id = ? AND topic_id = ?")
+                .bind(course_id)
+                .bind(topic_id)
+                .execute(pool)
+                .await;
+            Ok(None)
+        }
+    }
+}
+
+async fn put_cached(
+    app: &AppHandle,
+    pool: &sqlx::SqlitePool,
+    course_id: &str,
+    topic_id: &str,
+    filename: &str,
+    mime: Option<&str>,
+    kind: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    // On-disk name is just <topic_id> (topic ids are filesystem-safe); the real
+    // filename lives in the DB and is what the viewer routes on.
+    let rel_path = format!("{}/{}", course_id, topic_id);
+    let full = cache_root(app)?.join(&rel_path);
+    if let Some(parent) = full.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&full, bytes)?;
+    sqlx::query(
+        "INSERT INTO content_cache (course_id, topic_id, rel_path, filename, mime, byte_len, item_kind, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(course_id, topic_id) DO UPDATE SET
+            rel_path = excluded.rel_path,
+            filename = excluded.filename,
+            mime = excluded.mime,
+            byte_len = excluded.byte_len,
+            item_kind = excluded.item_kind,
+            fetched_at = CURRENT_TIMESTAMP",
+    )
+    .bind(course_id)
+    .bind(topic_id)
+    .bind(&rel_path)
+    .bind(filename)
+    .bind(mime)
+    .bind(bytes.len() as i64)
+    .bind(kind)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Make a course available offline: cache every cacheable topic. Quizzes and
+/// other non-content quicklinks are skipped. Re-running refreshes existing
+/// entries.
+#[tauri::command]
+pub async fn cache_course_content(
+    app: AppHandle,
+    state: AppStateArg<'_>,
+    course_id: String,
+) -> Result<CacheSummary> {
+    if !cache_enabled(&state.pool).await {
+        return Err(AppError::Other(
+            "Content caching is turned off in Settings.".to_string(),
+        ));
+    }
+    state.client.preflight_auth().await?;
+
+    let items: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT brightspace_id, item_type, url FROM content_items
+         WHERE module_id IN (SELECT brightspace_id FROM content_modules WHERE course_id = ?)",
+    )
+    .bind(&course_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut sum = CacheSummary::default();
+    for (topic_id, item_type, url) in items {
+        let Some(kind) = classify(item_type.as_deref(), url.as_deref()) else {
+            sum.skipped += 1;
+            continue;
+        };
+
+        // 'file'/'media' come through the topic file endpoint; 'tool' fetches the
+        // LTI quicklink itself (its launch page is HTML).
+        let (path, forced_name): (String, Option<String>) = match kind {
+            "tool" => match url.as_deref() {
+                Some(u) => (u.to_string(), Some(format!("{}.html", topic_id))),
+                None => {
+                    sum.skipped += 1;
+                    continue;
+                }
+            },
+            _ => (
+                format!(
+                    "/d2l/api/le/{}/{}/content/topics/{}/file",
+                    crate::client::API_VERSION,
+                    course_id,
+                    topic_id
+                ),
+                None,
+            ),
+        };
+
+        let fetch = state.client.fetch_bytes(&path);
+        match tokio::time::timeout(CACHE_FETCH_TIMEOUT, fetch).await {
+            Ok(Ok((bytes, mime, header_name))) => {
+                let filename = forced_name
+                    .or(header_name)
+                    .unwrap_or_else(|| format!("topic_{}", topic_id));
+                if put_cached(
+                    &app,
+                    &state.pool,
+                    &course_id,
+                    &topic_id,
+                    &filename,
+                    mime.as_deref(),
+                    kind,
+                    &bytes,
+                )
+                .await
+                .is_ok()
+                {
+                    sum.cached += 1;
+                    sum.bytes += bytes.len() as i64;
+                } else {
+                    sum.failed += 1;
+                }
+            }
+            _ => sum.failed += 1,
+        }
+    }
+    Ok(sum)
+}
+
+#[tauri::command]
+pub async fn course_cache_status(state: AppStateArg<'_>, course_id: String) -> Result<CacheStatus> {
+    let row: (i64, Option<i64>, Option<String>) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(byte_len), 0), MAX(fetched_at)
+         FROM content_cache WHERE course_id = ?",
+    )
+    .bind(&course_id)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(CacheStatus {
+        count: row.0,
+        bytes: row.1.unwrap_or(0),
+        last_cached_at: row.2,
+    })
+}
+
+#[tauri::command]
+pub async fn clear_course_cache(
+    app: AppHandle,
+    state: AppStateArg<'_>,
+    course_id: String,
+) -> Result<()> {
+    let dir = cache_root(&app)?.join(&course_id);
+    let _ = fs::remove_dir_all(&dir); // best-effort; rows are the source of truth
+    sqlx::query("DELETE FROM content_cache WHERE course_id = ?")
+        .bind(&course_id)
+        .execute(&state.pool)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify, quicklink_type};
+
+    #[test]
+    fn files_and_media_cache_tools_too() {
+        assert_eq!(classify(Some("File"), Some("/content/enforced/x.pptx")), Some("file"));
+        assert_eq!(classify(Some("ContentService"), Some("d2l:brightspace:content:...")), Some("media"));
+        assert_eq!(
+            classify(Some("Link"), Some("/d2l/common/dialogs/quickLink/quickLink.d2l?ou=1&type=lti&rcode=x")),
+            Some("tool")
+        );
+    }
+
+    #[test]
+    fn quizzes_and_other_quicklinks_are_skipped() {
+        for ty in ["quiz", "discuss", "dropbox", "survey"] {
+            let u = format!("/d2l/common/dialogs/quickLink/quickLink.d2l?ou=1&type={ty}&rcode=x");
+            assert_eq!(classify(Some("Link"), Some(&u)), None, "type={ty} should skip");
+        }
+    }
+
+    #[test]
+    fn bare_external_links_are_skipped() {
+        assert_eq!(classify(Some("Link"), Some("https://open.spotify.com/playlist/x")), None);
+        assert_eq!(classify(Some("Link"), Some("https://youtu.be/x")), None);
+    }
+
+    #[test]
+    fn quicklink_type_parses() {
+        assert_eq!(
+            quicklink_type("/d2l/common/dialogs/quickLink/quickLink.d2l?ou=1&type=lti&rcode=x").as_deref(),
+            Some("lti")
+        );
+        assert_eq!(quicklink_type("https://youtu.be/x"), None);
+    }
+}

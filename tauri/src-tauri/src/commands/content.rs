@@ -45,10 +45,23 @@ pub async fn list_course_items(state: AppStateArg<'_>, course_id: String) -> Res
 /// — which is what the viewer routes on.
 #[tauri::command]
 pub async fn preview_topic_file(
+    app: tauri::AppHandle,
     state: AppStateArg<'_>,
     course_id: String,
     topic_id: String,
 ) -> Result<PreviewAttachment> {
+    // Cache-first: if this topic was made available offline, serve the stored
+    // bytes (instant, works with no network). Falls through to a live fetch
+    // when caching is off or the topic isn't cached.
+    if let Some(cached) =
+        crate::commands::content_cache::get_cached(&app, &state.pool, &course_id, &topic_id).await?
+    {
+        return Ok(PreviewAttachment {
+            bytes_base64: base64::engine::general_purpose::STANDARD.encode(&cached.bytes),
+            mime: cached.mime,
+            filename: cached.filename,
+        });
+    }
     let path = format!(
         "/d2l/api/le/{}/{}/content/topics/{}/file",
         crate::client::API_VERSION,
