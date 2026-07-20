@@ -12,6 +12,15 @@ pub async fn sync(state: &AppState, course_id: &str) -> Result<()> {
     let toc = state.client.get_toc(&state.pool, course_id, false).await?;
     let modules = toc.get("Modules").and_then(|m| m.as_array()).cloned().unwrap_or_default();
     walk_modules(state, course_id, &modules, None, 0).await?;
+
+    // Resolve where any new LTI Tools launch to, so their links point at the
+    // vendor resource rather than an opaque D2L quicklink. Runs after the walk
+    // so freshly-synced Tools are included, and is best-effort: a failure here
+    // must never fail a content sync that otherwise succeeded.
+    let resolved = crate::commands::content_cache::resolve_lti_destinations(state, course_id).await;
+    if resolved > 0 {
+        tracing::info!("resolved {} LTI destination(s) for course {}", resolved, course_id);
+    }
     Ok(())
 }
 

@@ -232,6 +232,67 @@ async fn put_cached(
     Ok(())
 }
 
+/// Refresh LTI Tool destinations for a course, as part of the regular content
+/// sync. A Tool's *content* can't be cached (see `extract_lti_action`), but
+/// where its launch points is durable and worth keeping current — otherwise a
+/// destination only appears after someone manually caches the course, and newly
+/// added Tools would sit unresolved indefinitely.
+///
+/// Incremental by design: only Tools with no destination yet are fetched, so
+/// this costs one pass and then nothing. Entirely best-effort — a Tool that
+/// won't resolve leaves the export falling back to the D2L quicklink, which is
+/// what it did before any of this existed.
+pub(crate) async fn resolve_lti_destinations(state: &crate::state::AppState, course_id: &str) -> usize {
+    if !cache_enabled(&state.pool).await {
+        return 0;
+    }
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT i.brightspace_id, i.url FROM content_items i
+         WHERE i.module_id IN (SELECT brightspace_id FROM content_modules WHERE course_id = ?)
+           AND i.url LIKE '%type=lti%'
+           AND NOT EXISTS (
+               SELECT 1 FROM content_cache c
+               WHERE c.course_id = ? AND c.topic_id = i.brightspace_id
+                 AND c.resolved_url IS NOT NULL
+           )",
+    )
+    .bind(course_id)
+    .bind(course_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let mut resolved = 0usize;
+    for (topic_id, url) in rows {
+        let Some(url) = url else { continue };
+        let fetch = state.client.fetch_bytes(&url);
+        let Ok(Ok((bytes, mime, _))) = tokio::time::timeout(CACHE_FETCH_TIMEOUT, fetch).await else {
+            continue;
+        };
+        let Some(dest) = extract_lti_action(&String::from_utf8_lossy(&bytes)) else {
+            continue;
+        };
+        let filename = format!("{}.html", topic_id);
+        if put_cached(
+            &state.app,
+            &state.pool,
+            course_id,
+            &topic_id,
+            &filename,
+            mime.as_deref(),
+            "tool",
+            &bytes,
+            Some(&dest),
+        )
+        .await
+        .is_ok()
+        {
+            resolved += 1;
+        }
+    }
+    resolved
+}
+
 /// Make a course available offline: cache every cacheable topic. Quizzes and
 /// other non-content quicklinks are skipped. Re-running refreshes existing
 /// entries.
