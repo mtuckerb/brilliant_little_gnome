@@ -678,10 +678,17 @@ async fn collect_module(
             }
 
             if is_external_link_topic(t, url) {
-                if let Some(url) = url {
+                // An LTI Tool's content can't be cached (vendor-hosted, signed,
+                // short-lived), but if we resolved where its launch points, the
+                // shortcut goes straight to the vendor resource instead of the
+                // opaque D2L quicklink.
+                let resolved =
+                    crate::commands::content_cache::get_resolved_url(&state.pool, course_id, &topic_id).await;
+                let target = resolved.as_deref().or(url);
+                if let Some(target) = target {
                     let entry = unique_path(seen, &format!("{}{}.url", folder, sanitize(&topic_title)));
                     let host = state.client.host_clone();
-                    zip.add_file(&entry, internet_shortcut(url, host.as_deref()).as_bytes());
+                    zip.add_file(&entry, internet_shortcut(target, host.as_deref()).as_bytes());
                     continue;
                 }
             }

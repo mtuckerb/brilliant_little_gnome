@@ -100,8 +100,54 @@ fn quicklink_type(url: &str) -> Option<String> {
     None
 }
 
+/// Pull the destination out of an LTI auto-submit launch form. Brightspace
+/// serves a tiny HTML page whose `<form action="…">` points at the vendor
+/// resource; the OAuth params it carries expire within minutes, so the form
+/// itself is worthless to store — the action URL is the durable part.
+pub(crate) fn extract_lti_action(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let form = lower.find("<form")?;
+    let action_at = lower[form..].find("action=")? + form + "action=".len();
+    let rest = &html[action_at..];
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let end = rest[1..].find(quote)? + 1;
+    let raw = &rest[1..end];
+    if !raw.starts_with("http") {
+        return None;
+    }
+    Some(raw.replace("&amp;", "&"))
+}
+
+/// The vendor URL an LTI Tool launches into, if we resolved one.
+pub(crate) async fn get_resolved_url(
+    pool: &sqlx::SqlitePool,
+    course_id: &str,
+    topic_id: &str,
+) -> Option<String> {
+    if !cache_enabled(pool).await {
+        return None;
+    }
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT resolved_url FROM content_cache WHERE course_id = ? AND topic_id = ?",
+    )
+    .bind(course_id)
+    .bind(topic_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+}
+
 /// Look up a cached topic. Returns `None` if caching is off, nothing is cached,
 /// or the backing file has gone missing (in which case the stale row is dropped).
+///
+/// Tools are deliberately excluded: their cached bytes are an expired launch
+/// stub, and letting the export treat that as content produced empty files in
+/// place of a working shortcut. Callers want `get_resolved_url` for those.
 pub(crate) async fn get_cached(
     app: &AppHandle,
     pool: &sqlx::SqlitePool,
@@ -112,7 +158,8 @@ pub(crate) async fn get_cached(
         return Ok(None);
     }
     let row: Option<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT rel_path, filename, mime FROM content_cache WHERE course_id = ? AND topic_id = ?",
+        "SELECT rel_path, filename, mime FROM content_cache
+         WHERE course_id = ? AND topic_id = ? AND item_kind <> 'tool'",
     )
     .bind(course_id)
     .bind(topic_id)
@@ -146,24 +193,30 @@ async fn put_cached(
     mime: Option<&str>,
     kind: &str,
     bytes: &[u8],
+    resolved_url: Option<&str>,
 ) -> Result<()> {
     // On-disk name is just <topic_id> (topic ids are filesystem-safe); the real
-    // filename lives in the DB and is what the viewer routes on.
+    // filename lives in the DB and is what the viewer routes on. Tools store no
+    // bytes at all — only the resolved vendor URL is worth keeping.
     let rel_path = format!("{}/{}", course_id, topic_id);
-    let full = cache_root(app)?.join(&rel_path);
-    if let Some(parent) = full.parent() {
-        fs::create_dir_all(parent)?;
+    let stored_len = if kind == "tool" { 0 } else { bytes.len() as i64 };
+    if kind != "tool" {
+        let full = cache_root(app)?.join(&rel_path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&full, bytes)?;
     }
-    fs::write(&full, bytes)?;
     sqlx::query(
-        "INSERT INTO content_cache (course_id, topic_id, rel_path, filename, mime, byte_len, item_kind, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        "INSERT INTO content_cache (course_id, topic_id, rel_path, filename, mime, byte_len, item_kind, resolved_url, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(course_id, topic_id) DO UPDATE SET
             rel_path = excluded.rel_path,
             filename = excluded.filename,
             mime = excluded.mime,
             byte_len = excluded.byte_len,
             item_kind = excluded.item_kind,
+            resolved_url = excluded.resolved_url,
             fetched_at = CURRENT_TIMESTAMP",
     )
     .bind(course_id)
@@ -171,8 +224,9 @@ async fn put_cached(
     .bind(&rel_path)
     .bind(filename)
     .bind(mime)
-    .bind(bytes.len() as i64)
+    .bind(stored_len)
     .bind(kind)
+    .bind(resolved_url)
     .execute(pool)
     .await?;
     Ok(())
@@ -236,6 +290,19 @@ pub async fn cache_course_content(
                 let filename = forced_name
                     .or(header_name)
                     .unwrap_or_else(|| format!("topic_{}", topic_id));
+                // For a Tool, the payload is a throwaway launch form — keep only
+                // where it points. No destination means nothing worth recording.
+                let resolved = if kind == "tool" {
+                    match extract_lti_action(&String::from_utf8_lossy(&bytes)) {
+                        Some(u) => Some(u),
+                        None => {
+                            sum.failed += 1;
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
                 if put_cached(
                     &app,
                     &state.pool,
@@ -245,12 +312,15 @@ pub async fn cache_course_content(
                     mime.as_deref(),
                     kind,
                     &bytes,
+                    resolved.as_deref(),
                 )
                 .await
                 .is_ok()
                 {
                     sum.cached += 1;
-                    sum.bytes += bytes.len() as i64;
+                    if kind != "tool" {
+                        sum.bytes += bytes.len() as i64;
+                    }
                 } else {
                     sum.failed += 1;
                 }
@@ -318,6 +388,27 @@ mod tests {
     fn bare_external_links_are_skipped() {
         assert_eq!(classify(Some("Link"), Some("https://open.spotify.com/playlist/x")), None);
         assert_eq!(classify(Some("Link"), Some("https://youtu.be/x")), None);
+    }
+
+    #[test]
+    fn extracts_lti_destination() {
+        // Shape Brightspace actually serves (verified against a live OUP launch).
+        let html = r#"<html><body><div id="ltiLaunchFormSubmitArea">
+<form method="post" id="LtiRequestForm" action="https://iws.oupsupport.com/lti/1/arc/starr-waterman6e-timeline" enctype="application/x-www-form-urlencoded">
+<input type="hidden" name="oauth_timestamp" value="1784500543"></form></body></html>"#;
+        assert_eq!(
+            super::extract_lti_action(html).as_deref(),
+            Some("https://iws.oupsupport.com/lti/1/arc/starr-waterman6e-timeline")
+        );
+    }
+
+    #[test]
+    fn lti_extraction_unescapes_and_rejects_non_http() {
+        let esc = r#"<form action="https://v.com/a?x=1&amp;y=2">"#;
+        assert_eq!(super::extract_lti_action(esc).as_deref(), Some("https://v.com/a?x=1&y=2"));
+        // A relative or missing action isn't a usable destination.
+        assert_eq!(super::extract_lti_action(r#"<form action="/d2l/local">"#), None);
+        assert_eq!(super::extract_lti_action("<html>no form</html>"), None);
     }
 
     #[test]
