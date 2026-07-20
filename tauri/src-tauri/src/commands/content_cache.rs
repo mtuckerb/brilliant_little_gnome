@@ -1,10 +1,15 @@
 //! Device-local content cache.
 //!
-//! A course can be "made available offline" — every cacheable topic (files,
-//! LTI Tools, ContentService media) is fetched once and stored on the local
-//! filesystem, with a metadata row in `content_cache`. Both consumers read
-//! cache-first: the in-app viewer (`preview_topic_file`) and the course export
-//! (`build_course_archive`).
+//! A course can be "made available offline" — every cacheable topic (files, and
+//! LTI Tools, whose vendor destination is resolved) is fetched once and stored
+//! on the local filesystem, with a metadata row in `content_cache`. Both
+//! consumers read cache-first: the in-app viewer (`preview_topic_file`) and the
+//! course export (`build_course_archive`).
+//!
+//! ContentService media (video/audio) is deliberately NOT cached: its bytes
+//! live behind a content-service API whose token Brightspace mints client-side,
+//! out of reach of a cookie-only client — see `classify`. Those items still
+//! open in the browser.
 //!
 //! Quizzes and the other pure-quicklink types (discussion / dropbox / survey)
 //! are never cached — a quiz isn't downloadable content, and the user asked
@@ -75,7 +80,13 @@ pub(crate) fn classify(item_type: Option<&str>, url: Option<&str>) -> Option<&'s
     let u = url.unwrap_or_default();
     match t.as_str() {
         "file" => Some("file"),
-        "contentservice" => Some("media"),
+        // ContentService media (video/audio) can't be cached: the bytes sit
+        // behind api.<region>.content-service.brightspace.com, which needs a JWT
+        // that Brightspace's ContentViewer mints client-side (runtime XSRF ->
+        // /d2l/lp/auth/oauth2/token -> service token). A cookie-only client can't
+        // start that flow, so attempting it only produces a 404 the user reads
+        // as a failure. Skip it cleanly; these items still open in the browser.
+        "contentservice" => None,
         "link" => match quicklink_type(u).as_deref() {
             Some("lti") => Some("tool"),
             // quiz explicitly left untouched; the other quicklinks aren't
@@ -428,13 +439,15 @@ mod tests {
     use super::{classify, quicklink_type};
 
     #[test]
-    fn files_and_media_cache_tools_too() {
+    fn files_and_tools_cache_media_skips() {
         assert_eq!(classify(Some("File"), Some("/content/enforced/x.pptx")), Some("file"));
-        assert_eq!(classify(Some("ContentService"), Some("d2l:brightspace:content:...")), Some("media"));
         assert_eq!(
             classify(Some("Link"), Some("/d2l/common/dialogs/quickLink/quickLink.d2l?ou=1&type=lti&rcode=x")),
             Some("tool")
         );
+        // Media can't be cached (client-side-minted content-service token), so
+        // it's skipped rather than attempted-and-failed.
+        assert_eq!(classify(Some("ContentService"), Some("d2l:brightspace:content:...")), None);
     }
 
     #[test]
