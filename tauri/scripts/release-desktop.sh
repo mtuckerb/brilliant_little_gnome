@@ -17,25 +17,28 @@ SIGN_ID="Developer ID Application: Tucker Bradford (QDWAV324SU)"
 
 [ -f "$KEY" ] || { echo "missing updater key: $KEY"; exit 1; }
 
-# Build the .app + updater artifact FIRST, on its own. The updater tarball is
-# the only thing the OTA endpoint needs, and bundling it separately means a
-# flaky `bundle_dmg.sh` (hdiutil detach failures) can no longer abort the build
-# before the .app.tar.gz is produced — which is exactly what broke the 2.0.6
-# release.
-echo "==> Building signed desktop bundle $VER (app + updater)"
-TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY")" \
-TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
-APPLE_SIGNING_IDENTITY="$SIGN_ID" \
-  npm run tauri -- build --target universal-apple-darwin --bundles app \
-    --config '{"productName":"Brilliant Desktop"}'
+# Two passes, DMG FIRST then app+updater LAST. Two things forced this ordering:
+#   1. A flaky `bundle_dmg.sh` (hdiutil detach failures) must not abort the
+#      build before the .app.tar.gz is produced — that broke the 2.0.6 release.
+#      Splitting the DMG into its own best-effort pass fixes that.
+#   2. The DMG pass *deletes* the .app it builds ("Cleaning …app") on the way to
+#      the disk image. If it ran last it would leave no .app on disk for a local
+#      install (only the OTA tarball). Running the app+updater pass LAST leaves
+#      both the .app and the signed .app.tar.gz intact.
+sign_env() {
+  TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY")" \
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+  APPLE_SIGNING_IDENTITY="$SIGN_ID" "$@"
+}
 
-# DMG is a nice-to-have for fresh installs; never let it fail the release.
-echo "==> Building DMG (best-effort)"
-TAURI_SIGNING_PRIVATE_KEY="$(cat "$KEY")" \
-TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
-APPLE_SIGNING_IDENTITY="$SIGN_ID" \
-  npm run tauri -- build --target universal-apple-darwin --bundles dmg \
-    --config '{"productName":"Brilliant Desktop"}' || echo "    DMG bundling failed — continuing (OTA artifact is unaffected)"
+echo "==> Building DMG (best-effort — never fails the release)"
+sign_env npm run tauri -- build --target universal-apple-darwin --bundles dmg \
+  --config '{"productName":"Brilliant Desktop"}' \
+  || echo "    DMG bundling failed — continuing (OTA artifact + .app come from the next pass)"
+
+echo "==> Building signed desktop bundle $VER (app + updater)"
+sign_env npm run tauri -- build --target universal-apple-darwin --bundles app \
+  --config '{"productName":"Brilliant Desktop"}'
 
 BUNDLE="src-tauri/target/universal-apple-darwin/release/bundle/macos"
 ART="$BUNDLE/Brilliant Desktop.app.tar.gz"
