@@ -6,6 +6,8 @@ export interface ZoteroResult {
   created: string[];
   failures: string[];
   collection_key: string | null;
+  /** Items already in Zotero with the same file — nothing needed doing. */
+  up_to_date: number;
 }
 
 export interface UpdateInfo {

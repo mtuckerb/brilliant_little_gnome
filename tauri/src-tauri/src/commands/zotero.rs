@@ -21,6 +21,11 @@ pub struct ZoteroResult {
     pub failures: Vec<String>,
     /// Zotero collection key the items landed in (so the UI can link to it).
     pub collection_key: Option<String>,
+    /// Items already in Zotero carrying the same file, so there was nothing
+    /// to do. Counted apart from `created` because "everything is current"
+    /// and "there was nothing here to send" are opposite outcomes and the
+    /// UI was reporting both as the latter.
+    pub up_to_date: usize,
 }
 
 fn emit_result(app: &AppHandle, result: &ZoteroResult) {
@@ -473,6 +478,7 @@ async fn send_topic_to_zotero(
                     "zotero: '{}' already current (md5 match); skipping",
                     topic_title
                 );
+                result.up_to_date += 1;
                 return;
             }
             if let Some(attachment_key) = existing.attachment_key.as_deref() {
@@ -616,6 +622,7 @@ pub async fn zotero_send_topic(
         created: Vec::new(),
         failures: Vec::new(),
         collection_key: None,
+        up_to_date: 0,
     };
     send_topic_to_zotero(
         &zc,
@@ -677,6 +684,7 @@ pub async fn zotero_send_module(
         created: Vec::new(),
         failures: Vec::new(),
         collection_key: None,
+        up_to_date: 0,
     };
     walk_module_for_zotero(
         &zc,
@@ -709,6 +717,7 @@ pub async fn zotero_send_course(
         created: Vec::new(),
         failures: Vec::new(),
         collection_key: None,
+        up_to_date: 0,
     };
     if let Some(modules) = toc.get("Modules").and_then(|v| v.as_array()) {
         for m in modules {
@@ -790,6 +799,7 @@ pub async fn zotero_send_syllabus(
                 created: Vec::new(),
                 failures: Vec::new(),
                 collection_key: target.reported_key(),
+                up_to_date: 1,
             };
             emit_result(&app, &result);
             return Ok(result);
@@ -801,6 +811,7 @@ pub async fn zotero_send_syllabus(
                 created: vec![attachment_key.to_string()],
                 failures: Vec::new(),
                 collection_key: target.reported_key(),
+                up_to_date: 0,
             };
             emit_result(&app, &result);
             return Ok(result);
@@ -843,6 +854,7 @@ pub async fn zotero_send_syllabus(
         created: vec![attachment_key],
         failures: Vec::new(),
         collection_key: target.reported_key(),
+        up_to_date: 0,
     };
     emit_result(&app, &result);
     Ok(result)

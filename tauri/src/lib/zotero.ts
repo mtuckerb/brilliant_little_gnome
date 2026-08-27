@@ -21,10 +21,23 @@ export async function runZotero(
     const result = await action();
     const created = result.created.length;
     const failed = result.failures.length;
-    if (created === 0 && failed === 0) {
+    // A re-send of an unchanged course does nothing at all, which is success.
+    // Reporting it as "nothing to send" made a working sync read as a dead
+    // end, so up-to-date items are counted and called out separately.
+    const current = result.up_to_date ?? 0;
+    const alsoCurrent = current > 0 ? `, ${current} already current` : "";
+    if (created === 0 && failed === 0 && current > 0) {
+      toast.show(
+        `${label}: already up to date — ${current} item${current === 1 ? "" : "s"} in Zotero.`,
+        "is-success",
+      );
+    } else if (created === 0 && failed === 0) {
       toast.show(`${label}: nothing to send.`, "is-warning");
     } else if (failed === 0) {
-      toast.show(`${label}: sent ${created} item${created === 1 ? "" : "s"} to Zotero.`, "is-success");
+      toast.show(
+        `${label}: sent ${created} item${created === 1 ? "" : "s"} to Zotero${alsoCurrent}.`,
+        "is-success",
+      );
     } else if (created === 0) {
       toast.show(
         `${label}: send failed. First error: ${escapeHtml(result.failures[0])}`,
@@ -33,7 +46,7 @@ export async function runZotero(
       );
     } else {
       toast.show(
-        `${label}: sent ${created}, ${failed} failed. First error: ${escapeHtml(result.failures[0])}`,
+        `${label}: sent ${created}${alsoCurrent}, ${failed} failed. First error: ${escapeHtml(result.failures[0])}`,
         "is-warning",
         9000,
       );
