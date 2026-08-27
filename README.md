@@ -88,7 +88,7 @@ If you want to know how the sausage is made:
 - **[`docs/system_design.md`](docs/system_design.md)** — overall architecture, sync engine, persistence model
 - **[`tauri/docs/sync/design.md`](tauri/docs/sync/design.md)** — P2P sync architecture, threat model, CRDT mapping
 - **[`tauri/README.md`](tauri/README.md)** — Tauri development notes, layout, feature flags
-- **[`docs/openapi.yaml`](docs/openapi.yaml)** — REST API surface for the embedded server
+- **[`docs/openapi.yaml`](docs/openapi.yaml)** — authoritative REST and MCP contract for the embedded Tauri server; Swagger UI is served at `/docs`
 
 ---
 

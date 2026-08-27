@@ -1,26 +1,59 @@
 # brilliant-tauri
 
-Tauri v2 port of the Sinatra/Ruby Brightspace companion app. Runs side-by-side
-with the Ruby version until parity.
+Current Tauri v2 desktop implementation of the Brilliant Brightspace companion.
+The legacy Sinatra/Ruby server remains in the repository for compatibility and
+migration work.
 
 ## Status
 
-Scaffold + foundation:
+Implemented:
 
 - React + TypeScript frontend (Vite)
 - Rust backend with sqlx/SQLite, JWT, axum (embedded REST API)
 - Schema mirrored from `db/schema.rb` (initial migration `0001_init.sql`)
 - Tauri commands for auth, prefs, courses, grades (with full computed summary),
-  assignments, notifications, sync orchestration, REST API lifecycle
+  assignments, content, discussions, notifications, sync orchestration, REST API lifecycle
 - Event bus replacing the SSE channel
 - Background sync loop (every 15 min)
+- Native Streamable HTTP MCP server
+- Peer-to-peer overlay synchronization
 
-Stubbed (intentional — fills in next pass):
+## Embedded REST API and MCP
 
-- `BrightspaceClient` HTTP fetchers and pagination
-- Per-service sync (content modules, grades scrape, assignments, discussions, notifications)
-- REST `/api/v1` route coverage (only `/health` is wired right now)
-- Native cookie-capture window flow
+Enable the server under **Settings → REST API**, choose whether it should listen
+only on loopback or on all interfaces, and generate a static key. The default
+port is `4567`.
+
+Protected requests accept the static key as a Bearer token, `X-API-Key`, or the
+`api_key` query parameter. `GET /api/v1/token` exchanges an authenticated
+request for a JWT valid for 24 hours.
+
+```sh
+curl -H 'Authorization: Bearer <api-key>' \
+  http://127.0.0.1:4567/api/v1/courses
+```
+
+Swagger UI is available at
+[`http://127.0.0.1:4567/docs`](http://127.0.0.1:4567/docs), and the canonical
+contract is [`../docs/openapi.yaml`](../docs/openapi.yaml).
+
+MCP clients connect over Streamable HTTP:
+
+```json
+{
+  "mcpServers": {
+    "brilliant": {
+      "url": "http://127.0.0.1:4567/mcp",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      }
+    }
+  }
+}
+```
+
+The native tools cover courses, grade and assignment summaries, discussions,
+notifications, dashboard data, cross-course search, and complete course export.
 
 ## Getting started (NixOS)
 
@@ -228,4 +261,3 @@ The engine writes a snapshot + WAL to
 the later of "every 60 seconds" or "200 WAL frames". Snapshot size
 is surfaced live in the panel and a `p2p:warning` event fires if it
 crosses 50 MB — at which point the user can rotate to start fresh.
-
