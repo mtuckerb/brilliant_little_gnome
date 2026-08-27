@@ -180,6 +180,79 @@ async fn try_ensure_collection(
     }
 }
 
+/// Where a send files its items, resolved lazily.
+///
+/// Collections used to be created up front — one for the course, then one
+/// per module before we knew whether the module had anything in it. Modules
+/// full of quizzes, links, or content pages left empty collections behind,
+/// and a re-send of an unchanged course created them again. Nothing is
+/// created here until a topic is actually about to be written, so a send
+/// that files nothing touches the library's structure not at all.
+///
+/// `Option<Option<String>>` throughout: the outer layer is "have we tried
+/// yet", the inner is "did the server give us one" — some Zotero servers
+/// don't expose /collections at all, and there we fall back to the root.
+struct CollectionTarget<'a> {
+    zc: &'a ZoteroClient,
+    course_name: String,
+    module_name: Option<String>,
+    course_key: Option<Option<String>>,
+    module_key: Option<Option<String>>,
+}
+
+impl<'a> CollectionTarget<'a> {
+    fn new(zc: &'a ZoteroClient, course_name: String) -> Self {
+        Self { zc, course_name, module_name: None, course_key: None, module_key: None }
+    }
+
+    /// Point subsequent items at a module sub-collection. The course-level
+    /// resolution is deliberately kept, so walking twelve modules still
+    /// resolves the course collection once.
+    fn enter_module(&mut self, module_title: &str) {
+        self.module_name = Some(module_title.to_string());
+        self.module_key = None;
+    }
+
+    /// The collection an item should go into, creating it if this is the
+    /// first item that needs it. None means the library root.
+    async fn resolve(&mut self) -> Option<String> {
+        let course = self.resolve_course().await;
+        let Some(module_name) = self.module_name.clone() else {
+            return course;
+        };
+        // Without a course collection there's nothing to nest under, so the
+        // module collection is skipped rather than created at the top level.
+        let parent = course.clone()?;
+        if self.module_key.is_none() {
+            self.module_key =
+                Some(try_ensure_collection(self.zc, &module_name, Some(&parent)).await);
+        }
+        self.module_key.clone().flatten().or(course)
+    }
+
+    async fn resolve_course(&mut self) -> Option<String> {
+        if self.course_key.is_none() {
+            self.course_key = Some(try_ensure_collection(self.zc, &self.course_name, None).await);
+        }
+        self.course_key.clone().flatten()
+    }
+
+    /// The collection the UI should link to — only whatever we actually
+    /// ended up resolving, so a send that filed nothing reports nothing.
+    fn reported_key(&self) -> Option<String> {
+        self.module_key
+            .clone()
+            .flatten()
+            .or_else(|| self.course_key.clone().flatten())
+    }
+
+    /// As `reported_key`, but never a module sub-collection — for the
+    /// whole-course send, where the course collection is the useful link.
+    fn reported_course_key(&self) -> Option<String> {
+        self.course_key.clone().flatten()
+    }
+}
+
 /// Topics in a Brightspace TOC come in many flavors — File (PDF/Word/etc),
 /// Link (external URL), Quiz, Discussion, Dropbox (assignment), Survey,
 /// SCORM, etc. Only ones with a document behind them belong in Zotero.
@@ -353,7 +426,7 @@ async fn send_topic_to_zotero(
     course_id: &str,
     course_title: &str,
     course_code: Option<&str>,
-    collection_key: Option<&str>,
+    target: &mut CollectionTarget<'_>,
     topic: &Value,
     result: &mut ZoteroResult,
 ) {
@@ -446,12 +519,15 @@ async fn send_topic_to_zotero(
     if let Some(c) = course_code {
         tags.push(c.to_string());
     }
+    // First item that actually needs a home — resolve (and create) the
+    // collection now, not when the walk started.
+    let collection_key = target.resolve().await;
     let parent = ParentItem {
         item_type: ItemType::Document,
         title: topic_title.clone(),
         url: host.as_ref().map(|h| topic_view_url(h, course_id, &topic_id)),
         tags,
-        collection_keys: collection_key.map(|k| vec![k.to_string()]).unwrap_or_default(),
+        collection_keys: collection_key.map(|k| vec![k]).unwrap_or_default(),
     };
     let parent_key = match zc.create_parent_item(&parent).await {
         Ok(k) => k,
@@ -490,14 +566,14 @@ async fn walk_module_for_zotero(
     course_id: &str,
     course_title: &str,
     course_code: Option<&str>,
-    collection_key: Option<&str>,
+    target: &mut CollectionTarget<'_>,
     node: &Value,
     result: &mut ZoteroResult,
 ) {
     if let Some(topics) = node.get("Topics").and_then(|v| v.as_array()) {
         for t in topics {
             send_topic_to_zotero(
-                zc, state, course_id, course_title, course_code, collection_key, t, result,
+                zc, state, course_id, course_title, course_code, target, t, result,
             )
             .await;
         }
@@ -505,7 +581,7 @@ async fn walk_module_for_zotero(
     if let Some(subs) = node.get("Modules").and_then(|v| v.as_array()) {
         for sub in subs {
             Box::pin(walk_module_for_zotero(
-                zc, state, course_id, course_title, course_code, collection_key, sub, result,
+                zc, state, course_id, course_title, course_code, target, sub, result,
             ))
             .await;
         }
@@ -522,8 +598,7 @@ pub async fn zotero_send_topic(
     let mode = load_mode(&state).await?;
     let zc = ZoteroClient::new(mode)?;
     let (title, code) = course_display(&state, &course_id).await?;
-    let collection_key =
-        try_ensure_collection(&zc, &collection_name(&title, code.as_deref()), None).await;
+    let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
     // Find the topic anywhere in the TOC. Simplest: walk every module.
     let mut topic_value: Option<Value> = None;
@@ -540,7 +615,7 @@ pub async fn zotero_send_topic(
     let mut result = ZoteroResult {
         created: Vec::new(),
         failures: Vec::new(),
-        collection_key: collection_key.clone(),
+        collection_key: None,
     };
     send_topic_to_zotero(
         &zc,
@@ -548,11 +623,12 @@ pub async fn zotero_send_topic(
         &course_id,
         &title,
         code.as_deref(),
-        collection_key.as_deref(),
+        &mut target,
         &topic,
         &mut result,
     )
     .await;
+    result.collection_key = target.reported_key();
     emit_result(&app, &result);
     Ok(result)
 }
@@ -585,8 +661,7 @@ pub async fn zotero_send_module(
     let mode = load_mode(&state).await?;
     let zc = ZoteroClient::new(mode)?;
     let (title, code) = course_display(&state, &course_id).await?;
-    let course_collection =
-        try_ensure_collection(&zc, &collection_name(&title, code.as_deref()), None).await;
+    let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
     let module = find_module(&toc, &module_id)
         .ok_or_else(|| AppError::Other(format!("module {} not found in TOC", module_id)))?;
@@ -595,16 +670,13 @@ pub async fn zotero_send_module(
         .and_then(|v| v.as_str())
         .map(String::from)
         .unwrap_or_else(|| format!("Module {}", module_id));
-    // Each module gets its own sub-collection under the course — only if
-    // the server supported the parent lookup. Otherwise drop to root.
-    let module_collection = match course_collection.as_deref() {
-        Some(parent) => try_ensure_collection(&zc, &module_title, Some(parent)).await,
-        None => None,
-    };
+    // Each module gets its own sub-collection under the course, created on
+    // the first item that lands in it.
+    target.enter_module(&module_title);
     let mut result = ZoteroResult {
         created: Vec::new(),
         failures: Vec::new(),
-        collection_key: module_collection.clone().or(course_collection.clone()),
+        collection_key: None,
     };
     walk_module_for_zotero(
         &zc,
@@ -612,11 +684,12 @@ pub async fn zotero_send_module(
         &course_id,
         &title,
         code.as_deref(),
-        module_collection.as_deref().or(course_collection.as_deref()),
+        &mut target,
         &module,
         &mut result,
     )
     .await;
+    result.collection_key = target.reported_key();
     emit_result(&app, &result);
     Ok(result)
 }
@@ -630,13 +703,12 @@ pub async fn zotero_send_course(
     let mode = load_mode(&state).await?;
     let zc = ZoteroClient::new(mode)?;
     let (title, code) = course_display(&state, &course_id).await?;
-    let course_collection =
-        try_ensure_collection(&zc, &collection_name(&title, code.as_deref()), None).await;
+    let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
     let mut result = ZoteroResult {
         created: Vec::new(),
         failures: Vec::new(),
-        collection_key: course_collection.clone(),
+        collection_key: None,
     };
     if let Some(modules) = toc.get("Modules").and_then(|v| v.as_array()) {
         for m in modules {
@@ -645,27 +717,24 @@ pub async fn zotero_send_course(
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .unwrap_or_else(|| "Untitled module".into());
-            // Sub-collection per module — only if the server supported the
-            // course-level collection lookup. If it didn't (local Zotero
-            // 403s on /collections), items go to the root tagged with the
-            // course code.
-            let module_collection = match course_collection.as_deref() {
-                Some(parent) => try_ensure_collection(&zc, &module_title, Some(parent)).await,
-                None => None,
-            };
+            // Sub-collection per module, created only once a file in it is
+            // ready to be written. Modules that turn out to hold nothing but
+            // quizzes, links, or content pages leave no trace.
+            target.enter_module(&module_title);
             walk_module_for_zotero(
                 &zc,
                 &state,
                 &course_id,
                 &title,
                 code.as_deref(),
-                module_collection.as_deref().or(course_collection.as_deref()),
+                &mut target,
                 m,
                 &mut result,
             )
             .await;
         }
     }
+    result.collection_key = target.reported_course_key();
     emit_result(&app, &result);
     Ok(result)
 }
@@ -679,8 +748,7 @@ pub async fn zotero_send_syllabus(
     let mode = load_mode(&state).await?;
     let zc = ZoteroClient::new(mode)?;
     let (title, code) = course_display(&state, &course_id).await?;
-    let collection_key =
-        try_ensure_collection(&zc, &collection_name(&title, code.as_deref()), None).await;
+    let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
     let overview = state.client.get_overview(&state.pool, &course_id, false).await?;
     let has_attachment = overview
         .get("HasAttachment")
@@ -721,7 +789,7 @@ pub async fn zotero_send_syllabus(
             let result = ZoteroResult {
                 created: Vec::new(),
                 failures: Vec::new(),
-                collection_key,
+                collection_key: target.reported_key(),
             };
             emit_result(&app, &result);
             return Ok(result);
@@ -732,7 +800,7 @@ pub async fn zotero_send_syllabus(
             let result = ZoteroResult {
                 created: vec![attachment_key.to_string()],
                 failures: Vec::new(),
-                collection_key,
+                collection_key: target.reported_key(),
             };
             emit_result(&app, &result);
             return Ok(result);
@@ -744,6 +812,7 @@ pub async fn zotero_send_syllabus(
         tags.push(c.to_string());
     }
     tags.push("syllabus".to_string());
+    let collection_key = target.resolve().await;
     let parent = ParentItem {
         item_type: ItemType::Document,
         title: format!("Syllabus — {}", title),
@@ -773,7 +842,7 @@ pub async fn zotero_send_syllabus(
     let result = ZoteroResult {
         created: vec![attachment_key],
         failures: Vec::new(),
-        collection_key,
+        collection_key: target.reported_key(),
     };
     emit_result(&app, &result);
     Ok(result)
@@ -798,7 +867,72 @@ fn sanitize(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::zotero::ZoteroMode;
     use serde_json::json;
+
+    fn offline_client() -> ZoteroClient {
+        // Never contacted: these tests only exercise the paths that avoid
+        // touching the server, which is precisely the point of them.
+        ZoteroClient::new(ZoteroMode::Local {
+            base_url: None,
+            basic_auth: None,
+            user_id_override: None,
+            api_key: None,
+        })
+        .expect("client")
+    }
+
+    #[test]
+    fn a_send_that_files_nothing_creates_no_collections() {
+        // The regression: walking a module used to create its collection up
+        // front, so modules of quizzes and links left empty collections
+        // behind and every re-send made them again. Resolving is the only
+        // thing that talks to Zotero, so a target that was never resolved
+        // provably created nothing.
+        let zc = offline_client();
+        let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into());
+        target.enter_module("Week 1");
+        target.enter_module("Week 2");
+        assert_eq!(target.reported_key(), None);
+        assert_eq!(target.reported_course_key(), None);
+    }
+
+    #[test]
+    fn entering_a_module_keeps_the_course_resolution() {
+        // Twelve modules should still resolve the course collection once.
+        let zc = offline_client();
+        let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into());
+        target.course_key = Some(Some("COURSEKEY".into()));
+        target.module_key = Some(Some("WEEK1KEY".into()));
+
+        target.enter_module("Week 2");
+
+        assert_eq!(target.course_key, Some(Some("COURSEKEY".into())));
+        assert_eq!(target.module_key, None, "the new module must resolve on its own");
+        assert_eq!(target.reported_course_key(), Some("COURSEKEY".into()));
+    }
+
+    #[test]
+    fn whole_course_result_links_the_course_not_the_last_module() {
+        let zc = offline_client();
+        let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into());
+        target.course_key = Some(Some("COURSEKEY".into()));
+        target.module_key = Some(Some("WEEK7KEY".into()));
+
+        assert_eq!(target.reported_key(), Some("WEEK7KEY".into()));
+        assert_eq!(target.reported_course_key(), Some("COURSEKEY".into()));
+    }
+
+    #[test]
+    fn a_server_without_collections_reports_none_rather_than_failing() {
+        // try_ensure_collection swallows the error and records the attempt;
+        // items then go to the library root.
+        let zc = offline_client();
+        let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into());
+        target.course_key = Some(None);
+        assert_eq!(target.reported_key(), None);
+        assert_eq!(target.reported_course_key(), None);
+    }
 
     #[test]
     fn rejects_topics_with_no_file_behind_them() {

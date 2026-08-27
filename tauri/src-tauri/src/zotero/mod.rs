@@ -60,6 +60,13 @@ pub struct ZoteroClient {
     user_id: String,
     api_key: Option<String>,
     basic_auth: Option<(String, String)>,
+    /// Every collection in the library, listed at most once per client.
+    /// `ensure_collection` runs once for the course plus once per module,
+    /// and each listing pages the whole library — a twelve-module course
+    /// meant thirteen full scans, which is slow locally and a good way to
+    /// earn a 429 from api.zotero.org. A client lives for exactly one
+    /// send, so this never goes stale within its own lifetime.
+    collections: tokio::sync::Mutex<Option<Vec<Collection>>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -166,7 +173,14 @@ impl ZoteroClient {
             user_id,
             if basic_auth.is_some() { "yes" } else { "no" },
         );
-        Ok(Self { http, base, user_id, api_key, basic_auth })
+        Ok(Self {
+            http,
+            base,
+            user_id,
+            api_key,
+            basic_auth,
+            collections: tokio::sync::Mutex::new(None),
+        })
     }
 
     fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -302,7 +316,13 @@ impl ZoteroClient {
     /// location. Exact (name + parent) matches are preferred when
     /// multiple collections share the same name.
     pub async fn ensure_collection(&self, name: &str, parent: Option<&str>) -> Result<String> {
-        let existing = self.list_collections().await?;
+        // Held across the create below so two concurrent callers asking for
+        // the same collection can't both decide it's missing and make one.
+        let mut cache = self.collections.lock().await;
+        if cache.is_none() {
+            *cache = Some(self.list_collections().await?);
+        }
+        let existing = cache.as_mut().expect("populated above");
         // Prefer exact (name + parent) match.
         if let Some(c) = existing.iter().find(|c| {
             c.data.name == name && c.data.parent_collection.as_deref() == parent
@@ -344,6 +364,16 @@ impl ZoteroClient {
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Other(format!("zotero create collection — no key in {}", payload)))?
             .to_string();
+        // Record it so the next lookup in this send finds it without
+        // re-listing, and so a second module asking for the same name
+        // reuses this one rather than creating a duplicate.
+        existing.push(Collection {
+            key: key.clone(),
+            data: CollectionData {
+                name: name.to_string(),
+                parent_collection: parent.map(String::from),
+            },
+        });
         Ok(key)
     }
 
