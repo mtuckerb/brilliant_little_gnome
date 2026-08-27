@@ -182,13 +182,17 @@ async fn try_ensure_collection(
 
 /// Topics in a Brightspace TOC come in many flavors — File (PDF/Word/etc),
 /// Link (external URL), Quiz, Discussion, Dropbox (assignment), Survey,
-/// SCORM, etc. Only the File flavor belongs in Zotero; the rest fetch as
-/// HTML stubs of the Brightspace page and just pollute the library.
+/// SCORM, etc. Only ones with a document behind them belong in Zotero.
 ///
-/// D2L's TypeIdentifier strings vary across versions and we don't want to
-/// hard-code an exhaustive list, so the check is positive — accept only
-/// when the type hint clearly says "File" / numeric Type=1, OR when the
-/// URL points at a known doc extension. Anything else is skipped silently.
+/// This used to be a *positive* filter: accept only `TypeIdentifier` of
+/// "File"/1, or a URL ending in a known extension. That silently dropped
+/// real course documents — anything Brightspace reports under a type string
+/// we didn't enumerate, which includes files stored through the newer
+/// content service, whose URLs carry no extension either. So the check is
+/// now negative: reject the flavors that definitionally have no file, and
+/// attempt the rest. The authoritative "is this a document" test is the
+/// content type of what actually comes back, which is a fact rather than a
+/// guess — see `fetch_topic_document`.
 fn is_zotero_eligible_topic(topic: &Value) -> bool {
     let type_hint = topic
         .get("TypeIdentifier")
@@ -196,29 +200,138 @@ fn is_zotero_eligible_topic(topic: &Value) -> bool {
         .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if type_hint == "file" || type_hint == "1" {
-        return true;
-    }
-    if type_hint.contains("link")
+    !(type_hint.contains("link")
         || type_hint.contains("quiz")
         || type_hint.contains("discussion")
         || type_hint.contains("dropbox")
         || type_hint.contains("survey")
         || type_hint.contains("scorm")
-        || type_hint.contains("checklist")
-    {
-        return false;
+        || type_hint.contains("checklist"))
+}
+
+/// Outcome of trying to get a topic's actual document bytes.
+enum TopicFetch {
+    Document {
+        bytes: Vec<u8>,
+        mime: Option<String>,
+        filename: Option<String>,
+    },
+    /// There is no document here — skip quietly, but say why in the log.
+    NotADocument(String),
+    /// There should have been a document and we couldn't get it.
+    Failed(String),
+}
+
+/// Resolve a topic to the file itself.
+///
+/// `/content/topics/<id>/file` is the correct endpoint for a stored file,
+/// but Brightspace will happily answer it with the HTML of the viewContent
+/// page for topics it doesn't treat as directly downloadable. That HTML is
+/// the page *about* the document, not the document — sending it to Zotero is
+/// what produced library entries that were nothing but a Brightspace link.
+///
+/// So: try the API endpoint, and whenever it gives us HTML (or fails
+/// outright), fall back to the topic's own `Url`, which for uploaded course
+/// files is the direct `/content/enforced/<course>/<file>` path.
+async fn fetch_topic_document(
+    state: &AppStateArg<'_>,
+    course_id: &str,
+    topic_id: &str,
+    topic: &Value,
+) -> TopicFetch {
+    let api_path = topic_download_path(course_id, topic_id);
+    match state.client.fetch_bytes(&api_path).await {
+        Ok((bytes, mime, name)) if is_zotero_eligible_mime(mime.as_deref()) => {
+            TopicFetch::Document { bytes, mime, filename: name }
+        }
+        Ok((_, mime, _)) => match fetch_topic_direct_url(state, topic).await {
+            Some(Ok((bytes, direct_mime, name))) if is_zotero_eligible_mime(direct_mime.as_deref()) => {
+                TopicFetch::Document { bytes, mime: direct_mime, filename: name }
+            }
+            Some(Ok(_)) | None => TopicFetch::NotADocument(format!(
+                "Brightspace served the content page ({}), not a file",
+                mime.as_deref().unwrap_or("no content-type"),
+            )),
+            Some(Err(e)) => TopicFetch::Failed(e),
+        },
+        Err(e) => match fetch_topic_direct_url(state, topic).await {
+            Some(Ok((bytes, mime, name))) if is_zotero_eligible_mime(mime.as_deref()) => {
+                TopicFetch::Document { bytes, mime, filename: name }
+            }
+            Some(Ok(_)) => TopicFetch::NotADocument(
+                "the topic's own URL is a Brightspace page, not a file".to_string(),
+            ),
+            Some(Err(direct)) => TopicFetch::Failed(format!("{} (direct URL: {})", e, direct)),
+            None => TopicFetch::Failed(e.to_string()),
+        },
     }
-    // Fallback: trust the URL's extension if Brightspace omitted a
-    // TypeIdentifier we recognize.
-    let url = topic.get("Url").and_then(|v| v.as_str()).unwrap_or_default().to_ascii_lowercase();
-    let exts = [
-        ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
-        ".odt", ".rtf", ".txt", ".md", ".csv",
-        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic",
-        ".epub", ".mobi",
-    ];
-    exts.iter().any(|e| url.ends_with(e))
+}
+
+/// Fetch a topic's own `Url`. `None` when there's nothing usable to try:
+/// no URL, or an absolute one pointing off-site (an external link topic —
+/// we're not pulling arbitrary web pages into the user's library).
+#[allow(clippy::type_complexity)]
+async fn fetch_topic_direct_url(
+    state: &AppStateArg<'_>,
+    topic: &Value,
+) -> Option<std::result::Result<(Vec<u8>, Option<String>, Option<String>), String>> {
+    let url = topic.get("Url").and_then(|v| v.as_str())?.trim();
+    if url.is_empty() || url.starts_with("http://") || url.starts_with("https://") {
+        return None;
+    }
+    Some(
+        state
+            .client
+            .fetch_bytes(url)
+            .await
+            .map_err(|e| e.to_string()),
+    )
+}
+
+/// Zotero rejects an attachment filename that isn't a bare name — it gets
+/// joined onto the storage directory path — so the server-suggested name
+/// from `Content-Disposition` goes through the same sanitizer as our own
+/// titles. A name with no extension also leaves Zotero guessing at how to
+/// open the file, so borrow one from the content type when we can.
+fn attachment_filename(
+    response_name: Option<String>,
+    topic_title: &str,
+    mime: Option<&str>,
+) -> String {
+    let base = sanitize(&response_name.unwrap_or_else(|| topic_title.to_string()));
+    if std::path::Path::new(&base).extension().is_some() {
+        return base;
+    }
+    match extension_for_mime(mime) {
+        Some(ext) => format!("{}{}", base, ext),
+        None => base,
+    }
+}
+
+fn extension_for_mime(mime: Option<&str>) -> Option<&'static str> {
+    // Content types arrive with parameters attached ("application/pdf;
+    // charset=binary"), so match on the bare type.
+    let m = mime?.split(';').next()?.trim().to_ascii_lowercase();
+    Some(match m.as_str() {
+        "application/pdf" => ".pdf",
+        "application/msword" => ".doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => ".docx",
+        "application/vnd.ms-powerpoint" => ".ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => ".pptx",
+        "application/vnd.ms-excel" => ".xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => ".xlsx",
+        "application/vnd.oasis.opendocument.text" => ".odt",
+        "application/rtf" | "text/rtf" => ".rtf",
+        "application/epub+zip" => ".epub",
+        "application/zip" => ".zip",
+        "text/plain" => ".txt",
+        "text/csv" => ".csv",
+        "image/png" => ".png",
+        "image/jpeg" => ".jpg",
+        "image/gif" => ".gif",
+        "image/webp" => ".webp",
+        _ => return None,
+    })
 }
 
 /// After fetching bytes, accept only mime types Zotero actually handles
@@ -254,26 +367,19 @@ async fn send_topic_to_zotero(
         .map(String::from)
         .unwrap_or_else(|| format!("topic_{}", topic_id));
 
-    let bytes_path = topic_download_path(course_id, &topic_id);
-    let (bytes, mime, response_name) = match state.client.fetch_bytes(&bytes_path).await {
-        Ok(t) => t,
-        Err(e) => {
-            result.failures.push(format!("'{}': {}", topic_title, e));
-            return;
-        }
-    };
-    // Defensive: Brightspace sometimes returns an HTML stub even for
-    // topics we thought were Files (e.g. removed content). Skip those —
-    // they'd land as garbage HTML attachments in Zotero.
-    if !is_zotero_eligible_mime(mime.as_deref()) {
-        tracing::info!(
-            "skipping '{}' for zotero — content-type {} not a document",
-            topic_title,
-            mime.as_deref().unwrap_or("?"),
-        );
-        return;
-    }
-    let filename = response_name.unwrap_or_else(|| sanitize(&topic_title));
+    let (bytes, mime, response_name) =
+        match fetch_topic_document(state, course_id, &topic_id, topic).await {
+            TopicFetch::Document { bytes, mime, filename } => (bytes, mime, filename),
+            TopicFetch::NotADocument(why) => {
+                tracing::info!("zotero: skipping '{}' — {}", topic_title, why);
+                return;
+            }
+            TopicFetch::Failed(why) => {
+                result.failures.push(format!("'{}': {}", topic_title, why));
+                return;
+            }
+        };
+    let filename = attachment_filename(response_name, &topic_title, mime.as_deref());
     let our_md5 = crate::zotero::ZoteroClient::md5_of(&bytes);
 
     // Stable identifier the next send-to-Zotero can use to recognise this
@@ -359,7 +465,22 @@ async fn send_topic_to_zotero(
         .await
     {
         Ok(k) => result.created.push(k),
-        Err(e) => result.failures.push(format!("'{}': upload: {}", topic_title, e)),
+        Err(e) => {
+            // Roll the parent back. Leaving it behind is the other half of
+            // the "Zotero entry is just a Brightspace URL" problem: the item
+            // exists, carries the viewContent link, and has no document
+            // under it, which reads as though we deliberately filed the page
+            // instead of the file.
+            if let Err(cleanup) = zc.delete_item(&parent_key).await {
+                tracing::warn!(
+                    "zotero: '{}' upload failed and the stub item {} could not be removed: {}",
+                    topic_title,
+                    parent_key,
+                    cleanup,
+                );
+            }
+            result.failures.push(format!("'{}': upload: {}", topic_title, e));
+        }
     }
 }
 
@@ -583,7 +704,13 @@ pub async fn zotero_send_syllabus(
         .unwrap_or("Syllabus")
         .to_string();
     let (bytes, mime, response_name) = state.client.fetch_bytes(&att_url).await?;
-    let filename = response_name.unwrap_or(suggested);
+    if !is_zotero_eligible_mime(mime.as_deref()) {
+        return Err(AppError::Other(format!(
+            "The syllabus attachment came back as {}, not a document.",
+            mime.as_deref().unwrap_or("an unknown type"),
+        )));
+    }
+    let filename = attachment_filename(response_name, &suggested, mime.as_deref());
     let our_md5 = crate::zotero::ZoteroClient::md5_of(&bytes);
     let bsid_tag = format!("brilliant:syllabus={}", course_id);
 
@@ -625,9 +752,24 @@ pub async fn zotero_send_syllabus(
         collection_keys: collection_key.clone().map(|k| vec![k]).unwrap_or_default(),
     };
     let parent_key = zc.create_parent_item(&parent).await?;
-    let attachment_key = zc
+    let attachment_key = match zc
         .upload_attachment(&parent_key, &filename, mime.as_deref(), &bytes)
-        .await?;
+        .await
+    {
+        Ok(k) => k,
+        Err(e) => {
+            // Same rollback as the per-topic path — never leave an item
+            // behind that holds only the Brightspace URL.
+            if let Err(cleanup) = zc.delete_item(&parent_key).await {
+                tracing::warn!(
+                    "zotero: syllabus upload failed and stub item {} could not be removed: {}",
+                    parent_key,
+                    cleanup,
+                );
+            }
+            return Err(e);
+        }
+    };
     let result = ZoteroResult {
         created: vec![attachment_key],
         failures: Vec::new(),
@@ -650,5 +792,84 @@ fn sanitize(name: &str) -> String {
         "untitled".into()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn rejects_topics_with_no_file_behind_them() {
+        for t in ["Link", "Quiz", "Discussion", "Dropbox", "Survey", "SCORM", "Checklist"] {
+            assert!(
+                !is_zotero_eligible_topic(&json!({ "TypeIdentifier": t })),
+                "{t} should be skipped",
+            );
+        }
+    }
+
+    #[test]
+    fn attempts_topics_whose_type_we_dont_recognize() {
+        // The regression this guards: content-service files report neither
+        // "File" nor a URL with an extension, and the old positive filter
+        // dropped them without a word.
+        assert!(is_zotero_eligible_topic(&json!({
+            "TypeIdentifier": "ContentService",
+            "Url": "/d2l/le/content/12345/viewContent/67890/View"
+        })));
+        assert!(is_zotero_eligible_topic(&json!({ "TypeIdentifier": "File" })));
+        assert!(is_zotero_eligible_topic(&json!({})));
+    }
+
+    #[test]
+    fn html_is_never_a_document() {
+        assert!(!is_zotero_eligible_mime(Some("text/html")));
+        assert!(!is_zotero_eligible_mime(Some("text/html; charset=utf-8")));
+        assert!(is_zotero_eligible_mime(Some("application/pdf")));
+        assert!(is_zotero_eligible_mime(None));
+    }
+
+    #[test]
+    fn filename_gets_an_extension_from_the_content_type() {
+        assert_eq!(
+            attachment_filename(None, "Week 3 Reading", Some("application/pdf")),
+            "Week 3 Reading.pdf",
+        );
+        assert_eq!(
+            attachment_filename(
+                None,
+                "Notes",
+                Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            ),
+            "Notes.docx",
+        );
+    }
+
+    #[test]
+    fn filename_keeps_an_extension_it_already_has() {
+        assert_eq!(
+            attachment_filename(Some("syllabus.pdf".into()), "Syllabus", Some("application/pdf")),
+            "syllabus.pdf",
+        );
+    }
+
+    #[test]
+    fn server_suggested_filenames_are_sanitized() {
+        // Zotero joins the filename onto its storage directory and rejects
+        // anything that isn't a bare name.
+        let out = attachment_filename(
+            Some("readings/week 3.pdf".into()),
+            "Week 3",
+            Some("application/pdf"),
+        );
+        assert!(!out.contains('/'), "{out} still has a path separator");
+    }
+
+    #[test]
+    fn unknown_content_type_leaves_the_name_alone() {
+        assert_eq!(attachment_filename(None, "Mystery", Some("application/x-weird")), "Mystery");
+        assert_eq!(attachment_filename(None, "Mystery", None), "Mystery");
     }
 }

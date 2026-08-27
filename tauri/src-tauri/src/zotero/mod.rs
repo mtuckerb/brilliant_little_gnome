@@ -199,6 +199,69 @@ impl ZoteroClient {
         format!("{}/users/{}{}", self.base, self.user_id, suffix)
     }
 
+    /// True when `url` lives on the Zotero server we're configured to talk
+    /// to, so it's safe (and necessary) to send our auth headers with it.
+    fn is_own_origin(&self, url: &str) -> bool {
+        url.starts_with(&self.base)
+    }
+
+    /// The local API builds its upload URL from the request's `Host` header
+    /// and a hardcoded `http://` scheme: `http://<host>/api/local/uploads/<key>`.
+    /// Behind a TLS-terminating or path-prefixing reverse proxy that URL is
+    /// wrong — wrong scheme, missing prefix — and the upload POST lands
+    /// somewhere that isn't Zotero. Rebuild it on top of the base URL the
+    /// user actually configured. Cloud uploads go to S3, which has no such
+    /// path, and are passed through untouched.
+    fn normalize_upload_url(&self, url: &str) -> String {
+        match url.split("/api/local/uploads/").nth(1) {
+            Some(key) if !key.is_empty() => format!(
+                "{}/local/uploads/{}",
+                self.base.trim_end_matches('/'),
+                key
+            ),
+            _ => url.to_string(),
+        }
+    }
+
+    /// Delete an item by key. Used to clean up a parent item whose file
+    /// upload failed — without this the library accumulates stub items
+    /// that carry only a Brightspace URL and no document.
+    pub async fn delete_item(&self, key: &str) -> Result<()> {
+        let url = self.user_path(&format!("/items/{}", key));
+        // Both the web and local APIs require If-Unmodified-Since-Version on
+        // a delete and 412 when it's behind, so read the item's current
+        // version rather than guessing at 0.
+        let version = self
+            .get(&url)
+            .send()
+            .await
+            .ok()
+            .filter(|r| r.status().is_success())
+            .and_then(|r| {
+                r.headers()
+                    .get("Last-Modified-Version")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|v| v.to_string())
+            })
+            .unwrap_or_else(|| "0".to_string());
+        let resp = self
+            .apply_auth(self.http.delete(&url).headers(self.auth_headers()))
+            .header("If-Unmodified-Since-Version", version)
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero delete item: {}", e)))?;
+        let status = resp.status();
+        if !status.is_success() && status.as_u16() != 404 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "zotero delete item {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        Ok(())
+    }
+
     /// List every collection in the user's library. Pages are returned in
     /// chunks of up to 100; we walk until we've seen them all.
     pub async fn list_collections(&self) -> Result<Vec<Collection>> {
@@ -608,12 +671,17 @@ impl ZoteroClient {
             return Ok(attachment_key);
         }
 
-        // Step 3: upload the wrapped bytes to S3.
-        let upload_url = auth_payload
-            .get("url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Other(format!("zotero upload auth missing url: {}", auth_payload)))?
-            .to_string();
+        // Step 3: upload the wrapped bytes. Cloud hands back a pre-signed
+        // S3 URL; local Zotero hands back its own /api/local/uploads/<key>
+        // receiver, which needs the same auth as every other call.
+        let upload_url = self.normalize_upload_url(
+            auth_payload
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AppError::Other(format!("zotero upload auth missing url: {}", auth_payload))
+                })?,
+        );
         let prefix = auth_payload.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
         let suffix = auth_payload.get("suffix").and_then(|v| v.as_str()).unwrap_or("");
         let upload_content_type = auth_payload
@@ -624,18 +692,28 @@ impl ZoteroClient {
         wrapped.extend_from_slice(prefix.as_bytes());
         wrapped.extend_from_slice(bytes);
         wrapped.extend_from_slice(suffix.as_bytes());
-        let s3_resp = self
-            .http
-            .post(&upload_url)
+        // Only our own server gets the auth headers — a pre-signed S3 URL
+        // rejects requests carrying an unexpected Authorization header.
+        let upload_req = if self.is_own_origin(&upload_url) {
+            self.post(&upload_url)
+        } else {
+            self.http.post(&upload_url)
+        };
+        let s3_resp = upload_req
             .header(header::CONTENT_TYPE, upload_content_type)
             .body(wrapped)
             .send()
             .await
-            .map_err(|e| AppError::Other(format!("zotero s3 upload: {}", e)))?;
+            .map_err(|e| AppError::Other(format!("zotero file upload: {}", e)))?;
         if !s3_resp.status().is_success() {
             let status = s3_resp.status();
             let body = s3_resp.text().await.unwrap_or_default();
-            return Err(AppError::Other(format!("zotero s3 upload {}: {}", status, body)));
+            return Err(AppError::Other(format!(
+                "zotero file upload {} to {}: {}",
+                status,
+                upload_url,
+                truncate_for_error(&body)
+            )));
         }
 
         // Step 4: register the upload with Zotero.
@@ -673,5 +751,56 @@ fn truncate_for_error(s: &str) -> String {
     } else {
         let head: String = s.chars().take(MAX).collect();
         format!("{}…", head)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local_client(base: Option<&str>) -> ZoteroClient {
+        ZoteroClient::new(ZoteroMode::Local {
+            base_url: base.map(String::from),
+            basic_auth: None,
+            user_id_override: None,
+            api_key: None,
+        })
+        .expect("client")
+    }
+
+    #[test]
+    fn upload_url_is_rebuilt_on_the_configured_base() {
+        // Zotero builds this from the request's Host header with a hardcoded
+        // http:// scheme, which is wrong behind a TLS reverse proxy.
+        let zc = local_client(Some("https://zotero.example.com/api"));
+        assert_eq!(
+            zc.normalize_upload_url("http://zotero.example.com/api/local/uploads/abc123"),
+            "https://zotero.example.com/api/local/uploads/abc123",
+        );
+    }
+
+    #[test]
+    fn upload_url_keeps_a_path_prefix_from_the_base() {
+        let zc = local_client(Some("http://host:8080/zotero/api"));
+        assert_eq!(
+            zc.normalize_upload_url("http://host:8080/api/local/uploads/k"),
+            "http://host:8080/zotero/api/local/uploads/k",
+        );
+    }
+
+    #[test]
+    fn s3_upload_urls_are_left_alone() {
+        let zc = local_client(None);
+        let s3 = "https://zoterofilestorage.s3.amazonaws.com/abc?AWSAccessKeyId=x";
+        assert_eq!(zc.normalize_upload_url(s3), s3);
+        assert!(!zc.is_own_origin(s3), "S3 must not receive our auth headers");
+    }
+
+    #[test]
+    fn rewritten_local_uploads_are_recognized_as_ours() {
+        let zc = local_client(None);
+        let rewritten = zc.normalize_upload_url("http://127.0.0.1:23119/api/local/uploads/k");
+        assert_eq!(rewritten, "http://127.0.0.1:23119/api/local/uploads/k");
+        assert!(zc.is_own_origin(&rewritten), "local uploads need our auth headers");
     }
 }
