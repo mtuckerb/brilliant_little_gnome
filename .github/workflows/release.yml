@@ -68,6 +68,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # The updater plugin puts a pubkey in tauri.conf.json, and the
+          # bundler refuses to finish without the matching private key —
+          # on every platform, not just macOS. Missing these is what failed
+          # the Windows job on v48.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: tauri
           tagName: ${{ github.ref_name }}
