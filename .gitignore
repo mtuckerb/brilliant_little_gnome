@@ -16,3 +16,6 @@ node_modules/
 *.log
 .DS_Store
 electron-builder.env
+
+# Claude Code local settings (personal, may contain permission grants)
+.claude/settings.local.json
