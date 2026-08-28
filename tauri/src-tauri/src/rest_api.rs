@@ -1,10 +1,7 @@
-// Optional embedded REST API mirroring the Ruby /api/v1 namespace.
-// Auth: `Authorization: Bearer <api_key>` or `?api_key=…`. The API key is set
-// in user_preferences.api_key and gated by api_enabled.
-//
-// Routes wired here are the most commonly-used subset of api_controller.rb:
-// /status, /courses[/:id[/{grades,assignments}/summary]], /notifications,
-// /preferences, /dashboard/summary, /auth/cookies (no-auth), and /token.
+// Optional embedded REST API for external integrations.
+// Auth: `Authorization: Bearer <api_key-or-JWT>`, `X-API-Key: <api_key>`, or
+// `?api_key=…`. The static key and API enablement live in user_preferences.
+// `/health`, `/docs`, `/openapi.yaml`, and `/api/v1/auth/cookies` are public.
 
 use crate::auth;
 use crate::error::{AppError, Result};
@@ -14,7 +11,7 @@ use axum::{
     extract::{Path, Query, State as AxState},
     http::{header, HeaderMap, Method, Request, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Json, Response},
+    response::{Html, IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
@@ -33,9 +30,10 @@ pub struct RestHandle {
 }
 
 pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
-    let prefs: (i64, i64) = sqlx::query_as("SELECT api_listen_all, api_port FROM user_preferences LIMIT 1")
-        .fetch_one(&state.pool)
-        .await?;
+    let prefs: (i64, i64) =
+        sqlx::query_as("SELECT api_listen_all, api_port FROM user_preferences LIMIT 1")
+            .fetch_one(&state.pool)
+            .await?;
     let listen_all = prefs.0 != 0;
     let port = prefs.1;
 
@@ -53,6 +51,8 @@ pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
     // browser-extension re-auth flow).
     let open = Router::new()
         .route("/health", get(health))
+        .route("/docs", get(swagger_ui))
+        .route("/openapi.yaml", get(openapi_spec))
         .route("/api/v1/auth/cookies", post(auth_cookies));
 
     let protected = Router::new()
@@ -64,14 +64,22 @@ pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
         .route("/api/v1/courses/:id", get(get_course))
         .route("/api/v1/courses/:id/export", get(export_course))
         .route("/api/v1/courses/:id/grades/summary", get(grades_summary))
-        .route("/api/v1/courses/:id/assignments/summary", get(assignments_summary))
+        .route(
+            "/api/v1/courses/:id/assignments/summary",
+            get(assignments_summary),
+        )
+        .route("/api/v1/courses/:id/discussions", get(course_discussions))
         .route("/api/v1/notifications", get(notifications))
         .route("/api/v1/dashboard/summary", get(dashboard_summary))
+        .route("/api/v1/search", get(global_search))
         .route("/api/v1/assignments", post(create_assignment))
         // Native MCP (Model Context Protocol) server over Streamable HTTP, so
         // agents get Brilliant as first-class tools. Same bearer auth.
         .route("/mcp", post(mcp_handle))
-        .layer(middleware::from_fn_with_state(state.clone(), require_api_key));
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_api_key,
+        ));
 
     let app = Router::new()
         .merge(open)
@@ -83,8 +91,9 @@ pub async fn start(state: Arc<AppState>) -> Result<RestHandle> {
     let (tx, rx) = oneshot::channel::<()>();
 
     tokio::spawn(async move {
-        let server = axum::serve(listener, app)
-            .with_graceful_shutdown(async move { rx.await.ok(); });
+        let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+            rx.await.ok();
+        });
         if let Err(e) = server.await {
             tracing::warn!("rest api server error: {}", e);
         }
@@ -104,37 +113,67 @@ async fn require_api_key(
     req: Request<Body>,
     next: Next,
 ) -> std::result::Result<Response, Response> {
-    let prefs: (i64, Option<String>) =
-        sqlx::query_as("SELECT api_enabled, api_key FROM user_preferences LIMIT 1")
+    let prefs: (i64, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT api_enabled, api_key, jwt_secret FROM user_preferences LIMIT 1")
             .fetch_one(&state.pool)
             .await
             .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if prefs.0 == 0 {
-        return Err(api_error(StatusCode::FORBIDDEN, "API access is disabled".into()));
+        return Err(api_error(
+            StatusCode::FORBIDDEN,
+            "API access is disabled".into(),
+        ));
     }
-    let Some(expected) = prefs.1 else {
-        return Err(api_error(StatusCode::FORBIDDEN, "API key not configured".into()));
-    };
-    let provided = extract_api_key(req.headers(), req.uri().query());
-    let provided = provided.ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, "missing api key".into()))?;
-    if auth::verify_api_key(&provided, Some(&expected)).is_err() {
-        return Err(api_error(StatusCode::UNAUTHORIZED, "invalid api key".into()));
+    if prefs.1.as_deref().unwrap_or_default().is_empty()
+        && prefs.2.as_deref().unwrap_or_default().is_empty()
+    {
+        return Err(api_error(
+            StatusCode::FORBIDDEN,
+            "API key not configured".into(),
+        ));
+    }
+    let provided = extract_credential(req.headers(), req.uri().query())
+        .ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, "missing API credential".into()))?;
+    if !credential_is_valid(&provided, prefs.1.as_deref(), prefs.2.as_deref()) {
+        return Err(api_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid API credential".into(),
+        ));
     }
     Ok(next.run(req).await)
 }
 
-fn extract_api_key(headers: &HeaderMap, query: Option<&str>) -> Option<String> {
-    if let Some(h) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
-        if let Some(rest) = h.strip_prefix("Bearer ") { return Some(rest.to_string()); }
+fn extract_credential(headers: &HeaderMap, query: Option<&str>) -> Option<String> {
+    if let Some(h) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(rest) = h.strip_prefix("Bearer ") {
+            return Some(rest.to_string());
+        }
+    }
+    if let Some(h) = headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
+        if !h.is_empty() {
+            return Some(h.to_string());
+        }
     }
     if let Some(q) = query {
         for pair in q.split('&') {
             if let Some((k, v)) = pair.split_once('=') {
-                if k == "api_key" { return Some(urldecode(v)); }
+                if k == "api_key" {
+                    return Some(urldecode(v));
+                }
             }
         }
     }
     None
+}
+
+fn credential_is_valid(provided: &str, api_key: Option<&str>, jwt_secret: Option<&str>) -> bool {
+    auth::verify_api_key(provided, api_key).is_ok()
+        || jwt_secret
+            .filter(|secret| !secret.is_empty())
+            .is_some_and(|secret| auth::verify(secret, provided).is_ok())
 }
 
 fn urldecode(s: &str) -> String {
@@ -143,8 +182,12 @@ fn urldecode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(std::str::from_utf8(&bytes[i+1..i+3]).unwrap_or(""), 16) {
-                out.push(b); i += 3; continue;
+            if let Ok(b) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
+                out.push(b);
+                i += 3;
+                continue;
             }
         }
         out.push(if bytes[i] == b'+' { b' ' } else { bytes[i] });
@@ -162,6 +205,43 @@ fn api_error(code: StatusCode, msg: String) -> Response {
         .unwrap()
 }
 
+const OPENAPI_YAML: &str = include_str!("../../../docs/openapi.yaml");
+const SWAGGER_HTML: &str = r##"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brilliant API Documentation</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: "/openapi.yaml",
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      persistAuthorization: true,
+      layout: "BaseLayout"
+    });
+  </script>
+</body>
+</html>
+"##;
+
+async fn swagger_ui() -> Html<&'static str> {
+    Html(SWAGGER_HTML)
+}
+
+async fn openapi_spec() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/yaml; charset=utf-8")
+        .body(Body::from(OPENAPI_YAML))
+        .unwrap()
+}
+
 // ---- MCP (Model Context Protocol) over Streamable HTTP -------------------
 //
 // A minimal, dependency-free MCP server sharing this axum app + bearer auth.
@@ -172,7 +252,11 @@ fn api_error(code: StatusCode, msg: String) -> Response {
 const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
 
 async fn mcp_handle(AxState(state): AxState<Arc<AppState>>, Json(req): Json<Value>) -> Response {
-    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let method = req
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
     let params = req.get("params").cloned().unwrap_or(Value::Null);
 
     // A JSON-RPC message with no `id` is a notification — ack with 202, no body.
@@ -181,11 +265,7 @@ async fn mcp_handle(AxState(state): AxState<Arc<AppState>>, Json(req): Json<Valu
     };
 
     let result: std::result::Result<Value, (i64, String)> = match method.as_str() {
-        "initialize" => Ok(json!({
-            "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "brilliant", "version": env!("CARGO_PKG_VERSION") }
-        })),
+        "initialize" => Ok(mcp_initialize_result()),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": mcp_tool_defs() })),
         "tools/call" => mcp_tools_call(&state, &params).await,
@@ -201,6 +281,14 @@ async fn mcp_handle(AxState(state): AxState<Arc<AppState>>, Json(req): Json<Valu
     Json(payload).into_response()
 }
 
+fn mcp_initialize_result() -> Value {
+    json!({
+        "protocolVersion": MCP_PROTOCOL_VERSION,
+        "capabilities": { "tools": {} },
+        "serverInfo": { "name": "brilliant", "version": env!("CARGO_PKG_VERSION") }
+    })
+}
+
 fn mcp_tool_defs() -> Value {
     let course_arg = json!({
         "type": "object",
@@ -212,8 +300,14 @@ fn mcp_tool_defs() -> Value {
         { "name": "get_course", "description": "Get one course by org_unit_id.", "inputSchema": course_arg },
         { "name": "grades_summary", "description": "Grade rows + roll-up (earned/possible, projected) for a course.", "inputSchema": course_arg },
         { "name": "assignments_summary", "description": "Assignment list + due dates for a course.", "inputSchema": course_arg },
+        { "name": "list_discussions", "description": "Discussion topics, thread counts, post counts, and last-post dates for a course.", "inputSchema": course_arg },
         { "name": "list_notifications", "description": "Recent notifications / course announcements.", "inputSchema": { "type": "object", "properties": { "limit": { "type": "integer" } } } },
         { "name": "dashboard_summary", "description": "Cross-course dashboard summary.", "inputSchema": { "type": "object", "properties": {} } },
+        { "name": "search", "description": "Search courses, assignments, content, discussions, and notifications.", "inputSchema": {
+            "type": "object",
+            "properties": { "query": { "type": "string", "description": "Search text" } },
+            "required": ["query"]
+        } },
         { "name": "export_course", "description": "Export a whole course (module tree + files, plus Markdown for content pages, overview, and announcements) as a zip saved to dest_dir. Returns the saved path. Unzip to browse in a vault.", "inputSchema": {
             "type": "object",
             "properties": {
@@ -225,10 +319,19 @@ fn mcp_tool_defs() -> Value {
     ])
 }
 
-async fn mcp_tools_call(state: &Arc<AppState>, params: &Value) -> std::result::Result<Value, (i64, String)> {
+async fn mcp_tools_call(
+    state: &Arc<AppState>,
+    params: &Value,
+) -> std::result::Result<Value, (i64, String)> {
     let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-    let cid = args.get("course_id").and_then(|v| v.as_str()).map(String::from);
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let cid = args
+        .get("course_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let need_cid = || cid.clone().ok_or_else(|| "course_id required".to_string());
 
     let data: std::result::Result<Value, String> = match name {
@@ -239,11 +342,19 @@ async fn mcp_tools_call(state: &Arc<AppState>, params: &Value) -> std::result::R
             Err(e) => Err(e),
         },
         "grades_summary" => match need_cid() {
-            Ok(id) => unwrap_json(grades_summary(AxState(state.clone()), Path(id), Query(HashMap::new())).await),
+            Ok(id) => unwrap_json(
+                grades_summary(AxState(state.clone()), Path(id), Query(HashMap::new())).await,
+            ),
             Err(e) => Err(e),
         },
         "assignments_summary" => match need_cid() {
-            Ok(id) => unwrap_json(assignments_summary(AxState(state.clone()), Path(id), Query(HashMap::new())).await),
+            Ok(id) => unwrap_json(
+                assignments_summary(AxState(state.clone()), Path(id), Query(HashMap::new())).await,
+            ),
+            Err(e) => Err(e),
+        },
+        "list_discussions" => match need_cid() {
+            Ok(id) => unwrap_json(course_discussions(AxState(state.clone()), Path(id)).await),
             Err(e) => Err(e),
         },
         "list_notifications" => {
@@ -253,13 +364,26 @@ async fn mcp_tools_call(state: &Arc<AppState>, params: &Value) -> std::result::R
             }
             unwrap_json(notifications(AxState(state.clone()), Query(q)).await)
         }
-        "export_course" => {
-            match (cid.clone(), args.get("dest_dir").and_then(|v| v.as_str())) {
-                (Some(id), Some(dest)) => mcp_export_course(state, &id, dest).await,
-                (None, _) => Err("course_id required".to_string()),
-                (_, None) => Err("dest_dir required".to_string()),
+        "search" => {
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .ok_or_else(|| "query required".to_string());
+            match query {
+                Ok(query) => {
+                    let mut q = HashMap::new();
+                    q.insert("q".to_string(), query.to_string());
+                    unwrap_json(global_search(AxState(state.clone()), Query(q)).await)
+                }
+                Err(e) => Err(e),
             }
         }
+        "export_course" => match (cid.clone(), args.get("dest_dir").and_then(|v| v.as_str())) {
+            (Some(id), Some(dest)) => mcp_export_course(state, &id, dest).await,
+            (None, _) => Err("course_id required".to_string()),
+            (_, None) => Err("dest_dir required".to_string()),
+        },
         other => return Err((-32602, format!("Unknown tool: {other}"))),
     };
 
@@ -268,12 +392,16 @@ async fn mcp_tools_call(state: &Arc<AppState>, params: &Value) -> std::result::R
             let text = serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string());
             json!({ "content": [{ "type": "text", "text": text }], "isError": false })
         }
-        Err(msg) => json!({ "content": [{ "type": "text", "text": format!("Error: {msg}") }], "isError": true }),
+        Err(msg) => {
+            json!({ "content": [{ "type": "text", "text": format!("Error: {msg}") }], "isError": true })
+        }
     })
 }
 
 /// Pull the `Value` out of a REST handler's `Result<Json<Value>, Response>`.
-fn unwrap_json(r: std::result::Result<Json<Value>, Response>) -> std::result::Result<Value, String> {
+fn unwrap_json(
+    r: std::result::Result<Json<Value>, Response>,
+) -> std::result::Result<Value, String> {
     match r {
         Ok(Json(v)) => Ok(v),
         Err(_) => Err("tool call failed (check the app log)".to_string()),
@@ -303,10 +431,16 @@ async fn mcp_export_course(
 // ---- handlers ----------------------------------------------------------
 
 #[derive(Serialize)]
-struct Health { status: &'static str, version: &'static str }
+struct Health {
+    status: &'static str,
+    version: &'static str,
+}
 
 async fn health() -> Json<Health> {
-    Json(Health { status: "ok", version: env!("CARGO_PKG_VERSION") })
+    Json(Health {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+    })
 }
 
 async fn status(AxState(state): AxState<Arc<AppState>>) -> Json<Value> {
@@ -319,7 +453,9 @@ async fn status(AxState(state): AxState<Arc<AppState>>) -> Json<Value> {
     }))
 }
 
-async fn preferences(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
+async fn preferences(
+    AxState(state): AxState<Arc<AppState>>,
+) -> std::result::Result<Json<Value>, Response> {
     let row: Value = sqlx::query_scalar(
         "SELECT json_object(
             'id', id,
@@ -344,7 +480,9 @@ async fn preferences(AxState(state): AxState<Arc<AppState>>) -> std::result::Res
     Ok(Json(row))
 }
 
-async fn token(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
+async fn token(
+    AxState(state): AxState<Arc<AppState>>,
+) -> std::result::Result<Json<Value>, Response> {
     let secret = auth::ensure_secret(&state.pool)
         .await
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -353,12 +491,18 @@ async fn token(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Js
             .fetch_one(&state.pool)
             .await
             .unwrap_or(None);
-    let t = auth::issue(&secret, display.as_deref().unwrap_or("internal"), 60 * 60 * 24)
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let t = auth::issue(
+        &secret,
+        display.as_deref().unwrap_or("internal"),
+        60 * 60 * 24,
+    )
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(json!({ "token": t })))
 }
 
-async fn list_courses(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
+async fn list_courses(
+    AxState(state): AxState<Arc<AppState>>,
+) -> std::result::Result<Json<Value>, Response> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
             'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'semester', semester,
@@ -370,7 +514,8 @@ async fn list_courses(AxState(state): AxState<Arc<AppState>>) -> std::result::Re
     .fetch_all(&state.pool)
     .await
     .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let arr: Vec<Value> = rows.into_iter()
+    let arr: Vec<Value> = rows
+        .into_iter()
         .map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null))
         .collect();
     Ok(Json(Value::Array(arr)))
@@ -389,9 +534,7 @@ async fn export_course(
             let mut resp = Response::new(Body::from(bytes));
             resp.headers_mut()
                 .insert(header::CONTENT_TYPE, "application/zip".parse().unwrap());
-            if let Ok(cd) =
-                format!("attachment; filename=\"Brilliant-{}.zip\"", id).parse()
-            {
+            if let Ok(cd) = format!("attachment; filename=\"Brilliant-{}.zip\"", id).parse() {
                 resp.headers_mut().insert(header::CONTENT_DISPOSITION, cd);
             }
             Ok(resp)
@@ -423,13 +566,19 @@ async fn get_course(
 }
 
 #[derive(Deserialize)]
-struct ReorderBody { ids: Vec<String> }
+struct ReorderBody {
+    ids: Vec<String>,
+}
 
 async fn reorder_courses(
     AxState(state): AxState<Arc<AppState>>,
     Json(body): Json<ReorderBody>,
 ) -> std::result::Result<Json<Value>, Response> {
-    let mut tx = state.pool.begin().await.map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     for (i, id) in body.ids.iter().enumerate() {
         sqlx::query("UPDATE courses SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
             .bind(i as i64)
@@ -438,7 +587,9 @@ async fn reorder_courses(
             .await
             .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
-    tx.commit().await.map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -451,9 +602,12 @@ async fn grades_summary(
     use crate::commands::grades::grades_summary as cmd;
     // We don't have AppStateArg<'_> in this context, so reimplement against pool directly.
     let _ = cmd;
-    let target: Option<(Option<f64>,)> = sqlx::query_as("SELECT target_grade FROM courses WHERE org_unit_id = ?")
-        .bind(&id).fetch_optional(&state.pool).await
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let target: Option<(Option<f64>,)> =
+        sqlx::query_as("SELECT target_grade FROM courses WHERE org_unit_id = ?")
+            .bind(&id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let target = target.and_then(|t| t.0).unwrap_or(93.0);
 
     let grades: Vec<(i64, String, Option<String>, String, Option<String>, Option<f64>, Option<f64>, Option<f64>, Option<String>, i64, i64, i64, Option<f64>, Option<String>)> = sqlx::query_as(
@@ -470,13 +624,20 @@ async fn grades_summary(
     let mut all_possible = 0.0;
     let mut rows: Vec<Value> = Vec::with_capacity(grades.len());
     for g in &grades {
-        if g.10 != 0 { continue; } // hidden
+        if g.10 != 0 {
+            continue;
+        } // hidden
         let denom = g.6.unwrap_or(0.0);
         all_possible += denom;
         let is_graded = g.11 == 0 && g.5.is_some() && denom > 0.0;
         let is_expected = !is_graded && g.12.is_some() && denom > 0.0;
-        let perc = if is_graded { Some(g.5.unwrap_or(0.0) / denom * 100.0) }
-                   else if is_expected { g.12 } else { None };
+        let perc = if is_graded {
+            Some(g.5.unwrap_or(0.0) / denom * 100.0)
+        } else if is_expected {
+            g.12
+        } else {
+            None
+        };
         if is_graded {
             earned += g.5.unwrap_or(0.0);
             possible += denom;
@@ -493,10 +654,18 @@ async fn grades_summary(
             "rel_weight": if all_possible > 0.0 { denom / all_possible } else { 0.0 },
         }));
     }
-    let score = if possible > 0.0 { Some(earned / possible * 100.0) } else { None };
+    let score = if possible > 0.0 {
+        Some(earned / possible * 100.0)
+    } else {
+        None
+    };
     let remaining = (all_possible - possible).max(0.0);
     let needed_total = all_possible * (target / 100.0);
-    let required_avg = if remaining > 0.0 { Some(((needed_total - earned) / remaining * 100.0).max(0.0)) } else { None };
+    let required_avg = if remaining > 0.0 {
+        Some(((needed_total - earned) / remaining * 100.0).max(0.0))
+    } else {
+        None
+    };
     let is_impossible = required_avg.map(|r| r > 100.0).unwrap_or(false);
 
     Ok(Json(json!({
@@ -520,7 +689,10 @@ async fn assignments_summary(
     Path(id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> std::result::Result<Json<Value>, Response> {
-    let show_completed = q.get("show_completed").map(|s| s == "true").unwrap_or(false);
+    let show_completed = q
+        .get("show_completed")
+        .map(|s| s == "true")
+        .unwrap_or(false);
     let sql = if show_completed {
         "SELECT json_object(
             'id', id, 'course_id', course_id, 'brightspace_id', brightspace_id,
@@ -547,24 +719,230 @@ async fn assignments_summary(
         .fetch_all(&state.pool)
         .await
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let arr: Vec<Value> = rows.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+    let arr: Vec<Value> = rows
+        .into_iter()
+        .map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null))
+        .collect();
     Ok(Json(json!({ "assignments": arr })))
+}
+
+async fn course_discussions(
+    AxState(state): AxState<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> std::result::Result<Json<Value>, Response> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT json_object(
+            'id', id,
+            'brightspace_id', brightspace_id,
+            'course_id', course_id,
+            'forum_id', forum_id,
+            'name', name,
+            'description', description,
+            'sort_order', sort_order,
+            'thread_count', thread_count,
+            'post_count', post_count,
+            'last_post_date', last_post_date,
+            'display_thread_count', thread_count,
+            'display_post_count', post_count
+         )
+         FROM discussion_topics
+         WHERE course_id = ?
+         ORDER BY last_post_date DESC NULLS LAST, sort_order ASC, name ASC",
+    )
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let topics = rows
+        .into_iter()
+        .map(|(row,)| serde_json::from_str(&row).unwrap_or(Value::Null))
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "topics": topics })))
+}
+
+async fn global_search(
+    AxState(state): AxState<Arc<AppState>>,
+    Query(q): Query<HashMap<String, String>>,
+) -> std::result::Result<Json<Value>, Response> {
+    let query = q.get("q").map(|v| v.trim()).unwrap_or_default();
+    if query.is_empty() {
+        return Ok(Json(json!({ "results": [] })));
+    }
+    let pattern = format!("%{}%", escape_like(query.to_lowercase()));
+    let mut results = Vec::new();
+
+    let courses: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT org_unit_id, COALESCE(custom_name, name), code
+         FROM courses
+         WHERE lower(name) LIKE ? ESCAPE '\\'
+            OR lower(COALESCE(custom_name, '')) LIKE ? ESCAPE '\\'
+            OR lower(COALESCE(code, '')) LIKE ? ESCAPE '\\'
+         ORDER BY is_pinned DESC, sort_order ASC
+         LIMIT 5",
+    )
+    .bind(&pattern)
+    .bind(&pattern)
+    .bind(&pattern)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    results.extend(courses.into_iter().map(|(course_id, title, code)| {
+        json!({
+            "type": "course",
+            "title": title,
+            "url": format!("/course/{course_id}"),
+            "subtitle": code,
+            "course_id": course_id
+        })
+    }));
+
+    let assignments: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT a.course_id, a.brightspace_id, a.name, COALESCE(c.custom_name, c.name)
+         FROM assignments a
+         LEFT JOIN courses c ON c.org_unit_id = a.course_id
+         WHERE lower(a.name) LIKE ? ESCAPE '\\'
+            OR lower(COALESCE(a.description, '')) LIKE ? ESCAPE '\\'
+         ORDER BY a.due_date DESC NULLS LAST
+         LIMIT 10",
+    )
+    .bind(&pattern)
+    .bind(&pattern)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    results.extend(
+        assignments
+            .into_iter()
+            .map(|(course_id, assignment_id, title, course)| {
+                json!({
+                    "type": "assignment",
+                    "title": title,
+                    "url": format!("/course/{course_id}/assignments/{assignment_id}"),
+                    "subtitle": course,
+                    "course_id": course_id
+                })
+            }),
+    );
+
+    let content: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT m.course_id, i.module_id, i.title, m.title
+         FROM content_items i
+         JOIN content_modules m ON m.brightspace_id = i.module_id
+         WHERE i.is_hidden = 0 AND lower(i.title) LIKE ? ESCAPE '\\'
+         ORDER BY m.sort_order ASC, i.sort_order ASC
+         LIMIT 10",
+    )
+    .bind(&pattern)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    results.extend(
+        content
+            .into_iter()
+            .map(|(course_id, module_id, title, module)| {
+                json!({
+                    "type": "content",
+                    "title": title,
+                    "url": format!("/course/{course_id}/module/{module_id}"),
+                    "subtitle": module.map(|v| format!("Module: {v}")),
+                    "course_id": course_id
+                })
+            }),
+    );
+
+    let discussions: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT t.course_id, t.forum_id, t.brightspace_id, t.name, t.last_post_date
+         FROM discussion_topics t
+         WHERE lower(t.name) LIKE ? ESCAPE '\\'
+            OR lower(COALESCE(t.description, '')) LIKE ? ESCAPE '\\'
+         ORDER BY t.last_post_date DESC NULLS LAST
+         LIMIT 10",
+    )
+    .bind(&pattern)
+    .bind(&pattern)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    results.extend(discussions.into_iter().map(
+        |(course_id, forum_id, topic_id, title, last_post_date)| {
+            json!({
+                "type": "discussion",
+                "title": title,
+                "url": format!("/course/{course_id}/discussions/{forum_id}/topics/{topic_id}"),
+                "subtitle": last_post_date,
+                "course_id": course_id
+            })
+        },
+    ));
+
+    let notifications: Vec<(i64, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, title, course_name, course_id
+         FROM notifications
+         WHERE lower(title) LIKE ? ESCAPE '\\'
+            OR lower(COALESCE(body, '')) LIKE ? ESCAPE '\\'
+         ORDER BY date DESC NULLS LAST
+         LIMIT 10",
+    )
+    .bind(&pattern)
+    .bind(&pattern)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    results.extend(
+        notifications
+            .into_iter()
+            .map(|(id, title, course, course_id)| {
+                json!({
+                    "type": "notification",
+                    "title": title,
+                    "url": format!("/notifications/{id}/view"),
+                    "subtitle": course,
+                    "course_id": course_id
+                })
+            }),
+    );
+
+    Ok(Json(json!({ "results": results })))
+}
+
+fn escape_like(value: String) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 async fn notifications(
     AxState(state): AxState<Arc<AppState>>,
     Query(q): Query<HashMap<String, String>>,
 ) -> std::result::Result<Json<Value>, Response> {
-    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(25).min(200).max(1);
-    let offset: i64 = q.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0).max(0);
+    let limit: i64 = q
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(25)
+        .min(200)
+        .max(1);
+    let offset: i64 = q
+        .get("offset")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+        .max(0);
     let show_read = q.get("show_read").map(|s| s == "true").unwrap_or(false);
 
     let mut clauses: Vec<&str> = Vec::new();
-    if !show_read { clauses.push("n.is_read = 0"); }
-    let where_clause = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
+    if !show_read {
+        clauses.push("n.is_read = 0");
+    }
+    let where_clause = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    };
 
     let total_sql = format!("SELECT COUNT(*) FROM notifications n {}", where_clause);
-    let total: i64 = sqlx::query_scalar(&total_sql).fetch_one(&state.pool).await
+    let total: i64 = sqlx::query_scalar(&total_sql)
+        .fetch_one(&state.pool)
+        .await
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let list_sql = format!(
@@ -578,17 +956,24 @@ async fn notifications(
         where_clause
     );
     let rows: Vec<(String,)> = sqlx::query_as(&list_sql)
-        .bind(limit).bind(offset)
-        .fetch_all(&state.pool).await
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&state.pool)
+        .await
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let arr: Vec<Value> = rows.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+    let arr: Vec<Value> = rows
+        .into_iter()
+        .map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null))
+        .collect();
 
     Ok(Json(json!({
         "total": total, "limit": limit, "offset": offset, "notifications": arr
     })))
 }
 
-async fn dashboard_summary(AxState(state): AxState<Arc<AppState>>) -> std::result::Result<Json<Value>, Response> {
+async fn dashboard_summary(
+    AxState(state): AxState<Arc<AppState>>,
+) -> std::result::Result<Json<Value>, Response> {
     let courses: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
             'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'semester', semester,
@@ -597,7 +982,10 @@ async fn dashboard_summary(AxState(state): AxState<Arc<AppState>>) -> std::resul
     )
     .fetch_all(&state.pool).await
     .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let courses: Vec<Value> = courses.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+    let courses: Vec<Value> = courses
+        .into_iter()
+        .map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null))
+        .collect();
 
     let upcoming: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
@@ -609,9 +997,13 @@ async fn dashboard_summary(AxState(state): AxState<Arc<AppState>>) -> std::resul
            AND due_date <= datetime('now', '+14 days')
          ORDER BY optional ASC, due_date ASC LIMIT 15",
     )
-    .fetch_all(&state.pool).await
+    .fetch_all(&state.pool)
+    .await
     .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let upcoming: Vec<Value> = upcoming.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+    let upcoming: Vec<Value> = upcoming
+        .into_iter()
+        .map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null))
+        .collect();
 
     let recent: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
@@ -621,7 +1013,10 @@ async fn dashboard_summary(AxState(state): AxState<Arc<AppState>>) -> std::resul
     )
     .fetch_all(&state.pool).await
     .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let recent: Vec<Value> = recent.into_iter().map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null)).collect();
+    let recent: Vec<Value> = recent
+        .into_iter()
+        .map(|(j,)| serde_json::from_str(&j).unwrap_or(Value::Null))
+        .collect();
 
     Ok(Json(json!({
         "courses": courses,
@@ -631,23 +1026,40 @@ async fn dashboard_summary(AxState(state): AxState<Arc<AppState>>) -> std::resul
 }
 
 #[derive(Deserialize)]
-struct AuthCookiesBody { host: String, cookies: String }
+struct AuthCookiesBody {
+    host: String,
+    cookies: String,
+}
 
 async fn auth_cookies(
     AxState(state): AxState<Arc<AppState>>,
     Json(body): Json<AuthCookiesBody>,
 ) -> std::result::Result<Json<Value>, Response> {
     if body.host.is_empty() || body.cookies.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "Missing parameters".into()));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "Missing parameters".into(),
+        ));
     }
-    state.client.store_credentials(&state.pool, body.host.trim(), body.cookies.trim(), None, None).await
+    state
+        .client
+        .store_credentials(
+            &state.pool,
+            body.host.trim(),
+            body.cookies.trim(),
+            None,
+            None,
+        )
+        .await
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     // Pre-share validation gates this REST path too: the key is stored
     // locally above, but only shared to peers if it validates as live.
     // A blocked share returns an actionable, key-free 409 rather than
     // silently mirroring an unvalidated key.
     #[cfg(feature = "p2p")]
-    state.mirror_credentials_to_loro().await
+    state
+        .mirror_credentials_to_loro()
+        .await
         .map_err(|e| api_error(StatusCode::CONFLICT, e.to_string()))?;
     Ok(Json(json!({ "status": "ok" })))
 }
@@ -667,7 +1079,10 @@ async fn create_assignment(
     Json(body): Json<CreateAssignmentBody>,
 ) -> std::result::Result<Json<Value>, Response> {
     if body.course_id.is_empty() || body.name.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "course_id and name are required".into()));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "course_id and name are required".into(),
+        ));
     }
     let bs_id = format!("syn_{}", uuid::Uuid::new_v4().simple());
     let due = match body.due_date {
@@ -690,7 +1105,9 @@ async fn create_assignment(
     .execute(&state.pool)
     .await
     .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(json!({ "status": "ok", "id": result.last_insert_rowid(), "brightspace_id": bs_id })))
+    Ok(Json(
+        json!({ "status": "ok", "id": result.last_insert_rowid(), "brightspace_id": bs_id }),
+    ))
 }
 
 impl IntoResponse for AppError {
@@ -702,5 +1119,98 @@ impl IntoResponse for AppError {
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         api_error(status, self.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_all_documented_api_credentials() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer bearer-value".parse().unwrap(),
+        );
+        assert_eq!(
+            extract_credential(&headers, Some("api_key=query-value")),
+            Some("bearer-value".into())
+        );
+
+        headers.remove(header::AUTHORIZATION);
+        headers.insert("x-api-key", "header-value".parse().unwrap());
+        assert_eq!(
+            extract_credential(&headers, Some("api_key=query-value")),
+            Some("header-value".into())
+        );
+
+        headers.remove("x-api-key");
+        assert_eq!(
+            extract_credential(&headers, Some("other=1&api_key=query%20value")),
+            Some("query value".into())
+        );
+    }
+
+    #[test]
+    fn accepts_static_api_keys_and_issued_jwts() {
+        assert!(credential_is_valid("static-key", Some("static-key"), None));
+        assert!(!credential_is_valid("wrong", Some("static-key"), None));
+
+        let secret = "test-jwt-secret";
+        let token = auth::issue(secret, "rest-api-test", 60).unwrap();
+        assert!(credential_is_valid(
+            &token,
+            Some("static-key"),
+            Some(secret)
+        ));
+        assert!(!credential_is_valid(
+            &token,
+            Some("static-key"),
+            Some("other-secret")
+        ));
+    }
+
+    #[test]
+    fn openapi_is_the_tauri_2_contract() {
+        assert!(OPENAPI_YAML.contains("version: 2.0.0"));
+        assert!(OPENAPI_YAML.contains("/api/v1/search:"));
+        assert!(OPENAPI_YAML.contains("/api/v1/courses/{id}/discussions:"));
+        assert!(OPENAPI_YAML.contains("/mcp:"));
+        assert!(OPENAPI_YAML.contains("X-API-Key"));
+    }
+
+    #[test]
+    fn mcp_initialize_and_tool_catalog_are_complete() {
+        let initialized = mcp_initialize_result();
+        assert_eq!(initialized["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert_eq!(initialized["serverInfo"]["name"], "brilliant");
+
+        let tools = mcp_tool_defs();
+        let names = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "list_courses",
+                "get_course",
+                "grades_summary",
+                "assignments_summary",
+                "list_discussions",
+                "list_notifications",
+                "dashboard_summary",
+                "search",
+                "export_course",
+            ]
+        );
+    }
+
+    #[test]
+    fn search_escapes_like_wildcards() {
+        assert_eq!(escape_like(r"100%_done\ok".into()), r"100\%\_done\\ok");
     }
 }

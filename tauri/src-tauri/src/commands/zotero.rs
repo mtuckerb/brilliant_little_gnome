@@ -602,7 +602,7 @@ pub async fn zotero_send_topic(
     topic_id: String,
 ) -> Result<ZoteroResult> {
     let mode = load_mode(&state).await?;
-    let zc = ZoteroClient::new(mode)?;
+    let zc = ZoteroClient::new(mode).await?;
     let (title, code) = course_display(&state, &course_id).await?;
     let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
@@ -666,7 +666,7 @@ pub async fn zotero_send_module(
     module_id: String,
 ) -> Result<ZoteroResult> {
     let mode = load_mode(&state).await?;
-    let zc = ZoteroClient::new(mode)?;
+    let zc = ZoteroClient::new(mode).await?;
     let (title, code) = course_display(&state, &course_id).await?;
     let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
@@ -709,7 +709,7 @@ pub async fn zotero_send_course(
     course_id: String,
 ) -> Result<ZoteroResult> {
     let mode = load_mode(&state).await?;
-    let zc = ZoteroClient::new(mode)?;
+    let zc = ZoteroClient::new(mode).await?;
     let (title, code) = course_display(&state, &course_id).await?;
     let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
@@ -755,7 +755,7 @@ pub async fn zotero_send_syllabus(
     course_id: String,
 ) -> Result<ZoteroResult> {
     let mode = load_mode(&state).await?;
-    let zc = ZoteroClient::new(mode)?;
+    let zc = ZoteroClient::new(mode).await?;
     let (title, code) = course_display(&state, &course_id).await?;
     let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
     let overview = state.client.get_overview(&state.pool, &course_id, false).await?;
@@ -882,7 +882,7 @@ mod tests {
     use crate::zotero::ZoteroMode;
     use serde_json::json;
 
-    fn offline_client() -> ZoteroClient {
+    async fn offline_client() -> ZoteroClient {
         // Never contacted: these tests only exercise the paths that avoid
         // touching the server, which is precisely the point of them.
         ZoteroClient::new(ZoteroMode::Local {
@@ -891,17 +891,18 @@ mod tests {
             user_id_override: None,
             api_key: None,
         })
+        .await
         .expect("client")
     }
 
-    #[test]
-    fn a_send_that_files_nothing_creates_no_collections() {
+    #[tokio::test]
+    async fn a_send_that_files_nothing_creates_no_collections() {
         // The regression: walking a module used to create its collection up
         // front, so modules of quizzes and links left empty collections
         // behind and every re-send made them again. Resolving is the only
         // thing that talks to Zotero, so a target that was never resolved
         // provably created nothing.
-        let zc = offline_client();
+        let zc = offline_client().await;
         let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into());
         target.enter_module("Week 1");
         target.enter_module("Week 2");
@@ -909,10 +910,10 @@ mod tests {
         assert_eq!(target.reported_course_key(), None);
     }
 
-    #[test]
-    fn entering_a_module_keeps_the_course_resolution() {
+    #[tokio::test]
+    async fn entering_a_module_keeps_the_course_resolution() {
         // Twelve modules should still resolve the course collection once.
-        let zc = offline_client();
+        let zc = offline_client().await;
         let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into());
         target.course_key = Some(Some("COURSEKEY".into()));
         target.module_key = Some(Some("WEEK1KEY".into()));
@@ -924,9 +925,9 @@ mod tests {
         assert_eq!(target.reported_course_key(), Some("COURSEKEY".into()));
     }
 
-    #[test]
-    fn whole_course_result_links_the_course_not_the_last_module() {
-        let zc = offline_client();
+    #[tokio::test]
+    async fn whole_course_result_links_the_course_not_the_last_module() {
+        let zc = offline_client().await;
         let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into());
         target.course_key = Some(Some("COURSEKEY".into()));
         target.module_key = Some(Some("WEEK7KEY".into()));
@@ -935,11 +936,11 @@ mod tests {
         assert_eq!(target.reported_course_key(), Some("COURSEKEY".into()));
     }
 
-    #[test]
-    fn a_server_without_collections_reports_none_rather_than_failing() {
+    #[tokio::test]
+    async fn a_server_without_collections_reports_none_rather_than_failing() {
         // try_ensure_collection swallows the error and records the attempt;
         // items then go to the library root.
-        let zc = offline_client();
+        let zc = offline_client().await;
         let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into());
         target.course_key = Some(None);
         assert_eq!(target.reported_key(), None);

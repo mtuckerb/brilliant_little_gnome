@@ -34,9 +34,9 @@ Because Brightspace assets (like course banners) often have strict CORS and Refe
 
 ### 3.4. External REST API & Multi-Device Access
 Brilliant provides a robust REST API for external integrations:
-- **JWT Authentication**: All API requests are authenticated via JSON Web Tokens (JWT) signed using a user-configurable `jwt_secret`. Tokens are generated internally and can be used by third-party clients (mobile apps, scripts).
+- **Authentication**: Protected API and MCP requests accept the configured static key as a Bearer token, `X-API-Key`, or the `api_key` query parameter. They also accept short-lived JWTs issued by `/api/v1/token`.
 - **Network Visibility**: The user can toggle between `localhost` (secure solo mode) and `0.0.0.0` (all interfaces) to allow remote access from other devices on the network.
-- **Legacy API Key**: Maintain support for simple header-based authentication (`X-API-Key`) for legacy scripts.
+- **Interactive documentation**: The embedded server exposes Swagger UI at `/docs` and its authoritative OpenAPI contract at `/openapi.yaml`.
 
 ### 3.5. Remote Server Logic
 For users with multiple workstations, Brilliant supports a "Remote Server" mode:

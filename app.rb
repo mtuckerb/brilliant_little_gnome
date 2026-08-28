@@ -110,6 +110,10 @@ class BrilliantApp < BaseController
   use Api::V1::ApiController
 
   get('/docs') { erb :docs }
+  get('/openapi.yaml') do
+    content_type 'application/yaml'
+    send_file File.expand_path('docs/openapi.yaml', __dir__)
+  end
 
   # PID Management
   if ENV['BRILLIANT_DATA_DIR']

@@ -129,17 +129,23 @@ impl ItemType {
 }
 
 impl ZoteroClient {
-    pub fn new(mode: ZoteroMode) -> Result<Self> {
+    pub async fn new(mode: ZoteroMode) -> Result<Self> {
         let http = Client::builder()
             .build()
             .map_err(|e| AppError::Other(format!("zotero client: {}", e)))?;
-        let (base, user_id, api_key, basic_auth) = match mode {
+        let (base, alternate_base, user_id, api_key, basic_auth) = match mode {
             ZoteroMode::Local { base_url, basic_auth, user_id_override, api_key } => {
-                let base = base_url
+                let configured_base = base_url
                     .as_ref()
                     .map(|s| s.trim().trim_end_matches('/').to_string())
-                    .filter(|s| !s.is_empty())
+                    .filter(|s| !s.is_empty());
+                let base = configured_base
+                    .clone()
                     .unwrap_or_else(|| LOCAL_BASE.to_string());
+                // Tunnels of Zotero's local API normally serve `/api`, while
+                // proxies forwarding to api.zotero.org serve the Web API at
+                // `/`. Accept either shape for custom servers.
+                let alternate_base = configured_base.as_deref().and_then(alternate_api_base);
                 let creds = basic_auth.and_then(|(u, p)| {
                     let u = u.trim().to_string();
                     let p = p.trim().to_string();
@@ -154,7 +160,7 @@ impl ZoteroClient {
                 let key = api_key
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
-                (base, user_id, key, creds)
+                (base, alternate_base, user_id, key, creds)
             }
             ZoteroMode::Cloud { user_id, api_key } => {
                 let uid = user_id.trim().to_string();
@@ -164,7 +170,7 @@ impl ZoteroClient {
                         "Cloud Zotero requires a user ID and API key (Settings → Zotero)".into(),
                     ));
                 }
-                (CLOUD_BASE.to_string(), uid, Some(key), None)
+                (CLOUD_BASE.to_string(), None, uid, Some(key), None)
             }
         };
         tracing::info!(
@@ -173,14 +179,43 @@ impl ZoteroClient {
             user_id,
             if basic_auth.is_some() { "yes" } else { "no" },
         );
-        Ok(Self {
+        let mut client = Self {
             http,
             base,
             user_id,
             api_key,
             basic_auth,
             collections: tokio::sync::Mutex::new(None),
-        })
+        };
+        if let Some(alternate) = alternate_base {
+            if !client.base_serves_items(&client.base).await {
+                if client.base_serves_items(&alternate).await {
+                    tracing::info!(
+                        "zotero client: custom base resolved from {} to {}",
+                        client.base,
+                        alternate,
+                    );
+                    client.base = alternate;
+                }
+            }
+        }
+        Ok(client)
+    }
+
+    /// Probe an authenticated read endpoint before attempting any writes.
+    async fn base_serves_items(&self, base: &str) -> bool {
+        let url = format!("{}/users/{}/items", base, self.user_id);
+        let response = self.get(&url).query(&[("limit", "1")]).send().await;
+        let Ok(response) = response else { return false };
+        if !response.status().is_success() {
+            return false;
+        }
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_ascii_lowercase().contains("application/json"))
+            .unwrap_or(false)
     }
 
     fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -771,6 +806,54 @@ impl ZoteroClient {
     }
 }
 
+/// Return the other conventional Zotero API base for a custom server.
+/// Only the final path component changes, preserving any proxy prefix.
+fn alternate_api_base(base: &str) -> Option<String> {
+    let mut url = url::Url::parse(base).ok()?;
+    let path = url.path().trim_end_matches('/').to_string();
+    if path.ends_with("/api") {
+        let without_api = path.strip_suffix("/api").unwrap_or(&path);
+        url.set_path(if without_api.is_empty() { "/" } else { without_api });
+    } else {
+        let with_api = if path.is_empty() {
+            "/api".to_string()
+        } else {
+            format!("{}/api", path)
+        };
+        url.set_path(&with_api);
+    }
+    Some(url.to_string().trim_end_matches('/').to_string())
+}
+
+#[cfg(test)]
+mod base_shape_tests {
+    use super::alternate_api_base;
+
+    #[test]
+    fn toggles_local_and_web_api_base_shapes() {
+        assert_eq!(
+            alternate_api_base("https://zotero.example.com/api").as_deref(),
+            Some("https://zotero.example.com")
+        );
+        assert_eq!(
+            alternate_api_base("https://zotero.example.com").as_deref(),
+            Some("https://zotero.example.com/api")
+        );
+    }
+
+    #[test]
+    fn preserves_proxy_prefix() {
+        assert_eq!(
+            alternate_api_base("https://example.com/zotero/api/").as_deref(),
+            Some("https://example.com/zotero")
+        );
+        assert_eq!(
+            alternate_api_base("https://example.com/zotero").as_deref(),
+            Some("https://example.com/zotero/api")
+        );
+    }
+}
+
 /// Trim a server response body so it fits in a toast / log line without
 /// dragging the whole HTML page through the UI. Keeps the first 300
 /// chars; everything else is replaced with "…".
@@ -788,47 +871,48 @@ fn truncate_for_error(s: &str) -> String {
 mod tests {
     use super::*;
 
-    fn local_client(base: Option<&str>) -> ZoteroClient {
+    async fn local_client(base: Option<&str>) -> ZoteroClient {
         ZoteroClient::new(ZoteroMode::Local {
             base_url: base.map(String::from),
             basic_auth: None,
             user_id_override: None,
             api_key: None,
         })
+        .await
         .expect("client")
     }
 
-    #[test]
-    fn upload_url_is_rebuilt_on_the_configured_base() {
+    #[tokio::test]
+    async fn upload_url_is_rebuilt_on_the_configured_base() {
         // Zotero builds this from the request's Host header with a hardcoded
         // http:// scheme, which is wrong behind a TLS reverse proxy.
-        let zc = local_client(Some("https://zotero.example.com/api"));
+        let zc = local_client(Some("https://zotero.example.com/api")).await;
         assert_eq!(
             zc.normalize_upload_url("http://zotero.example.com/api/local/uploads/abc123"),
             "https://zotero.example.com/api/local/uploads/abc123",
         );
     }
 
-    #[test]
-    fn upload_url_keeps_a_path_prefix_from_the_base() {
-        let zc = local_client(Some("http://host:8080/zotero/api"));
+    #[tokio::test]
+    async fn upload_url_keeps_a_path_prefix_from_the_base() {
+        let zc = local_client(Some("http://host:8080/zotero/api")).await;
         assert_eq!(
             zc.normalize_upload_url("http://host:8080/api/local/uploads/k"),
             "http://host:8080/zotero/api/local/uploads/k",
         );
     }
 
-    #[test]
-    fn s3_upload_urls_are_left_alone() {
-        let zc = local_client(None);
+    #[tokio::test]
+    async fn s3_upload_urls_are_left_alone() {
+        let zc = local_client(None).await;
         let s3 = "https://zoterofilestorage.s3.amazonaws.com/abc?AWSAccessKeyId=x";
         assert_eq!(zc.normalize_upload_url(s3), s3);
         assert!(!zc.is_own_origin(s3), "S3 must not receive our auth headers");
     }
 
-    #[test]
-    fn rewritten_local_uploads_are_recognized_as_ours() {
-        let zc = local_client(None);
+    #[tokio::test]
+    async fn rewritten_local_uploads_are_recognized_as_ours() {
+        let zc = local_client(None).await;
         let rewritten = zc.normalize_upload_url("http://127.0.0.1:23119/api/local/uploads/k");
         assert_eq!(rewritten, "http://127.0.0.1:23119/api/local/uploads/k");
         assert!(zc.is_own_origin(&rewritten), "local uploads need our auth headers");

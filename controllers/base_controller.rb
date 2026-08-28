@@ -151,7 +151,7 @@ class BaseController < Sinatra::Base
     end
 
     # Config Check
-    return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/auth/magic', '/login', '/callback', '/docs', '/sync/status'].include?(request.path_info) || 
+    return if ['/setup', '/health', '/favicon.ico', '/logo.png', '/auth/login', '/auth/magic', '/login', '/callback', '/docs', '/openapi.yaml', '/sync/status'].include?(request.path_info) ||
               request.path_info.start_with?('/public') || 
               request.path_info.start_with?('/api/') || 
               request.path_info.start_with?('/auth/') ||

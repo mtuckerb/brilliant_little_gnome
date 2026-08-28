@@ -148,7 +148,7 @@ export default function Settings() {
                 onChange={(e) => update("zotero_local_base_url", e.target.value)}
                 placeholder="http://127.0.0.1:23119/api"
               />
-              <p className="help">Override only if you reverse-proxy / tunnel your Zotero desktop to a custom hostname.</p>
+              <p className="help">Override only for a proxy or tunnel. Both <code>https://host/api</code> (local-API shape) and <code>https://host</code> (Web-API shape) are detected automatically.</p>
             </div>
             <div className="field">
               <label className="label is-small">Zotero user ID (optional)</label>
@@ -282,7 +282,7 @@ export default function Settings() {
       <div className="box">
         <h2 className="title is-5">REST API</h2>
         <p className="is-size-7 has-text-grey mb-3">
-          Optional embedded HTTP server (axum) for external integrations. Off by default. Authenticated with a static bearer token.
+          Optional embedded HTTP server for external integrations. Off by default. Authenticated with the static key below or a short-lived JWT.
         </p>
         <div className="field">
           <label className="checkbox">
@@ -317,7 +317,17 @@ export default function Settings() {
             {restRunning ? "Stop server" : "Start server"}
           </button>
           {restRunning && restPort && (
-            <span className="ml-3 has-text-success">Running on port {restPort}</span>
+            <>
+              <span className="ml-3 has-text-success">Running on port {restPort}</span>
+              <a
+                className="ml-3"
+                href={`http://127.0.0.1:${restPort}/docs`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Swagger docs
+              </a>
+            </>
           )}
         </div>
       </div>
