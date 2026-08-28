@@ -185,6 +185,35 @@ async fn try_ensure_collection(
     }
 }
 
+/// File an item that already exists into the collection this send targets.
+///
+/// An item's collections are written only at creation, so without this a
+/// re-send leaves the item wherever it already was. Deleting a collection in
+/// Zotero does not delete its items, so the folder would come back empty on
+/// the next send while every item reported "already up to date" — the send
+/// looked successful and changed nothing.
+///
+/// Best-effort: the content is already in Zotero, so a re-file that fails is
+/// a warning, not a failed send.
+async fn refile_existing(
+    zc: &ZoteroClient,
+    item_key: &str,
+    collection_key: Option<&str>,
+    label: &str,
+) {
+    let Some(ck) = collection_key else { return };
+    match zc.add_to_collection(item_key, ck).await {
+        Ok(true) => tracing::info!("zotero: re-filed '{}' into collection {}", label, ck),
+        Ok(false) => {} // already there — the normal case
+        Err(e) => tracing::warn!(
+            "zotero: could not re-file '{}' into collection {}: {}",
+            label,
+            ck,
+            e
+        ),
+    }
+}
+
 /// Where a send files its items, resolved lazily.
 ///
 /// Collections used to be created up front — one for the course, then one
@@ -473,6 +502,16 @@ async fn send_topic_to_zotero(
     //   - not found                → fall through to create + upload
     match zc.find_by_brilliant_tag(&bsid_tag).await {
         Ok(Some(existing)) => {
+            // Resolve the collection before any of the early returns below.
+            // Every branch here ends with the item still in the library but
+            // possibly filed nowhere this send knows about, and only the
+            // create path further down passes `collections` in the payload.
+            // Resolving here does not manufacture empty collections: we only
+            // reach this point for a topic that is Zotero-eligible and has a
+            // document, which is exactly an item that belongs in the folder.
+            let existing_collection = target.resolve().await;
+            refile_existing(zc, &existing.key, existing_collection.as_deref(), &topic_title).await;
+
             if existing.attachment_md5.as_deref() == Some(our_md5.as_str()) {
                 tracing::info!(
                     "zotero: '{}' already current (md5 match); skipping",
@@ -856,6 +895,12 @@ pub async fn zotero_send_syllabus(
     // Idempotent: re-sending the same syllabus reuses the existing parent
     // and only replaces the file when Brightspace's copy has changed.
     if let Ok(Some(existing)) = zc.find_by_brilliant_tag(&bsid_tag).await {
+        // Same reasoning as the topic path: file the existing syllabus into
+        // this send's collection before returning, or a deleted course
+        // folder can never be repopulated.
+        let existing_collection = target.resolve().await;
+        refile_existing(&zc, &existing.key, existing_collection.as_deref(), &suggested).await;
+
         if existing.attachment_md5.as_deref() == Some(our_md5.as_str()) {
             let result = ZoteroResult {
                 created: Vec::new(),

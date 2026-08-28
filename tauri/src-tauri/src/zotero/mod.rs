@@ -364,6 +364,74 @@ impl ZoteroClient {
         Ok(true)
     }
 
+    /// Put an existing item into `collection_key`, preserving whatever
+    /// collections it is already in.
+    ///
+    /// Needed because an item's `collections` array is only ever written
+    /// when the item is *created*. A re-send matches the item by its
+    /// `brilliant:` tag and returns early, so before this existed there was
+    /// no code path that could file an item that already existed — delete a
+    /// collection in Zotero (which does not delete its items) and no amount
+    /// of re-sending would ever put them back. The folder came back empty
+    /// while the send reported "already up to date".
+    ///
+    /// Additive on purpose: a PATCH of `collections` replaces the whole
+    /// array, so the merge happens here and a collection the user filed the
+    /// item into by hand is never removed. Returns false when the item was
+    /// already there and nothing was written.
+    pub async fn add_to_collection(&self, key: &str, collection_key: &str) -> Result<bool> {
+        let url = self.user_path(&format!("/items/{}", key));
+        let resp = self
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero read item for refile: {}", e)))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero read item for refile: {}", e)))?;
+        if !status.is_success() {
+            return Err(AppError::Other(format!(
+                "zotero read item for refile {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        let item: Value = serde_json::from_str(&body).map_err(|e| {
+            AppError::Other(format!("zotero refile parse ({}): {}", e, truncate_for_error(&body)))
+        })?;
+        let version = item
+            .get("version")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| AppError::Other(format!("zotero refile — no version on {}", key)))?;
+
+        let Some(merged) = merged_collections(item.pointer("/data/collections"), collection_key)
+        else {
+            return Ok(false);
+        };
+
+        let patch = json!({ "collections": merged });
+        let resp = self
+            .patch(&url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("If-Unmodified-Since-Version", version.to_string())
+            .body(patch.to_string())
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero refile: {}", e)))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "zotero refile {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        Ok(true)
+    }
+
     /// Delete an item by key. Used to clean up a parent item whose file
     /// upload failed — without this the library accumulates stub items
     /// that carry only a Brightspace URL and no document.
@@ -918,6 +986,40 @@ fn alternate_api_base(base: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod collection_merge_tests {
+    use super::merged_collections;
+    use serde_json::json;
+
+    #[test]
+    fn adds_the_target_without_dropping_existing_membership() {
+        // The PATCH replaces the whole array, so a collection the user filed
+        // the item into by hand must survive the re-file.
+        let current = json!(["USERFILED", "OLDWEEK"]);
+        assert_eq!(
+            merged_collections(Some(&current), "NEWWEEK"),
+            Some(vec!["USERFILED".into(), "OLDWEEK".into(), "NEWWEEK".into()])
+        );
+    }
+
+    #[test]
+    fn writes_nothing_when_the_item_is_already_filed_there() {
+        let current = json!(["WEEK1"]);
+        assert_eq!(merged_collections(Some(&current), "WEEK1"), None);
+    }
+
+    #[test]
+    fn files_an_item_that_belongs_to_no_collection() {
+        // What a library looks like after its collections were deleted: the
+        // items survive, orphaned. This is the case the whole fix exists for.
+        assert_eq!(
+            merged_collections(Some(&json!([])), "WEEK1"),
+            Some(vec!["WEEK1".into()])
+        );
+        assert_eq!(merged_collections(None, "WEEK1"), Some(vec!["WEEK1".into()]));
+    }
+}
+
+#[cfg(test)]
 mod base_shape_tests {
     use super::alternate_api_base;
 
@@ -954,6 +1056,24 @@ fn relation_values(v: Option<&Value>) -> Vec<String> {
         Some(Value::Array(a)) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
         _ => Vec::new(),
     }
+}
+
+/// The `collections` array to PATCH so `collection_key` is included, or None
+/// when the item is already in it and nothing needs writing.
+///
+/// A PATCH of `collections` replaces the whole array, so every collection the
+/// item is already in — including ones the user filed it into by hand — has
+/// to be carried through here.
+fn merged_collections(current: Option<&Value>, collection_key: &str) -> Option<Vec<String>> {
+    let mut keys: Vec<String> = match current {
+        Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+        _ => Vec::new(),
+    };
+    if keys.iter().any(|k| k == collection_key) {
+        return None;
+    }
+    keys.push(collection_key.to_string());
+    Some(keys)
 }
 
 /// Trim a server response body so it fits in a toast / log line without
