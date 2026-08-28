@@ -81,6 +81,16 @@ To pair a second device: **Settings → Device Sync → Show pairing QR**, then 
 
 ---
 
+## Contributing safely
+
+Make each change from a dedicated writable Git worktree on an `agent/*` branch. Before editing, write down the task-specific boundaries and acceptance criteria; if they are missing, establish them first instead of inferring a product change.
+
+Keep implementation and verification inside that worktree. Run the checks relevant to the files you changed, commit only the scoped files, push the branch, and open a pull request for independent review. Review must cover the acceptance criteria as well as security, performance, and regression risk before approval.
+
+A code change or successful review does not authorize live external, account, or cloud operations. Those actions require explicit human or operations approval.
+
+---
+
 ## Deeper reading
 
 If you want to know how the sausage is made:
