@@ -185,6 +185,35 @@ async fn try_ensure_collection(
     }
 }
 
+/// File an item that already exists into the collection this send targets.
+///
+/// An item's collections are written only at creation, so without this a
+/// re-send leaves the item wherever it already was. Deleting a collection in
+/// Zotero does not delete its items, so the folder would come back empty on
+/// the next send while every item reported "already up to date" — the send
+/// looked successful and changed nothing.
+///
+/// Best-effort: the content is already in Zotero, so a re-file that fails is
+/// a warning, not a failed send.
+async fn refile_existing(
+    zc: &ZoteroClient,
+    item_key: &str,
+    collection_key: Option<&str>,
+    label: &str,
+) {
+    let Some(ck) = collection_key else { return };
+    match zc.add_to_collection(item_key, ck).await {
+        Ok(true) => tracing::info!("zotero: re-filed '{}' into collection {}", label, ck),
+        Ok(false) => {} // already there — the normal case
+        Err(e) => tracing::warn!(
+            "zotero: could not re-file '{}' into collection {}: {}",
+            label,
+            ck,
+            e
+        ),
+    }
+}
+
 /// Where a send files its items, resolved lazily.
 ///
 /// Collections used to be created up front — one for the course, then one
@@ -434,11 +463,11 @@ async fn send_topic_to_zotero(
     target: &mut CollectionTarget<'_>,
     topic: &Value,
     result: &mut ZoteroResult,
-) {
+) -> Option<String> {
     if !is_zotero_eligible_topic(topic) {
-        return; // quiz/link/discussion/etc — silently skip
+        return None; // quiz/link/discussion/etc — silently skip
     }
-    let Some(topic_id) = topic_id_str(topic) else { return };
+    let topic_id = topic_id_str(topic)?;
     let topic_title = topic
         .get("Title")
         .and_then(|v| v.as_str())
@@ -450,11 +479,11 @@ async fn send_topic_to_zotero(
             TopicFetch::Document { bytes, mime, filename } => (bytes, mime, filename),
             TopicFetch::NotADocument(why) => {
                 tracing::info!("zotero: skipping '{}' — {}", topic_title, why);
-                return;
+                return None;
             }
             TopicFetch::Failed(why) => {
                 result.failures.push(format!("'{}': {}", topic_title, why));
-                return;
+                return None;
             }
         };
     let filename = attachment_filename(response_name, &topic_title, mime.as_deref());
@@ -473,13 +502,23 @@ async fn send_topic_to_zotero(
     //   - not found                → fall through to create + upload
     match zc.find_by_brilliant_tag(&bsid_tag).await {
         Ok(Some(existing)) => {
+            // Resolve the collection before any of the early returns below.
+            // Every branch here ends with the item still in the library but
+            // possibly filed nowhere this send knows about, and only the
+            // create path further down passes `collections` in the payload.
+            // Resolving here does not manufacture empty collections: we only
+            // reach this point for a topic that is Zotero-eligible and has a
+            // document, which is exactly an item that belongs in the folder.
+            let existing_collection = target.resolve().await;
+            refile_existing(zc, &existing.key, existing_collection.as_deref(), &topic_title).await;
+
             if existing.attachment_md5.as_deref() == Some(our_md5.as_str()) {
                 tracing::info!(
                     "zotero: '{}' already current (md5 match); skipping",
                     topic_title
                 );
                 result.up_to_date += 1;
-                return;
+                return Some(existing.key);
             }
             if let Some(attachment_key) = existing.attachment_key.as_deref() {
                 match zc
@@ -488,14 +527,14 @@ async fn send_topic_to_zotero(
                 {
                     Ok(()) => {
                         result.created.push(attachment_key.to_string());
-                        return;
+                        return Some(existing.key);
                     }
                     Err(e) => {
                         result.failures.push(format!(
                             "'{}': replace file on existing item failed: {}",
                             topic_title, e
                         ));
-                        return;
+                        return None;
                     }
                 }
             }
@@ -507,7 +546,7 @@ async fn send_topic_to_zotero(
                 Ok(k) => result.created.push(k),
                 Err(e) => result.failures.push(format!("'{}': upload to existing parent: {}", topic_title, e)),
             }
-            return;
+            return Some(existing.key);
         }
         Ok(None) => { /* fall through */ }
         Err(e) => {
@@ -539,14 +578,17 @@ async fn send_topic_to_zotero(
         Ok(k) => k,
         Err(e) => {
             result.failures.push(format!("'{}': create parent: {}", topic_title, e));
-            return;
+            return None;
         }
     };
     match zc
         .upload_attachment(&parent_key, &filename, mime.as_deref(), &bytes)
         .await
     {
-        Ok(k) => result.created.push(k),
+        Ok(k) => {
+            result.created.push(k);
+            return Some(parent_key);
+        }
         Err(e) => {
             // Roll the parent back. Leaving it behind is the other half of
             // the "Zotero entry is just a Brightspace URL" problem: the item
@@ -562,6 +604,7 @@ async fn send_topic_to_zotero(
                 );
             }
             result.failures.push(format!("'{}': upload: {}", topic_title, e));
+            None
         }
     }
 }
@@ -575,22 +618,69 @@ async fn walk_module_for_zotero(
     target: &mut CollectionTarget<'_>,
     node: &Value,
     result: &mut ZoteroResult,
+    touched: &mut Vec<String>,
 ) {
     if let Some(topics) = node.get("Topics").and_then(|v| v.as_array()) {
         for t in topics {
-            send_topic_to_zotero(
+            if let Some(key) = send_topic_to_zotero(
                 zc, state, course_id, course_title, course_code, target, t, result,
             )
-            .await;
+            .await
+            {
+                touched.push(key);
+            }
         }
     }
     if let Some(subs) = node.get("Modules").and_then(|v| v.as_array()) {
         for sub in subs {
             Box::pin(walk_module_for_zotero(
-                zc, state, course_id, course_title, course_code, target, sub, result,
+                zc, state, course_id, course_title, course_code, target, sub, result, touched,
             ))
             .await;
         }
+    }
+}
+
+/// Cross-link every item that came out of one module so each shows the rest
+/// under "Related" — the week's readings sit together when you come back to
+/// write from them. Grouping is by top-level module, so a week's nested
+/// sub-modules ("Required Readings", "Case Study") all count as one set.
+///
+/// Deliberately best-effort: a library that won't take relations is not a
+/// reason to fail a send whose files all arrived. Failures are logged once
+/// per group rather than pushed into `result.failures`.
+async fn relate_module_items(zc: &ZoteroClient, keys: &[String], module_title: &str) {
+    if keys.len() < 2 {
+        return; // nothing to relate a lone item to
+    }
+    let uris: Vec<String> = keys.iter().map(|k| zc.item_uri(k)).collect();
+    let mut linked = 0usize;
+    let mut first_error: Option<String> = None;
+    for key in keys {
+        match zc.add_related(key, &uris).await {
+            Ok(true) => linked += 1,
+            Ok(false) => {}
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(e.to_string());
+                }
+            }
+        }
+    }
+    match first_error {
+        None if linked > 0 => tracing::info!(
+            "zotero: related {} item(s) within '{}'",
+            linked,
+            module_title
+        ),
+        None => {}
+        Some(e) => tracing::warn!(
+            "zotero: could not relate items within '{}' ({} of {} updated): {}",
+            module_title,
+            linked,
+            keys.len(),
+            e,
+        ),
     }
 }
 
@@ -624,6 +714,8 @@ pub async fn zotero_send_topic(
         collection_key: None,
         up_to_date: 0,
     };
+    // A single-topic send has no sibling set to build, so it doesn't relate
+    // anything; sending the module or the course does that.
     send_topic_to_zotero(
         &zc,
         &state,
@@ -686,6 +778,7 @@ pub async fn zotero_send_module(
         collection_key: None,
         up_to_date: 0,
     };
+    let mut touched: Vec<String> = Vec::new();
     walk_module_for_zotero(
         &zc,
         &state,
@@ -695,8 +788,10 @@ pub async fn zotero_send_module(
         &mut target,
         &module,
         &mut result,
+        &mut touched,
     )
     .await;
+    relate_module_items(&zc, &touched, &module_title).await;
     result.collection_key = target.reported_key();
     emit_result(&app, &result);
     Ok(result)
@@ -730,6 +825,7 @@ pub async fn zotero_send_course(
             // ready to be written. Modules that turn out to hold nothing but
             // quizzes, links, or content pages leave no trace.
             target.enter_module(&module_title);
+            let mut touched: Vec<String> = Vec::new();
             walk_module_for_zotero(
                 &zc,
                 &state,
@@ -739,8 +835,13 @@ pub async fn zotero_send_course(
                 &mut target,
                 m,
                 &mut result,
+                &mut touched,
             )
             .await;
+            // Relate within the week, not across the whole course — the point
+            // is "these readings go together", which stops being true at the
+            // course level.
+            relate_module_items(&zc, &touched, &module_title).await;
         }
     }
     result.collection_key = target.reported_course_key();
@@ -794,6 +895,12 @@ pub async fn zotero_send_syllabus(
     // Idempotent: re-sending the same syllabus reuses the existing parent
     // and only replaces the file when Brightspace's copy has changed.
     if let Ok(Some(existing)) = zc.find_by_brilliant_tag(&bsid_tag).await {
+        // Same reasoning as the topic path: file the existing syllabus into
+        // this send's collection before returning, or a deleted course
+        // folder can never be repopulated.
+        let existing_collection = target.resolve().await;
+        refile_existing(&zc, &existing.key, existing_collection.as_deref(), &suggested).await;
+
         if existing.attachment_md5.as_deref() == Some(our_md5.as_str()) {
             let result = ZoteroResult {
                 created: Vec::new(),

@@ -233,6 +233,10 @@ impl ZoteroClient {
         self.apply_auth(self.http.post(url).headers(self.auth_headers()))
     }
 
+    fn patch(&self, url: &str) -> reqwest::RequestBuilder {
+        self.apply_auth(self.http.patch(url).headers(self.auth_headers()))
+    }
+
     fn auth_headers(&self) -> reqwest::header::HeaderMap {
         let mut h = reqwest::header::HeaderMap::new();
         h.insert("Zotero-API-Version", ZOTERO_API_VERSION.parse().unwrap());
@@ -270,6 +274,162 @@ impl ZoteroClient {
             ),
             _ => url.to_string(),
         }
+    }
+
+    /// Zotero's canonical URI for one of our items. Relations are always
+    /// stored in this shape even when the library lives on a self-hosted
+    /// server — a hostname-based URI is rejected as malformed.
+    pub fn item_uri(&self, key: &str) -> String {
+        format!("http://zotero.org/users/{}/items/{}", self.user_id, key)
+    }
+
+    /// Add `dc:relation` links from `key` to each of `sibling_uris`, which is
+    /// what populates an item's "Related" tab.
+    ///
+    /// Relations already on the item are preserved, including other
+    /// predicates: a PATCH of `relations` replaces the whole object, so the
+    /// merge has to happen here rather than being left to the server.
+    /// Returns false when the item already had every link and nothing was
+    /// written.
+    pub async fn add_related(&self, key: &str, sibling_uris: &[String]) -> Result<bool> {
+        let self_uri = self.item_uri(key);
+        let wanted: Vec<&String> = sibling_uris.iter().filter(|u| **u != self_uri).collect();
+        if wanted.is_empty() {
+            return Ok(false);
+        }
+
+        let url = self.user_path(&format!("/items/{}", key));
+        let resp = self
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero read item for relate: {}", e)))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero read item for relate: {}", e)))?;
+        if !status.is_success() {
+            return Err(AppError::Other(format!(
+                "zotero read item for relate {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        let item: Value = serde_json::from_str(&body).map_err(|e| {
+            AppError::Other(format!("zotero relate parse ({}): {}", e, truncate_for_error(&body)))
+        })?;
+        let version = item
+            .get("version")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| AppError::Other(format!("zotero relate — no version on {}", key)))?;
+
+        let existing = item.pointer("/data/relations").cloned().unwrap_or_else(|| json!({}));
+        let mut current = relation_values(existing.get("dc:relation"));
+        let before = current.len();
+        for uri in wanted {
+            if !current.iter().any(|u| u == uri) {
+                current.push(uri.clone());
+            }
+        }
+        if current.len() == before {
+            return Ok(false); // already related to everything asked for
+        }
+        current.sort();
+
+        // Carry every other predicate through untouched.
+        let mut relations = existing.as_object().cloned().unwrap_or_default();
+        relations.insert("dc:relation".to_string(), Value::Array(
+            current.into_iter().map(Value::String).collect(),
+        ));
+
+        let patch = json!({ "relations": Value::Object(relations) });
+        let resp = self
+            .patch(&url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("If-Unmodified-Since-Version", version.to_string())
+            .body(patch.to_string())
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero relate: {}", e)))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "zotero relate {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        Ok(true)
+    }
+
+    /// Put an existing item into `collection_key`, preserving whatever
+    /// collections it is already in.
+    ///
+    /// Needed because an item's `collections` array is only ever written
+    /// when the item is *created*. A re-send matches the item by its
+    /// `brilliant:` tag and returns early, so before this existed there was
+    /// no code path that could file an item that already existed — delete a
+    /// collection in Zotero (which does not delete its items) and no amount
+    /// of re-sending would ever put them back. The folder came back empty
+    /// while the send reported "already up to date".
+    ///
+    /// Additive on purpose: a PATCH of `collections` replaces the whole
+    /// array, so the merge happens here and a collection the user filed the
+    /// item into by hand is never removed. Returns false when the item was
+    /// already there and nothing was written.
+    pub async fn add_to_collection(&self, key: &str, collection_key: &str) -> Result<bool> {
+        let url = self.user_path(&format!("/items/{}", key));
+        let resp = self
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero read item for refile: {}", e)))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero read item for refile: {}", e)))?;
+        if !status.is_success() {
+            return Err(AppError::Other(format!(
+                "zotero read item for refile {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        let item: Value = serde_json::from_str(&body).map_err(|e| {
+            AppError::Other(format!("zotero refile parse ({}): {}", e, truncate_for_error(&body)))
+        })?;
+        let version = item
+            .get("version")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| AppError::Other(format!("zotero refile — no version on {}", key)))?;
+
+        let Some(merged) = merged_collections(item.pointer("/data/collections"), collection_key)
+        else {
+            return Ok(false);
+        };
+
+        let patch = json!({ "collections": merged });
+        let resp = self
+            .patch(&url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("If-Unmodified-Since-Version", version.to_string())
+            .body(patch.to_string())
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero refile: {}", e)))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "zotero refile {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        Ok(true)
     }
 
     /// Delete an item by key. Used to clean up a parent item whose file
@@ -826,6 +986,40 @@ fn alternate_api_base(base: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod collection_merge_tests {
+    use super::merged_collections;
+    use serde_json::json;
+
+    #[test]
+    fn adds_the_target_without_dropping_existing_membership() {
+        // The PATCH replaces the whole array, so a collection the user filed
+        // the item into by hand must survive the re-file.
+        let current = json!(["USERFILED", "OLDWEEK"]);
+        assert_eq!(
+            merged_collections(Some(&current), "NEWWEEK"),
+            Some(vec!["USERFILED".into(), "OLDWEEK".into(), "NEWWEEK".into()])
+        );
+    }
+
+    #[test]
+    fn writes_nothing_when_the_item_is_already_filed_there() {
+        let current = json!(["WEEK1"]);
+        assert_eq!(merged_collections(Some(&current), "WEEK1"), None);
+    }
+
+    #[test]
+    fn files_an_item_that_belongs_to_no_collection() {
+        // What a library looks like after its collections were deleted: the
+        // items survive, orphaned. This is the case the whole fix exists for.
+        assert_eq!(
+            merged_collections(Some(&json!([])), "WEEK1"),
+            Some(vec!["WEEK1".into()])
+        );
+        assert_eq!(merged_collections(None, "WEEK1"), Some(vec!["WEEK1".into()]));
+    }
+}
+
+#[cfg(test)]
 mod base_shape_tests {
     use super::alternate_api_base;
 
@@ -854,6 +1048,34 @@ mod base_shape_tests {
     }
 }
 
+/// A relation predicate's objects come back as a bare string when there is
+/// one and an array when there are several. Normalize to a list.
+fn relation_values(v: Option<&Value>) -> Vec<String> {
+    match v {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(a)) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The `collections` array to PATCH so `collection_key` is included, or None
+/// when the item is already in it and nothing needs writing.
+///
+/// A PATCH of `collections` replaces the whole array, so every collection the
+/// item is already in — including ones the user filed it into by hand — has
+/// to be carried through here.
+fn merged_collections(current: Option<&Value>, collection_key: &str) -> Option<Vec<String>> {
+    let mut keys: Vec<String> = match current {
+        Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+        _ => Vec::new(),
+    };
+    if keys.iter().any(|k| k == collection_key) {
+        return None;
+    }
+    keys.push(collection_key.to_string());
+    Some(keys)
+}
+
 /// Trim a server response body so it fits in a toast / log line without
 /// dragging the whole HTML page through the UI. Keeps the first 300
 /// chars; everything else is replaced with "…".
@@ -880,6 +1102,38 @@ mod tests {
         })
         .await
         .expect("client")
+    }
+
+    #[test]
+    fn relation_objects_normalize_from_either_shape() {
+        // Zotero returns a bare string for one relation and an array for many.
+        assert_eq!(
+            relation_values(Some(&serde_json::json!("http://zotero.org/users/1/items/AAA"))),
+            vec!["http://zotero.org/users/1/items/AAA"],
+        );
+        assert_eq!(
+            relation_values(Some(&serde_json::json!([
+                "http://zotero.org/users/1/items/AAA",
+                "http://zotero.org/users/1/items/BBB"
+            ]))),
+            vec![
+                "http://zotero.org/users/1/items/AAA",
+                "http://zotero.org/users/1/items/BBB"
+            ],
+        );
+        assert!(relation_values(None).is_empty());
+        assert!(relation_values(Some(&serde_json::json!({}))).is_empty());
+    }
+
+    #[tokio::test]
+    async fn item_uri_is_the_canonical_zotero_org_form() {
+        // A self-hosted server still stores zotero.org URIs; its own hostname
+        // is rejected as a malformed relation.
+        let zc = local_client(Some("https://zotero.example.com")).await;
+        assert_eq!(
+            zc.item_uri("SQDCFIT4"),
+            "http://zotero.org/users/0/items/SQDCFIT4",
+        );
     }
 
     #[tokio::test]
