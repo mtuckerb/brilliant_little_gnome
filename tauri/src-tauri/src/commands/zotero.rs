@@ -434,11 +434,11 @@ async fn send_topic_to_zotero(
     target: &mut CollectionTarget<'_>,
     topic: &Value,
     result: &mut ZoteroResult,
-) {
+) -> Option<String> {
     if !is_zotero_eligible_topic(topic) {
-        return; // quiz/link/discussion/etc — silently skip
+        return None; // quiz/link/discussion/etc — silently skip
     }
-    let Some(topic_id) = topic_id_str(topic) else { return };
+    let topic_id = topic_id_str(topic)?;
     let topic_title = topic
         .get("Title")
         .and_then(|v| v.as_str())
@@ -450,11 +450,11 @@ async fn send_topic_to_zotero(
             TopicFetch::Document { bytes, mime, filename } => (bytes, mime, filename),
             TopicFetch::NotADocument(why) => {
                 tracing::info!("zotero: skipping '{}' — {}", topic_title, why);
-                return;
+                return None;
             }
             TopicFetch::Failed(why) => {
                 result.failures.push(format!("'{}': {}", topic_title, why));
-                return;
+                return None;
             }
         };
     let filename = attachment_filename(response_name, &topic_title, mime.as_deref());
@@ -479,7 +479,7 @@ async fn send_topic_to_zotero(
                     topic_title
                 );
                 result.up_to_date += 1;
-                return;
+                return Some(existing.key);
             }
             if let Some(attachment_key) = existing.attachment_key.as_deref() {
                 match zc
@@ -488,14 +488,14 @@ async fn send_topic_to_zotero(
                 {
                     Ok(()) => {
                         result.created.push(attachment_key.to_string());
-                        return;
+                        return Some(existing.key);
                     }
                     Err(e) => {
                         result.failures.push(format!(
                             "'{}': replace file on existing item failed: {}",
                             topic_title, e
                         ));
-                        return;
+                        return None;
                     }
                 }
             }
@@ -507,7 +507,7 @@ async fn send_topic_to_zotero(
                 Ok(k) => result.created.push(k),
                 Err(e) => result.failures.push(format!("'{}': upload to existing parent: {}", topic_title, e)),
             }
-            return;
+            return Some(existing.key);
         }
         Ok(None) => { /* fall through */ }
         Err(e) => {
@@ -539,14 +539,17 @@ async fn send_topic_to_zotero(
         Ok(k) => k,
         Err(e) => {
             result.failures.push(format!("'{}': create parent: {}", topic_title, e));
-            return;
+            return None;
         }
     };
     match zc
         .upload_attachment(&parent_key, &filename, mime.as_deref(), &bytes)
         .await
     {
-        Ok(k) => result.created.push(k),
+        Ok(k) => {
+            result.created.push(k);
+            return Some(parent_key);
+        }
         Err(e) => {
             // Roll the parent back. Leaving it behind is the other half of
             // the "Zotero entry is just a Brightspace URL" problem: the item
@@ -562,6 +565,7 @@ async fn send_topic_to_zotero(
                 );
             }
             result.failures.push(format!("'{}': upload: {}", topic_title, e));
+            None
         }
     }
 }
@@ -575,22 +579,69 @@ async fn walk_module_for_zotero(
     target: &mut CollectionTarget<'_>,
     node: &Value,
     result: &mut ZoteroResult,
+    touched: &mut Vec<String>,
 ) {
     if let Some(topics) = node.get("Topics").and_then(|v| v.as_array()) {
         for t in topics {
-            send_topic_to_zotero(
+            if let Some(key) = send_topic_to_zotero(
                 zc, state, course_id, course_title, course_code, target, t, result,
             )
-            .await;
+            .await
+            {
+                touched.push(key);
+            }
         }
     }
     if let Some(subs) = node.get("Modules").and_then(|v| v.as_array()) {
         for sub in subs {
             Box::pin(walk_module_for_zotero(
-                zc, state, course_id, course_title, course_code, target, sub, result,
+                zc, state, course_id, course_title, course_code, target, sub, result, touched,
             ))
             .await;
         }
+    }
+}
+
+/// Cross-link every item that came out of one module so each shows the rest
+/// under "Related" — the week's readings sit together when you come back to
+/// write from them. Grouping is by top-level module, so a week's nested
+/// sub-modules ("Required Readings", "Case Study") all count as one set.
+///
+/// Deliberately best-effort: a library that won't take relations is not a
+/// reason to fail a send whose files all arrived. Failures are logged once
+/// per group rather than pushed into `result.failures`.
+async fn relate_module_items(zc: &ZoteroClient, keys: &[String], module_title: &str) {
+    if keys.len() < 2 {
+        return; // nothing to relate a lone item to
+    }
+    let uris: Vec<String> = keys.iter().map(|k| zc.item_uri(k)).collect();
+    let mut linked = 0usize;
+    let mut first_error: Option<String> = None;
+    for key in keys {
+        match zc.add_related(key, &uris).await {
+            Ok(true) => linked += 1,
+            Ok(false) => {}
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(e.to_string());
+                }
+            }
+        }
+    }
+    match first_error {
+        None if linked > 0 => tracing::info!(
+            "zotero: related {} item(s) within '{}'",
+            linked,
+            module_title
+        ),
+        None => {}
+        Some(e) => tracing::warn!(
+            "zotero: could not relate items within '{}' ({} of {} updated): {}",
+            module_title,
+            linked,
+            keys.len(),
+            e,
+        ),
     }
 }
 
@@ -624,6 +675,8 @@ pub async fn zotero_send_topic(
         collection_key: None,
         up_to_date: 0,
     };
+    // A single-topic send has no sibling set to build, so it doesn't relate
+    // anything; sending the module or the course does that.
     send_topic_to_zotero(
         &zc,
         &state,
@@ -686,6 +739,7 @@ pub async fn zotero_send_module(
         collection_key: None,
         up_to_date: 0,
     };
+    let mut touched: Vec<String> = Vec::new();
     walk_module_for_zotero(
         &zc,
         &state,
@@ -695,8 +749,10 @@ pub async fn zotero_send_module(
         &mut target,
         &module,
         &mut result,
+        &mut touched,
     )
     .await;
+    relate_module_items(&zc, &touched, &module_title).await;
     result.collection_key = target.reported_key();
     emit_result(&app, &result);
     Ok(result)
@@ -730,6 +786,7 @@ pub async fn zotero_send_course(
             // ready to be written. Modules that turn out to hold nothing but
             // quizzes, links, or content pages leave no trace.
             target.enter_module(&module_title);
+            let mut touched: Vec<String> = Vec::new();
             walk_module_for_zotero(
                 &zc,
                 &state,
@@ -739,8 +796,13 @@ pub async fn zotero_send_course(
                 &mut target,
                 m,
                 &mut result,
+                &mut touched,
             )
             .await;
+            // Relate within the week, not across the whole course — the point
+            // is "these readings go together", which stops being true at the
+            // course level.
+            relate_module_items(&zc, &touched, &module_title).await;
         }
     }
     result.collection_key = target.reported_course_key();
