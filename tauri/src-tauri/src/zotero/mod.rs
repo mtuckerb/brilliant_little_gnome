@@ -572,6 +572,92 @@ impl ZoteroClient {
         Ok(key)
     }
 
+    /// Get-or-create `name` under `parent`, additionally adopting a
+    /// collection of that name that is still sitting at the library root.
+    ///
+    /// `ensure_collection` deliberately honors a collection the user has
+    /// moved, which is right for a folder someone deliberately filed
+    /// somewhere. It is wrong for the course folders this app created before
+    /// it knew how to nest: those are at the root only because
+    /// `ensure_collection(name, None)` put them there, and leaving them makes
+    /// the year folders useless. Adoption is therefore limited to collections
+    /// still at the root — anywhere else is treated as a deliberate choice
+    /// and left alone.
+    pub async fn ensure_collection_under(&self, name: &str, parent: &str) -> Result<String> {
+        let key = self.ensure_collection(name, Some(parent)).await?;
+
+        // Was it reused from the root? ensure_collection leaves the cache
+        // populated, so this costs nothing.
+        let at_root = {
+            let cache = self.collections.lock().await;
+            cache
+                .as_ref()
+                .and_then(|cs| cs.iter().find(|c| c.key == key))
+                .map(|c| c.data.parent_collection.is_none())
+                .unwrap_or(false)
+        };
+        if !at_root {
+            return Ok(key);
+        }
+
+        self.set_collection_parent(&key, parent).await?;
+        let mut cache = self.collections.lock().await;
+        if let Some(c) = cache.as_mut().and_then(|cs| cs.iter_mut().find(|c| c.key == key)) {
+            c.data.parent_collection = Some(parent.to_string());
+        }
+        tracing::info!("zotero: adopted root collection '{}' into {}", name, parent);
+        Ok(key)
+    }
+
+    /// Move a collection under `parent`.
+    async fn set_collection_parent(&self, key: &str, parent: &str) -> Result<()> {
+        let url = self.user_path(&format!("/collections/{}", key));
+        let resp = self
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero read collection for move: {}", e)))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero read collection for move: {}", e)))?;
+        if !status.is_success() {
+            return Err(AppError::Other(format!(
+                "zotero read collection for move {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        let coll: Value = serde_json::from_str(&body).map_err(|e| {
+            AppError::Other(format!("zotero move parse ({}): {}", e, truncate_for_error(&body)))
+        })?;
+        let version = coll
+            .get("version")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| AppError::Other(format!("zotero move — no version on {}", key)))?;
+
+        let patch = json!({ "parentCollection": parent });
+        let resp = self
+            .patch(&url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("If-Unmodified-Since-Version", version.to_string())
+            .body(patch.to_string())
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero move collection: {}", e)))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Other(format!(
+                "zotero move collection {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        Ok(())
+    }
+
     /// Look up an item we previously created by its Brilliant tag (e.g.
     /// `brilliant:bsid=<topic_id>`). Returns the parent item's key plus
     /// — when present — its first file attachment's key and MD5 so the

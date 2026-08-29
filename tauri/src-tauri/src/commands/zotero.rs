@@ -84,17 +84,42 @@ async fn load_mode(state: &AppStateArg<'_>) -> Result<ZoteroMode> {
     }
 }
 
-async fn course_display(state: &AppStateArg<'_>, course_id: &str) -> Result<(String, Option<String>)> {
-    let row: Option<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT name, custom_name, code, custom_code FROM courses WHERE org_unit_id = ?",
-    )
-    .bind(course_id)
-    .fetch_optional(&state.pool)
-    .await?;
+/// Title, code, and the academic year the course belongs to.
+///
+/// `custom_semester` wins over `semester` the same way `custom_name` wins over
+/// `name` — a course dragged into another term in the UI should file itself
+/// there in Zotero too.
+async fn course_display(
+    state: &AppStateArg<'_>,
+    course_id: &str,
+) -> Result<(String, Option<String>, Option<String>)> {
+    let row: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT name, custom_name, code, custom_code, semester, custom_semester \
+             FROM courses WHERE org_unit_id = ?",
+        )
+        .bind(course_id)
+        .fetch_optional(&state.pool)
+        .await?;
     let row = row.ok_or_else(|| AppError::Other(format!("course {} not found", course_id)))?;
     let title = row.1.filter(|s| !s.is_empty()).unwrap_or(row.0);
     let code = row.3.or(row.2);
-    Ok((title, code))
+    let year = semester_year(row.5.filter(|s| !s.is_empty()).or(row.4).as_deref());
+    Ok((title, code, year))
+}
+
+/// The four-digit year out of a stored semester ("2026 Spring", "Fall 2026").
+/// `extract_semester` only ever writes those two shapes, so one span of four
+/// digits is enough — and anything else yields None, which files the course at
+/// the root exactly as before.
+fn semester_year(semester: Option<&str>) -> Option<String> {
+    let s = semester?;
+    let bytes = s.as_bytes();
+    bytes.windows(4).find_map(|w| {
+        w.iter()
+            .all(|c| c.is_ascii_digit())
+            .then(|| String::from_utf8_lossy(w).into_owned())
+    })
 }
 
 fn collection_name(course_title: &str, code: Option<&str>) -> String {
@@ -229,14 +254,33 @@ async fn refile_existing(
 struct CollectionTarget<'a> {
     zc: &'a ZoteroClient,
     course_name: String,
+    /// Academic year the course collection nests under ("2026"), when the
+    /// course has a semester to derive one from. None files it at the root.
+    year: Option<String>,
     module_name: Option<String>,
     course_key: Option<Option<String>>,
     module_key: Option<Option<String>>,
+    year_key: Option<Option<String>>,
 }
 
 impl<'a> CollectionTarget<'a> {
     fn new(zc: &'a ZoteroClient, course_name: String) -> Self {
-        Self { zc, course_name, module_name: None, course_key: None, module_key: None }
+        Self {
+            zc,
+            course_name,
+            year: None,
+            module_name: None,
+            course_key: None,
+            module_key: None,
+            year_key: None,
+        }
+    }
+
+    /// File the course collection under a year folder ("2026") instead of at
+    /// the library root.
+    fn in_year(mut self, year: Option<String>) -> Self {
+        self.year = year;
+        self
     }
 
     /// Point subsequent items at a module sub-collection. The course-level
@@ -266,9 +310,40 @@ impl<'a> CollectionTarget<'a> {
 
     async fn resolve_course(&mut self) -> Option<String> {
         if self.course_key.is_none() {
-            self.course_key = Some(try_ensure_collection(self.zc, &self.course_name, None).await);
+            let parent = self.resolve_year().await;
+            // Under a year when we have one, at the root otherwise — which is
+            // what every course collection did before years existed.
+            let key = match parent.as_deref() {
+                Some(y) => match self.zc.ensure_collection_under(&self.course_name, y).await {
+                    Ok(k) => Some(k),
+                    Err(e) => {
+                        tracing::warn!(
+                            "zotero collection unavailable for '{}'; sending to root library: {}",
+                            self.course_name,
+                            e
+                        );
+                        None
+                    }
+                },
+                None => try_ensure_collection(self.zc, &self.course_name, None).await,
+            };
+            self.course_key = Some(key);
         }
         self.course_key.clone().flatten()
+    }
+
+    /// The year collection, created at the root if it doesn't exist yet.
+    ///
+    /// `ensure_collection`'s reuse-by-name fallback matters here: an existing
+    /// "2026" that the user keeps nested somewhere of their own (under a "My
+    /// Library" collection, say) is reused where it is rather than duplicated
+    /// at the root.
+    async fn resolve_year(&mut self) -> Option<String> {
+        let year = self.year.clone()?;
+        if self.year_key.is_none() {
+            self.year_key = Some(try_ensure_collection(self.zc, &year, None).await);
+        }
+        self.year_key.clone().flatten()
     }
 
     /// The collection the UI should link to — only whatever we actually
@@ -693,8 +768,9 @@ pub async fn zotero_send_topic(
 ) -> Result<ZoteroResult> {
     let mode = load_mode(&state).await?;
     let zc = ZoteroClient::new(mode).await?;
-    let (title, code) = course_display(&state, &course_id).await?;
-    let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
+    let (title, code, year) = course_display(&state, &course_id).await?;
+    let mut target =
+        CollectionTarget::new(&zc, collection_name(&title, code.as_deref())).in_year(year);
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
     // Find the topic anywhere in the TOC. Simplest: walk every module.
     let mut topic_value: Option<Value> = None;
@@ -759,8 +835,9 @@ pub async fn zotero_send_module(
 ) -> Result<ZoteroResult> {
     let mode = load_mode(&state).await?;
     let zc = ZoteroClient::new(mode).await?;
-    let (title, code) = course_display(&state, &course_id).await?;
-    let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
+    let (title, code, year) = course_display(&state, &course_id).await?;
+    let mut target =
+        CollectionTarget::new(&zc, collection_name(&title, code.as_deref())).in_year(year);
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
     let module = find_module(&toc, &module_id)
         .ok_or_else(|| AppError::Other(format!("module {} not found in TOC", module_id)))?;
@@ -805,8 +882,9 @@ pub async fn zotero_send_course(
 ) -> Result<ZoteroResult> {
     let mode = load_mode(&state).await?;
     let zc = ZoteroClient::new(mode).await?;
-    let (title, code) = course_display(&state, &course_id).await?;
-    let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
+    let (title, code, year) = course_display(&state, &course_id).await?;
+    let mut target =
+        CollectionTarget::new(&zc, collection_name(&title, code.as_deref())).in_year(year);
     let toc = state.client.get_toc(&state.pool, &course_id, false).await?;
     let mut result = ZoteroResult {
         created: Vec::new(),
@@ -857,8 +935,9 @@ pub async fn zotero_send_syllabus(
 ) -> Result<ZoteroResult> {
     let mode = load_mode(&state).await?;
     let zc = ZoteroClient::new(mode).await?;
-    let (title, code) = course_display(&state, &course_id).await?;
-    let mut target = CollectionTarget::new(&zc, collection_name(&title, code.as_deref()));
+    let (title, code, year) = course_display(&state, &course_id).await?;
+    let mut target =
+        CollectionTarget::new(&zc, collection_name(&title, code.as_deref())).in_year(year);
     let overview = state.client.get_overview(&state.pool, &course_id, false).await?;
     let has_attachment = overview
         .get("HasAttachment")
@@ -1052,6 +1131,51 @@ mod tests {
         target.course_key = Some(None);
         assert_eq!(target.reported_key(), None);
         assert_eq!(target.reported_course_key(), None);
+    }
+
+    #[test]
+    fn reads_the_year_out_of_either_semester_shape() {
+        // extract_semester only ever writes these two orders.
+        assert_eq!(semester_year(Some("2026 Spring")).as_deref(), Some("2026"));
+        assert_eq!(semester_year(Some("Fall 2026")).as_deref(), Some("2026"));
+        assert_eq!(semester_year(Some("2025 Summer Session")).as_deref(), Some("2025"));
+    }
+
+    #[test]
+    fn a_course_with_no_usable_semester_still_files_at_the_root() {
+        // The pre-nesting behaviour has to survive: no year, no year folder,
+        // and certainly no collection named after a half-parsed string.
+        assert_eq!(semester_year(None), None);
+        assert_eq!(semester_year(Some("")), None);
+        assert_eq!(semester_year(Some("Spring")), None);
+        assert_eq!(semester_year(Some("Sess 26")), None);
+    }
+
+    #[tokio::test]
+    async fn without_a_year_nothing_extra_is_resolved() {
+        // in_year(None) must leave the target exactly as it was before years
+        // existed — resolving is the only thing that talks to Zotero, so an
+        // unresolved year key proves no year collection was created.
+        let zc = offline_client().await;
+        let target = CollectionTarget::new(&zc, "SWO-402 — Methods".into()).in_year(None);
+        assert_eq!(target.year, None);
+        assert_eq!(target.year_key, None);
+        assert_eq!(target.reported_course_key(), None);
+    }
+
+    #[tokio::test]
+    async fn the_year_resolves_once_across_modules() {
+        let zc = offline_client().await;
+        let mut target = CollectionTarget::new(&zc, "SWO-402 — Methods".into())
+            .in_year(Some("2026".into()));
+        target.year_key = Some(Some("YEAR2026".into()));
+        target.course_key = Some(Some("COURSEKEY".into()));
+
+        target.enter_module("Week 2");
+
+        assert_eq!(target.year_key, Some(Some("YEAR2026".into())), "the year is resolved once");
+        assert_eq!(target.course_key, Some(Some("COURSEKEY".into())));
+        assert_eq!(target.module_key, None, "only the module re-resolves");
     }
 
     #[test]
