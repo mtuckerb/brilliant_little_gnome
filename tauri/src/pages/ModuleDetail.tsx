@@ -26,8 +26,9 @@ export default function ModuleDetail() {
   const [zoteroBusy, setZoteroBusy] = useState<Record<string, boolean>>({});
   const [moduleSendingZotero, setModuleSendingZotero] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The row the user clicked "make a task from this" on — drives the modal.
-  const [creatingFrom, setCreatingFrom] = useState<ContentItem | null>(null);
+  // Prefill for the task modal, set by the "make a task from this" action on
+  // any row — content items and sub-modules both feed it.
+  const [creating, setCreating] = useState<{ name: string; description: string } | null>(null);
   const toast = useToast();
   const bsHost = useBrightspaceHost();
 
@@ -118,11 +119,23 @@ export default function ModuleDetail() {
     return null;
   }
 
-  function itemToTaskDescription(it: ContentItem): string {
+  function taskFromItem(it: ContentItem) {
     const where = current?.title ? `From module **${current.title}**` : "From a course module";
     const link = itemBrightspaceUrl(it);
     const linkLine = link ? `\n\n[${it.title}](${link})` : "";
-    return `${where} — ${it.title}${linkLine}`;
+    return { name: it.title, description: `${where} — ${it.title}${linkLine}` };
+  }
+
+  // A sub-module is a folder, so the task is "work through all of it" — the
+  // note links to the sub-module page rather than a single file.
+  function taskFromSubModule(c: ContentModule) {
+    const where = current?.title ? `From module **${current.title}**` : "From a course module";
+    const link = bsHost && courseId ? moduleUrl(bsHost, courseId, c.brightspace_id) : null;
+    const linkLine = link ? `\n\n[${c.title}](${link})` : "";
+    return {
+      name: `${c.title} — everything in this section`,
+      description: `${where} — sub-module **${c.title}**${linkLine}`,
+    };
   }
 
   async function sendItemToZotero(it: ContentItem) {
@@ -228,11 +241,18 @@ export default function ModuleDetail() {
           <h2 className="title is-6"><i className="fas fa-folder-tree mr-2 has-text-grey"></i>Sub-modules</h2>
           <ul>
             {children.map((c) => (
-              <li key={c.id} className="py-1">
+              <li key={c.id} className="py-1 is-flex is-align-items-center" style={{ gap: 8 }}>
                 <Link to={`/course/${courseId}/content/${c.brightspace_id}`}>
                   <span className="icon is-small mr-1"><i className="fas fa-folder"></i></span>
                   {c.title}
                 </Link>
+                <button
+                  className="button is-small is-white ml-auto"
+                  title="Create a task covering this sub-module"
+                  onClick={() => setCreating(taskFromSubModule(c))}
+                >
+                  <span className="icon is-small"><i className="fas fa-list-check"></i></span>
+                </button>
               </li>
             ))}
           </ul>
@@ -282,7 +302,7 @@ export default function ModuleDetail() {
                   <button
                     className="button is-small is-white"
                     title="Create a task from this item"
-                    onClick={() => setCreatingFrom(it)}
+                    onClick={() => setCreating(taskFromItem(it))}
                   >
                     <span className="icon is-small"><i className="fas fa-list-check"></i></span>
                   </button>
@@ -296,14 +316,14 @@ export default function ModuleDetail() {
       {courseId && (
         <SyntheticTaskModal
           courseId={courseId}
-          open={creatingFrom !== null}
-          onClose={() => setCreatingFrom(null)}
+          open={creating !== null}
+          onClose={() => setCreating(null)}
           onCreated={(a) => {
-            setCreatingFrom(null);
+            setCreating(null);
             toast.show(`Task "${a.name}" created.`, "is-success");
           }}
-          initialName={creatingFrom?.title}
-          initialDescription={creatingFrom ? itemToTaskDescription(creatingFrom) : undefined}
+          initialName={creating?.name}
+          initialDescription={creating?.description}
         />
       )}
     </div>
