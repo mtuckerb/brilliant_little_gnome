@@ -1587,9 +1587,15 @@ mod tests {
             }
 
             // ---- assert convergence --------------------------------------
-            let vv_a = doc_a.doc().oplog_vv().encode();
-            let vv_b = doc_b.doc().oplog_vv().encode();
-            let vv_c = doc_c.doc().oplog_vv().encode();
+            // Compare the version vectors themselves, not their encodings. A
+            // VersionVector is a peer-id -> counter map, and `encode()` walks
+            // it in map iteration order, so three replicas that have genuinely
+            // converged can still encode to three different byte sequences.
+            // That made this test fail roughly two runs in three while
+            // asserting nothing about convergence.
+            let vv_a = doc_a.doc().oplog_vv();
+            let vv_b = doc_b.doc().oplog_vv();
+            let vv_c = doc_c.doc().oplog_vv();
             assert_eq!(vv_a, vv_b, "A and B must converge to the same oplog VV");
             assert_eq!(vv_a, vv_c, "A and C must converge to the same oplog VV");
 
