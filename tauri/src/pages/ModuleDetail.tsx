@@ -9,6 +9,7 @@ import { useToast } from "../components/ToastProvider";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { moduleUrl, topicViewUrl } from "../lib/brightspace";
 import RichText from "../components/RichText";
+import SyntheticTaskModal from "../components/SyntheticTaskModal";
 
 // Module detail — shows the module's instructor commentary (description),
 // child sub-modules as clickable links, and the list of items inside the
@@ -25,6 +26,8 @@ export default function ModuleDetail() {
   const [zoteroBusy, setZoteroBusy] = useState<Record<string, boolean>>({});
   const [moduleSendingZotero, setModuleSendingZotero] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The row the user clicked "make a task from this" on — drives the modal.
+  const [creatingFrom, setCreatingFrom] = useState<ContentItem | null>(null);
   const toast = useToast();
   const bsHost = useBrightspaceHost();
 
@@ -104,6 +107,22 @@ export default function ModuleDetail() {
     } finally {
       setModuleZipping(false);
     }
+  }
+
+  // Turning a row into a task: the row's title is usually already the thing
+  // you have to do ("Levenson, 2017TIP" → read it), so it seeds the name and
+  // the notes carry the trail back to where it came from.
+  function itemBrightspaceUrl(it: ContentItem): string | null {
+    if (it.url) return it.url;
+    if (bsHost && courseId) return topicViewUrl(bsHost, courseId, it.brightspace_id);
+    return null;
+  }
+
+  function itemToTaskDescription(it: ContentItem): string {
+    const where = current?.title ? `From module **${current.title}**` : "From a course module";
+    const link = itemBrightspaceUrl(it);
+    const linkLine = link ? `\n\n[${it.title}](${link})` : "";
+    return `${where} — ${it.title}${linkLine}`;
   }
 
   async function sendItemToZotero(it: ContentItem) {
@@ -260,12 +279,33 @@ export default function ModuleDetail() {
                       <i className={`fas ${zoteroBusy[itemKey] ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i>
                     </span>
                   </button>
+                  <button
+                    className="button is-small is-white"
+                    title="Create a task from this item"
+                    onClick={() => setCreatingFrom(it)}
+                  >
+                    <span className="icon is-small"><i className="fas fa-list-check"></i></span>
+                  </button>
                 </li>
               );
             })}
           </ul>
         )}
       </div>
+
+      {courseId && (
+        <SyntheticTaskModal
+          courseId={courseId}
+          open={creatingFrom !== null}
+          onClose={() => setCreatingFrom(null)}
+          onCreated={(a) => {
+            setCreatingFrom(null);
+            toast.show(`Task "${a.name}" created.`, "is-success");
+          }}
+          initialName={creatingFrom?.title}
+          initialDescription={creatingFrom ? itemToTaskDescription(creatingFrom) : undefined}
+        />
+      )}
     </div>
   );
 }
