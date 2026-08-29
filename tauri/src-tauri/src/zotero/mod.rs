@@ -80,6 +80,11 @@ pub struct CollectionData {
     pub name: String,
     #[serde(rename = "parentCollection", default, deserialize_with = "de_parent")]
     pub parent_collection: Option<String>,
+    /// Set when the collection is in the trash. `/collections` returns
+    /// trashed collections alongside live ones, so anything matching by name
+    /// has to check this or it will adopt a collection the user deleted.
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 /// What we need to know about an existing Zotero item to decide whether
@@ -518,14 +523,21 @@ impl ZoteroClient {
             *cache = Some(self.list_collections().await?);
         }
         let existing = cache.as_mut().expect("populated above");
+        // Trashed collections come back from /collections looking like any
+        // other, so every match below has to exclude them. Reusing one files
+        // the whole course into the trash, where the library UI correctly
+        // refuses to show it — the send reports success and the collection is
+        // nowhere to be found.
         // Prefer exact (name + parent) match.
         if let Some(c) = existing.iter().find(|c| {
-            c.data.name == name && c.data.parent_collection.as_deref() == parent
+            !c.data.deleted
+                && c.data.name == name
+                && c.data.parent_collection.as_deref() == parent
         }) {
             return Ok(c.key.clone());
         }
         // Fall back to any collection with this name — user moved it.
-        if let Some(c) = existing.iter().find(|c| c.data.name == name) {
+        if let Some(c) = existing.iter().find(|c| !c.data.deleted && c.data.name == name) {
             tracing::info!(
                 "zotero collection '{}' reused at parent={:?} (requested parent={:?})",
                 name,
@@ -567,6 +579,7 @@ impl ZoteroClient {
             data: CollectionData {
                 name: name.to_string(),
                 parent_collection: parent.map(String::from),
+                deleted: false,
             },
         });
         Ok(key)
@@ -1073,7 +1086,7 @@ fn alternate_api_base(base: &str) -> Option<String> {
 
 #[cfg(test)]
 mod collection_merge_tests {
-    use super::merged_collections;
+    use super::{merged_collections, Collection, CollectionData};
     use serde_json::json;
 
     #[test]
@@ -1091,6 +1104,57 @@ mod collection_merge_tests {
     fn writes_nothing_when_the_item_is_already_filed_there() {
         let current = json!(["WEEK1"]);
         assert_eq!(merged_collections(Some(&current), "WEEK1"), None);
+    }
+
+    /// `/collections` returns trashed collections alongside live ones, with
+    /// nothing but `deleted` to tell them apart. Deserializing it is what
+    /// stops name-matching from adopting a collection the user threw away.
+    #[test]
+    fn trashed_collections_are_recognisable_in_the_listing() {
+        let live: CollectionData =
+            serde_json::from_value(json!({"name": "MUH-105", "parentCollection": false}))
+                .expect("live collection");
+        assert!(!live.deleted, "absent `deleted` must read as live");
+
+        let trashed: CollectionData = serde_json::from_value(
+            json!({"name": "MUH-105", "parentCollection": "YEAR2026", "deleted": true}),
+        )
+        .expect("trashed collection");
+        assert!(trashed.deleted);
+        assert_eq!(trashed.parent_collection.as_deref(), Some("YEAR2026"));
+    }
+
+    /// The regression: a course collection the user deleted still matched by
+    /// name, so every later send filed the whole course into the trash and
+    /// the library UI — correctly — showed nothing.
+    #[test]
+    fn a_trashed_collection_is_not_a_match() {
+        let listing = vec![
+            Collection {
+                key: "TRASHED1".into(),
+                data: CollectionData {
+                    name: "SWO-402 — Methods of SW Practice II".into(),
+                    parent_collection: Some("YEAR2026".into()),
+                    deleted: true,
+                },
+            },
+            Collection {
+                key: "LIVEONE1".into(),
+                data: CollectionData {
+                    name: "MUH-105".into(),
+                    parent_collection: Some("YEAR2026".into()),
+                    deleted: false,
+                },
+            },
+        ];
+        let find = |name: &str| -> Option<&Collection> {
+            listing.iter().find(|c| !c.data.deleted && c.data.name == name)
+        };
+        assert!(
+            find("SWO-402 — Methods of SW Practice II").is_none(),
+            "a trashed collection must not be reused"
+        );
+        assert_eq!(find("MUH-105").map(|c| c.key.as_str()), Some("LIVEONE1"));
     }
 
     #[test]
