@@ -22,11 +22,23 @@ use md5::{Digest, Md5};
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::time::Duration;
 
 const CLOUD_BASE: &str = "https://api.zotero.org";
 const LOCAL_BASE: &str = "http://127.0.0.1:23119/api";
 const LOCAL_USER_ID: &str = "0";
 const ZOTERO_API_VERSION: &str = "3";
+/// Give up on a connection that never opens. Without this the client waits
+/// on the OS, which on a silently-dropped route means minutes.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Bound how long a request may sit with no bytes arriving. This is a
+/// per-read idle timeout, not a total-request one, on purpose: an
+/// attachment upload is legitimately slow on a thin link, but it is never
+/// legitimately silent. Without any timeout a stalled request hangs
+/// forever, and the "Send to Zotero" button — disabled for the lifetime of
+/// the in-flight invoke — never comes back, so every later click is a
+/// silent no-op until the app is restarted.
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub enum ZoteroMode {
@@ -131,6 +143,8 @@ impl ItemType {
 impl ZoteroClient {
     pub async fn new(mode: ZoteroMode) -> Result<Self> {
         let http = Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .read_timeout(READ_TIMEOUT)
             .build()
             .map_err(|e| AppError::Other(format!("zotero client: {}", e)))?;
         let (base, alternate_base, user_id, api_key, basic_auth) = match mode {
