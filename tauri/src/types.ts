@@ -106,6 +106,7 @@ export interface Assignment {
   synthetic: boolean;
   optional: boolean;
   external_url: string | null;
+  manually_edited: boolean;
 }
 
 export interface Notification {

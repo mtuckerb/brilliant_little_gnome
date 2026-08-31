@@ -7,13 +7,13 @@ use rand::RngCore;
 pub async fn list_assignments(state: AppStateArg<'_>, course_id: Option<String>) -> Result<Vec<Assignment>> {
     let rows = if let Some(cid) = course_id {
         sqlx::query_as::<_, Assignment>(
-            "SELECT id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url FROM assignments WHERE course_id = ? ORDER BY due_date ASC NULLS LAST",
+            "SELECT id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url, manually_edited FROM assignments WHERE course_id = ? ORDER BY due_date ASC NULLS LAST",
         )
         .bind(cid)
         .fetch_all(&state.pool).await?
     } else {
         sqlx::query_as::<_, Assignment>(
-            "SELECT id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url FROM assignments WHERE completed = 0 ORDER BY due_date ASC NULLS LAST",
+            "SELECT id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url, manually_edited FROM assignments WHERE completed = 0 ORDER BY due_date ASC NULLS LAST",
         )
         .fetch_all(&state.pool).await?
     };
@@ -93,6 +93,106 @@ pub async fn update_assignment_due_date(state: AppStateArg<'_>, id: i64, due_dat
     Ok(())
 }
 
+/// Edit the user-facing fields of any assignment — Brightspace-sourced or
+/// synthetic. Marks the row manually_edited so the Brightspace sync preserves
+/// the edited name/description/due_date instead of overwriting them.
+#[tauri::command]
+pub async fn update_assignment(
+    state: AppStateArg<'_>,
+    id: i64,
+    name: String,
+    due_date: Option<String>,
+    description: Option<String>,
+    external_url: Option<String>,
+) -> Result<Assignment> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Other("name cannot be empty".to_string()));
+    }
+    let row: Assignment = sqlx::query_as::<_, Assignment>(
+        "UPDATE assignments SET name = ?, due_date = ?, description = ?, external_url = ?, manually_edited = 1, manually_edited_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+         RETURNING id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url, manually_edited",
+    )
+    .bind(trimmed)
+    .bind(due_date.as_deref())
+    .bind(description.as_deref())
+    .bind(external_url.as_deref())
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::Other(format!("assignment {} not found", id)))?;
+
+    #[cfg(feature = "p2p")]
+    if row.synthetic {
+        // Synthetic rows live in the Loro synthetic_assignments map — refresh
+        // the whole value like create_synthetic_assignment does, so a freshly
+        // paired device materializes the edited fields too.
+        use crate::p2p::bridge::LocalChange;
+        use crate::p2p::doc::SyntheticAssignment;
+        if let Some(engine) = state.sync_engine() {
+            let created_at = read_assignment_created_at(&state, id)
+                .await
+                .unwrap_or_else(|| chrono::Utc::now().timestamp());
+            let value = SyntheticAssignment {
+                course_id: row.course_id.parse::<i64>().unwrap_or(0),
+                name: row.name.clone(),
+                description: row.description.clone().unwrap_or_default(),
+                due_date: row.due_date.clone(),
+                optional: row.optional,
+                completed: row.completed,
+                completed_at: row.completed_at.as_deref().and_then(sql_timestamp_to_unix),
+                created_at,
+            };
+            if let Err(e) = engine
+                .bridge()
+                .apply_local(LocalChange::SyntheticAssignmentUpsert {
+                    uuid: row.brightspace_id.clone(),
+                    value,
+                })
+                .await
+            {
+                tracing::warn!("apply_local synthetic upsert {}: {}", row.brightspace_id, e);
+            }
+        }
+    } else {
+        let key = format!("{}:{}", row.course_id, row.brightspace_id);
+        let now = chrono::Utc::now().timestamp();
+        push_assignment_field(
+            &state,
+            key.clone(),
+            crate::p2p::doc::AssignmentField::Name(row.name.clone()),
+        )
+        .await;
+        push_assignment_field(
+            &state,
+            key.clone(),
+            crate::p2p::doc::AssignmentField::Description(row.description.clone().unwrap_or_default()),
+        )
+        .await;
+        push_assignment_field(
+            &state,
+            key.clone(),
+            crate::p2p::doc::AssignmentField::DueDate(row.due_date.clone()),
+        )
+        .await;
+        push_assignment_field(
+            &state,
+            key.clone(),
+            crate::p2p::doc::AssignmentField::ManuallyEdited(true),
+        )
+        .await;
+        push_assignment_field(
+            &state,
+            key,
+            crate::p2p::doc::AssignmentField::ManuallyEditedAt(Some(now)),
+        )
+        .await;
+    }
+
+    Ok(row)
+}
+
 /// Create a user-defined ("synthetic") assignment that doesn't exist in
 /// Brightspace. Mirrors the original Sinatra app's `syn_<hex>` ID convention so
 /// downstream sync can recognize them and never overwrite them from the API.
@@ -112,7 +212,7 @@ pub async fn create_synthetic_assignment(
     let row: Assignment = sqlx::query_as::<_, Assignment>(
         "INSERT INTO assignments (course_id, brightspace_id, name, due_date, description, is_graded, assignment_type, completed, synthetic, optional, manually_edited, manually_edited_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 0, 'synthetic', 0, 1, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-         RETURNING id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url",
+         RETURNING id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url, manually_edited",
     )
     .bind(&course_id)
     .bind(&bid)
@@ -265,20 +365,35 @@ async fn read_assignment_completion(
     .ok()
     .flatten();
     let (course_id, bid, completed, completed_at_text) = row?;
-    let completed_at_unix = completed_at_text.and_then(|s| {
-        // SQLite CURRENT_TIMESTAMP comes back as 'YYYY-MM-DD HH:MM:SS'
-        // (no timezone — implicit UTC). Try the RFC3339 form first
-        // for forward compatibility; fall back to the naive form.
-        chrono::DateTime::parse_from_rfc3339(&s)
-            .ok()
-            .map(|d| d.timestamp())
-            .or_else(|| {
-                chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S")
-                    .ok()
-                    .map(|n| n.and_utc().timestamp())
-            })
-    });
+    let completed_at_unix = completed_at_text.as_deref().and_then(sql_timestamp_to_unix);
     Some((format!("{course_id}:{bid}"), completed != 0, completed_at_unix))
+}
+
+/// SQLite CURRENT_TIMESTAMP comes back as 'YYYY-MM-DD HH:MM:SS'
+/// (no timezone — implicit UTC). Try the RFC3339 form first
+/// for forward compatibility; fall back to the naive form.
+#[cfg(feature = "p2p")]
+fn sql_timestamp_to_unix(s: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.timestamp())
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|n| n.and_utc().timestamp())
+        })
+}
+
+#[cfg(feature = "p2p")]
+async fn read_assignment_created_at(state: &AppStateArg<'_>, id: i64) -> Option<i64> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT created_at FROM assignments WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten();
+    row.and_then(|(s,)| s).as_deref().and_then(sql_timestamp_to_unix)
 }
 
 #[cfg(feature = "p2p")]

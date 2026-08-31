@@ -89,6 +89,8 @@ pub struct Assignment {
     #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
     pub optional: bool,
     pub external_url: Option<String>,
+    #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
+    pub manually_edited: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

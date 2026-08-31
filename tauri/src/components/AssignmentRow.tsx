@@ -17,9 +17,12 @@ interface Props {
   showCourse?: boolean;
   // Optional. Pass for synthetic rows so the user can remove them inline.
   onDelete?: () => void;
+  // Optional. Opens the edit modal for this row — any assignment, not just
+  // synthetic ones.
+  onEdit?: () => void;
 }
 
-export default function AssignmentRow({ assignment: a, course: c, leaving, onToggleComplete, showCourse, onDelete }: Props) {
+export default function AssignmentRow({ assignment: a, course: c, leaving, onToggleComplete, showCourse, onDelete, onEdit }: Props) {
   const cls = `assignment-row is-flex is-justify-content-space-between is-align-items-center py-2${leaving ? " is-leaving" : ""}`;
   const detailHref = `/course/${a.course_id}/assignments/${a.id}`;
   const bsHost = useBrightspaceHost();
@@ -51,6 +54,21 @@ export default function AssignmentRow({ assignment: a, course: c, leaving, onTog
       <span className="has-text-grey is-size-7" style={{ flex: "0 0 auto" }}>
         {fmtAssignmentDueDate(a.due_date)}
       </span>
+      {onEdit && (
+        <button
+          className="button is-small is-white"
+          title="Edit this assignment"
+          aria-label="Edit assignment"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onEdit();
+          }}
+          style={{ flex: "0 0 auto" }}
+        >
+          <span className="icon is-small has-text-grey"><i className="fas fa-pen"></i></span>
+        </button>
+      )}
       {onDelete && (
         <button
           className="button is-small is-white"

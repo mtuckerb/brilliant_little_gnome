@@ -123,6 +123,20 @@ export const api = {
     invoke<void>("toggle_assignment_optional", { id }),
   updateAssignmentDueDate: (id: number, dueDate: string | null) =>
     invoke<void>("update_assignment_due_date", { id, dueDate }),
+  updateAssignment: (
+    id: number,
+    name: string,
+    dueDate: string | null,
+    description: string | null,
+    externalUrl: string | null,
+  ) =>
+    invoke<Assignment>("update_assignment", {
+      id,
+      name,
+      dueDate,
+      description,
+      externalUrl,
+    }),
   createSyntheticAssignment: (
     courseId: string,
     name: string,

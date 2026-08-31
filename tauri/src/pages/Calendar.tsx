@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment, Course, UserPreferences } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
+import EditAssignmentModal from "../components/EditAssignmentModal";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { courseLabel } from "../types";
 import { fmtAssignmentDueDate } from "../lib/format";
@@ -16,6 +17,7 @@ export default function Calendar() {
   const [data, setData] = useState<Row[] | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [leaving, setLeaving] = useState<Set<number>>(new Set());
+  const [editing, setEditing] = useState<Assignment | null>(null);
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
   const isMobile = useIsMobile();
 
@@ -219,6 +221,7 @@ export default function Calendar() {
                       showCourse
                       leaving={leaving.has(a.id)}
                       onToggleComplete={onToggleComplete}
+                      onEdit={() => setEditing(a)}
                     />
                   ))}
                 </div>
@@ -227,6 +230,12 @@ export default function Calendar() {
           </div>
         );
       })}
+
+      <EditAssignmentModal
+        assignment={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => load()}
+      />
     </div>
   );
 }

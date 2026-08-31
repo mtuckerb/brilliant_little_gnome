@@ -11,6 +11,7 @@ import {
   type Course,
 } from "../types";
 import { fmtAssignmentDueDate, fmtNum } from "../lib/format";
+import EditAssignmentModal from "../components/EditAssignmentModal";
 import HeaderBand from "../components/HeaderBand";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { assignmentSubmitUrl, quizSummaryUrl } from "../lib/brightspace";
@@ -68,6 +69,7 @@ export default function AssignmentDetail() {
   const [a, setA] = useState<Assignment | null>(null);
   const [detail, setDetail] = useState<AssignmentDetailPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(() => {
     if (!id || !aid) return;
@@ -158,7 +160,20 @@ export default function AssignmentDetail() {
   const fb = detail?.feedback;
   const gb = detail?.gradebook;
   const showScore = fb?.score_numerator != null || fb?.displayed_score || gb;
-  const description = detail?.instructions_html ?? a.description;
+  // Manually-edited rows show the user's local copy of the instructions;
+  // otherwise the live Brightspace instructions win over the synced snapshot.
+  const description =
+    a.manually_edited && a.description ? a.description : detail?.instructions_html ?? a.description;
+
+  // The modal edits the effective displayed description, so saving without
+  // touching the field keeps exactly what the user was looking at.
+  const editModal = (
+    <EditAssignmentModal
+      assignment={editing ? { ...a, description: description ?? null } : null}
+      onClose={() => setEditing(false)}
+      onSaved={(updated) => setA(updated)}
+    />
+  );
 
   if (isMobile) {
     // Mobile branch — matches docs/brilliant_ui.pen "Mobile Vision -
@@ -303,6 +318,14 @@ export default function AssignmentDetail() {
               >
                 {a.optional ? "Mark required" : "Mark optional"}
               </button>
+              <button
+                className="button is-light"
+                onClick={() => setEditing(true)}
+                style={{ flex: "1 1 0", justifyContent: "center" }}
+              >
+                <span className="icon"><i className="fas fa-pen"></i></span>
+                <span>Edit</span>
+              </button>
               {a.synthetic && (
                 <button
                   className="button is-danger is-light"
@@ -413,6 +436,8 @@ export default function AssignmentDetail() {
             </pre>
           </details>
         )}
+
+        {editModal}
       </div>
     );
   }
@@ -462,6 +487,10 @@ export default function AssignmentDetail() {
           </button>
           <button className="button" onClick={toggleOptional}>
             <span>{a.optional ? "Required" : "Optional"}</span>
+          </button>
+          <button className="button" onClick={() => setEditing(true)}>
+            <span className="icon"><i className="fas fa-pen"></i></span>
+            <span>Edit</span>
           </button>
           {a.external_url && (
             <a className="button is-link is-light" href={a.external_url} target="_blank" rel="noreferrer">
@@ -585,6 +614,8 @@ export default function AssignmentDetail() {
           </pre>
         </details>
       )}
+
+      {editModal}
     </div>
   );
 }

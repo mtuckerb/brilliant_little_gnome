@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
+import EditAssignmentModal from "../components/EditAssignmentModal";
 import HeaderBand from "../components/HeaderBand";
 import SyntheticTaskModal from "../components/SyntheticTaskModal";
 
@@ -14,6 +15,7 @@ export default function Assignments() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [leaving, setLeaving] = useState<Set<number>>(new Set());
   const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<Assignment | null>(null);
 
   const load = useCallback(() => {
     if (!id) return;
@@ -80,6 +82,7 @@ export default function Assignments() {
               assignment={a}
               leaving={leaving.has(a.id)}
               onToggleComplete={onToggleComplete}
+              onEdit={() => setEditing(a)}
               onDelete={a.synthetic ? () => onDelete(a) : undefined}
             />
           ))
@@ -94,6 +97,12 @@ export default function Assignments() {
           onCreated={() => load()}
         />
       )}
+
+      <EditAssignmentModal
+        assignment={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => load()}
+      />
     </div>
   );
 }

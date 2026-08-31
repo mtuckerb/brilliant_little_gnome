@@ -17,8 +17,21 @@ class AssignmentController < BaseController
       }
     else
       @assignment = $client.get_assignment(@course_id, @assignment_id)
+
+      # Overlay locally-edited fields: once a row is manually_edited the local
+      # record is the source of truth (sync skips it), so show those values
+      # instead of the live Brightspace ones.
+      local = Assignment.find_by(brightspace_id: @assignment_id, course_id: @course_id)
+      if @assignment && local&.manually_edited?
+        @assignment['Name'] = local.name if local.name.present?
+        @assignment['DueDate'] = local.due_date&.iso8601
+        @assignment['ExternalUrl'] = local.external_url if local.external_url.present?
+        # Only replace instructions when the user actually wrote some — a row
+        # can be manually_edited from a due-date-only tweak.
+        @assignment['Instructions'] = { 'Text' => local.description } if local.description.present?
+      end
     end
-    
+
     halt 404, "Assignment not found" unless @assignment
 
     @feedback = $client.get_assignment_feedback(@course_id, @assignment_id) unless @assignment['Synthetic']
@@ -63,8 +76,9 @@ class AssignmentController < BaseController
   end
 
   post '/course/:id/assignments/:assignment_id/update' do
-    assignment = Assignment.find_by(brightspace_id: params[:assignment_id], course_id: params[:id])
-    halt 404, "Task not found" unless assignment
+    # Any assignment is editable, not just synthetic tasks. The local row
+    # normally exists from sync; initialize one if it doesn't yet.
+    assignment = Assignment.find_or_initialize_by(brightspace_id: params[:assignment_id], course_id: params[:id])
 
     parsed_date = nil
     if params[:due_date].present?
