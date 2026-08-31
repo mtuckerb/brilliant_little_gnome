@@ -1,5 +1,6 @@
 // Assignment sync. Pulls dropbox folders + quizzes and upserts into `assignments`.
-// Honors `manually_edited` rows by preserving the locally-set due_date.
+// Honors `manually_edited` rows by preserving the locally-set name, description
+// and due_date.
 
 use crate::error::Result;
 use crate::state::AppState;
@@ -37,11 +38,11 @@ async fn upsert_folder(state: &AppState, course_id: &str, f: &Value) -> Result<(
         "INSERT INTO assignments (course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'dropbox', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT(course_id, brightspace_id) DO UPDATE SET
-            name = excluded.name,
-            description = COALESCE(excluded.description, assignments.description),
             is_graded = excluded.is_graded,
             grade_item_id = COALESCE(excluded.grade_item_id, assignments.grade_item_id),
-            -- Preserve user-edited due_date when manually_edited is set.
+            -- Preserve user-edited name/description/due_date when manually_edited is set.
+            name = CASE WHEN assignments.manually_edited = 1 THEN assignments.name ELSE excluded.name END,
+            description = CASE WHEN assignments.manually_edited = 1 THEN assignments.description ELSE COALESCE(excluded.description, assignments.description) END,
             due_date = CASE WHEN assignments.manually_edited = 1 THEN assignments.due_date ELSE excluded.due_date END,
             updated_at = CURRENT_TIMESTAMP",
     )
@@ -92,9 +93,10 @@ async fn upsert_quiz(state: &AppState, course_id: &str, q: &Value) -> Result<()>
         "INSERT INTO assignments (course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'quiz', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT(course_id, brightspace_id) DO UPDATE SET
-            name = excluded.name,
-            description = COALESCE(excluded.description, assignments.description),
             grade_item_id = COALESCE(excluded.grade_item_id, assignments.grade_item_id),
+            -- Preserve user-edited name/description/due_date when manually_edited is set.
+            name = CASE WHEN assignments.manually_edited = 1 THEN assignments.name ELSE excluded.name END,
+            description = CASE WHEN assignments.manually_edited = 1 THEN assignments.description ELSE COALESCE(excluded.description, assignments.description) END,
             due_date = CASE WHEN assignments.manually_edited = 1 THEN assignments.due_date ELSE excluded.due_date END,
             updated_at = CURRENT_TIMESTAMP",
     )

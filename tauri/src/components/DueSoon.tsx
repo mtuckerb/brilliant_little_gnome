@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, onAppEvent } from "../api";
 import type { Assignment, Course } from "../types";
+import { compareAssignmentsByDueDate } from "../lib/assignments";
 import { fmtAssignmentDueDate } from "../lib/format";
 
 // Pencil frame: "Due soon" (Desktop Vision > rightCol, frame id RLKQX).
@@ -54,10 +55,7 @@ export default function DueSoon() {
           if (Number.isNaN(t)) return false;
           return t >= now && t <= horizon;
         })
-        .sort(
-          (x, y) =>
-            new Date(x.assignment.due_date!).getTime() - new Date(y.assignment.due_date!).getTime(),
-        )
+        .sort((x, y) => compareAssignmentsByDueDate(x.assignment, y.assignment))
         .slice(0, MAX_ITEMS);
       setItems(upcoming);
     } catch {

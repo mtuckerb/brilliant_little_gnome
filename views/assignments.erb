@@ -20,6 +20,8 @@
 <script>
   const COURSE_ID = "<%= @course_id %>";
   let showCompleted = <%= @show_completed %>;
+  // Rows keyed by DB id so the edit modal can be populated without refetching.
+  let assignmentsById = {};
 
   async function loadAssignments() {
     try {
@@ -44,6 +46,9 @@
   function renderAssignments(data) {
     const root = document.getElementById('assignments-root');
     const { assignments } = data;
+
+    assignmentsById = {};
+    assignments.forEach(a => { assignmentsById[a.id] = a; });
 
     let html = `
       <div class="box">
@@ -162,11 +167,9 @@
         </td>
         <td class="has-text-right is-vcentered">
           <div class="buttons is-right">
-            ${a.synthetic ? `
-              <button class="button is-small is-info is-light" onclick="openEditModalFromRow('${db_id}')">
-                <span class="icon is-small"><i class="fas fa-edit"></i></span>
-              </button>
-            ` : ''}
+            <button class="button is-small is-info is-light" title="Edit this assignment" onclick="openEditModalFromRow('${db_id}')">
+              <span class="icon is-small"><i class="fas fa-edit"></i></span>
+            </button>
             <a href="${viewUrl}" class="button is-small is-primary is-light">View Details</a>
           </div>
         </td>
@@ -289,37 +292,21 @@
   }
 
   function openEditModalFromRow(dbId) {
-    const row = document.querySelector(`.assignment-row[data-id="${dbId}"]`);
-    if (!row) return;
+    // The summary payload already carries every editable field — no refetch.
+    const a = assignmentsById[dbId];
+    if (!a) return;
 
-    const itemId = row.dataset.brightspaceId;
-    const name = row.querySelector('.assignment-link').innerText;
-    const dueDateRaw = row.querySelector('.due-date-input').value;
-    
-    // To get the description, we can check if the expand div is loaded, 
-    // or just fetch the assignment details via API
-    fetch(`/api/v1/courses/${COURSE_ID}/assignments/summary`) // This is a bit heavy, maybe better to have a specific endpoint or use the expand div logic
-      .then(r => r.json())
-      .then(data => {
-        // We'll just open the modal with what we have and let the user fill the rest if needed, 
-        // OR we can do a proper fetch for a single assignment.
-        // Actually, the assignment_controller has: get '/course/:id/assignments/:assignment_id'
-        
-        return fetch(`/course/${COURSE_ID}/assignments/${itemId}`, { headers: {'Accept': 'application/json'}})
-      })
-      .then(r => r.json())
-      .then(assignment => {
-         const dt = assignment.DueDate ? new Date(assignment.DueDate) : null;
-         openEditAssignmentModal({
-           courseId: COURSE_ID,
-           brightspaceId: itemId,
-           name: assignment.Name,
-           dueDate: dt ? dt.toISOString().split('T')[0] : '',
-           dueTime: dt ? dt.toTimeString().split(' ')[0].substring(0, 5) : '',
-           externalUrl: assignment.ExternalUrl,
-           description: assignment.Instructions?.Text || assignment.description || ''
-         });
-      });
+    const dt = a.due_date ? new Date(a.due_date) : null;
+    const pad = n => String(n).padStart(2, '0');
+    openEditAssignmentModal({
+      courseId: COURSE_ID,
+      brightspaceId: a.brightspace_id,
+      name: a.name || '',
+      dueDate: dt ? `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}` : '',
+      dueTime: dt ? `${pad(dt.getHours())}:${pad(dt.getMinutes())}` : '',
+      externalUrl: a.external_url || '',
+      description: a.description || ''
+    });
   }
 
   document.addEventListener('DOMContentLoaded', () => loadAssignments());

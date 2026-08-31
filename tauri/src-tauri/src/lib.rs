@@ -219,6 +219,7 @@ pub fn run() {
             commands::assignments::toggle_assignment_complete,
             commands::assignments::toggle_assignment_optional,
             commands::assignments::update_assignment_due_date,
+            commands::assignments::update_assignment,
             commands::assignments::create_synthetic_assignment,
             commands::assignments::delete_assignment,
             commands::assignment_detail::get_assignment_detail,

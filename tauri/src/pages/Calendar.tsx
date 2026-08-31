@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment, Course, UserPreferences } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
+import EditAssignmentModal from "../components/EditAssignmentModal";
+import { compareAssignmentsByDueDate } from "../lib/assignments";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { courseLabel } from "../types";
 import { fmtAssignmentDueDate } from "../lib/format";
@@ -16,6 +18,7 @@ export default function Calendar() {
   const [data, setData] = useState<Row[] | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [leaving, setLeaving] = useState<Set<number>>(new Set());
+  const [editing, setEditing] = useState<Assignment | null>(null);
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
   const isMobile = useIsMobile();
 
@@ -89,7 +92,7 @@ export default function Calendar() {
         if (d < new Date(now.getTime() - 2 * 86400_000)) return false;
         return true;
       })
-      .sort((a, b) => new Date(a.assignment.due_date!).getTime() - new Date(b.assignment.due_date!).getTime());
+      .sort((a, b) => compareAssignmentsByDueDate(a.assignment, b.assignment));
 
     return (
       <div>
@@ -183,7 +186,7 @@ export default function Calendar() {
         const sortedRows = rows
           .slice()
           .filter((r) => !r.assignment.completed || showCompleted || leaving.has(r.assignment.id))
-          .sort((a, b) => (a.assignment.due_date || "").localeCompare(b.assignment.due_date || ""));
+          .sort((a, b) => compareAssignmentsByDueDate(a.assignment, b.assignment));
 
         // Per-day buckets so we can render empty-day placeholders.
         const byDay = new Map<string, Row[]>();
@@ -219,6 +222,7 @@ export default function Calendar() {
                       showCourse
                       leaving={leaving.has(a.id)}
                       onToggleComplete={onToggleComplete}
+                      onEdit={() => setEditing(a)}
                     />
                   ))}
                 </div>
@@ -227,6 +231,12 @@ export default function Calendar() {
           </div>
         );
       })}
+
+      <EditAssignmentModal
+        assignment={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => load()}
+      />
     </div>
   );
 }
