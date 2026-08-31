@@ -9,12 +9,31 @@ import { useToast } from "../components/ToastProvider";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { moduleUrl, topicViewUrl } from "../lib/brightspace";
 import RichText from "../components/RichText";
+import SyntheticTaskModal from "../components/SyntheticTaskModal";
 
 // Module detail — shows the module's instructor commentary (description),
 // child sub-modules as clickable links, and the list of items inside the
 // module with per-file + bulk download. The tree-toggle expand/collapse
 // from the old Modules page is replaced by direct navigation so you get a
 // dedicated URL per module.
+//
+// "Add task" mirrors the announcement→task affordance: the module you're
+// reading is usually where you decide "I need to do this by Friday", so the
+// form opens pre-filled from the module title + instructor commentary
+// instead of making you retype it on the Assignments page.
+
+// Brightspace ships module descriptions as HTML, but the task notes field
+// renders markdown — flatten to text so the textarea isn't full of tags.
+// DOMParser doesn't execute scripts, so untrusted markup is inert here.
+const TASK_NOTE_EXCERPT_CHARS = 600;
+
+function htmlToText(html: string): string {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body.textContent ?? "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 export default function ModuleDetail() {
   const { id: courseId, moduleId } = useParams<{ id: string; moduleId: string }>();
@@ -25,6 +44,7 @@ export default function ModuleDetail() {
   const [zoteroBusy, setZoteroBusy] = useState<Record<string, boolean>>({});
   const [moduleSendingZotero, setModuleSendingZotero] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCreateTask, setShowCreateTask] = useState(false);
   const toast = useToast();
   const bsHost = useBrightspaceHost();
 
@@ -116,6 +136,16 @@ export default function ModuleDetail() {
     setZoteroBusy((s) => ({ ...s, [key]: false }));
   }
 
+  function moduleToTaskDescription(): string {
+    const body = current?.description ? htmlToText(current.description) : "";
+    const excerpt =
+      body.length > TASK_NOTE_EXCERPT_CHARS
+        ? `${body.slice(0, TASK_NOTE_EXCERPT_CHARS).trimEnd()}…`
+        : body;
+    const header = `From module: **${current?.title ?? ""}**`;
+    return excerpt ? `${header}\n\n${excerpt}` : header;
+  }
+
   async function sendModuleToZotero() {
     if (!courseId || !moduleId) return;
     setModuleSendingZotero(true);
@@ -169,7 +199,15 @@ export default function ModuleDetail() {
         </div>
         <div className="level-right">
           <button
-            className="button is-small is-light"
+            className="button is-small is-primary is-light"
+            onClick={() => setShowCreateTask(true)}
+            title="Create a synthetic task for this module"
+          >
+            <span className="icon is-small"><i className="fas fa-plus"></i></span>
+            <span>Add task</span>
+          </button>
+          <button
+            className="button is-small is-light ml-2"
             disabled={moduleZipping || items.length === 0}
             onClick={downloadModule}
             title="Download all files in this module as a ZIP"
@@ -266,6 +304,20 @@ export default function ModuleDetail() {
           </ul>
         )}
       </div>
+
+      {courseId && (
+        <SyntheticTaskModal
+          courseId={courseId}
+          open={showCreateTask}
+          onClose={() => setShowCreateTask(false)}
+          onCreated={(a) => {
+            setShowCreateTask(false);
+            toast.show(`Task "${a.name}" added to this course.`, "is-success");
+          }}
+          initialName={current.title}
+          initialDescription={moduleToTaskDescription()}
+        />
+      )}
     </div>
   );
 }
