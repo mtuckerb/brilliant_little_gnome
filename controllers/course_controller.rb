@@ -94,7 +94,7 @@ class CourseController < BaseController
     @show_completed = params[:show_completed] == 'true'
     @assignments = Assignment.where(course_id: @course_id)
     @assignments = @assignments.where(completed: false) unless @show_completed
-    @assignments = @assignments.order(due_date: :asc)
+    @assignments = @assignments.order(Arel.sql('due_date ASC NULLS LAST'))
     erb :assignments
   end
 

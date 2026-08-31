@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { Assignment, Course, UserPreferences } from "../types";
 import AssignmentRow from "../components/AssignmentRow";
 import EditAssignmentModal from "../components/EditAssignmentModal";
+import { compareAssignmentsByDueDate } from "../lib/assignments";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { courseLabel } from "../types";
 import { fmtAssignmentDueDate } from "../lib/format";
@@ -91,7 +92,7 @@ export default function Calendar() {
         if (d < new Date(now.getTime() - 2 * 86400_000)) return false;
         return true;
       })
-      .sort((a, b) => new Date(a.assignment.due_date!).getTime() - new Date(b.assignment.due_date!).getTime());
+      .sort((a, b) => compareAssignmentsByDueDate(a.assignment, b.assignment));
 
     return (
       <div>
@@ -185,7 +186,7 @@ export default function Calendar() {
         const sortedRows = rows
           .slice()
           .filter((r) => !r.assignment.completed || showCompleted || leaving.has(r.assignment.id))
-          .sort((a, b) => (a.assignment.due_date || "").localeCompare(b.assignment.due_date || ""));
+          .sort((a, b) => compareAssignmentsByDueDate(a.assignment, b.assignment));
 
         // Per-day buckets so we can render empty-day placeholders.
         const byDay = new Map<string, Row[]>();

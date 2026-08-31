@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { Assignment } from "../types";
+import { compareAssignmentsByDueDate } from "../lib/assignments";
 import AssignmentRow from "../components/AssignmentRow";
 import EditAssignmentModal from "../components/EditAssignmentModal";
 import HeaderBand from "../components/HeaderBand";
@@ -47,7 +48,11 @@ export default function Assignments() {
     load();
   }
 
-  const visible = items.filter((a) => !a.completed || showCompleted || leaving.has(a.id));
+  // Sort in the client so the order matches the dates as displayed — the
+  // backend's string sort can't fully order the mixed due_date formats.
+  const visible = items
+    .filter((a) => !a.completed || showCompleted || leaving.has(a.id))
+    .sort(compareAssignmentsByDueDate);
 
   return (
     <div>

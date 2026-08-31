@@ -197,7 +197,8 @@ module Api
         query = Assignment.where(course_id: course_id)
         query = query.where(completed: false) unless show_completed
 
-        assignments = query.order(due_date: :asc).map do |a|
+        # NULLS LAST — SQLite's plain ASC would float no-due-date rows to the top.
+        assignments = query.order(Arel.sql('due_date ASC NULLS LAST')).map do |a|
           a.as_json.merge({
             name_html: render_markdown_inline(a.name),
             is_completed: a.completed,

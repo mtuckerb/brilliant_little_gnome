@@ -702,7 +702,7 @@ async fn assignments_summary(
             'completed_at', completed_at, 'synthetic', synthetic,
             'optional', optional, 'external_url', external_url,
             'is_quiz', assignment_type = 'quiz'
-         ) FROM assignments WHERE course_id = ? ORDER BY due_date ASC NULLS LAST"
+         ) FROM assignments WHERE course_id = ? ORDER BY due_date IS NULL, COALESCE(datetime(due_date), due_date) ASC"
     } else {
         "SELECT json_object(
             'id', id, 'course_id', course_id, 'brightspace_id', brightspace_id,
@@ -712,7 +712,7 @@ async fn assignments_summary(
             'completed_at', completed_at, 'synthetic', synthetic,
             'optional', optional, 'external_url', external_url,
             'is_quiz', assignment_type = 'quiz'
-         ) FROM assignments WHERE course_id = ? AND completed = 0 ORDER BY due_date ASC NULLS LAST"
+         ) FROM assignments WHERE course_id = ? AND completed = 0 ORDER BY due_date IS NULL, COALESCE(datetime(due_date), due_date) ASC"
     };
     let rows: Vec<(String,)> = sqlx::query_as(sql)
         .bind(&id)

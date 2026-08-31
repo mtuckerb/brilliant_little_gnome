@@ -194,7 +194,7 @@ class McpController < BaseController
         { content: [{ type: "text", text: items.to_json }] }
 
       when 'get_course_assignments'
-        assignments = Assignment.where(course_id: args['course_id']).order(due_date: :asc)
+        assignments = Assignment.where(course_id: args['course_id']).order(Arel.sql('due_date ASC NULLS LAST'))
         { content: [{ type: "text", text: assignments.to_json }] }
 
       when 'list_synthetic_tasks'

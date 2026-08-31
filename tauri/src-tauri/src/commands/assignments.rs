@@ -7,13 +7,16 @@ use rand::RngCore;
 pub async fn list_assignments(state: AppStateArg<'_>, course_id: Option<String>) -> Result<Vec<Assignment>> {
     let rows = if let Some(cid) = course_id {
         sqlx::query_as::<_, Assignment>(
-            "SELECT id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url, manually_edited FROM assignments WHERE course_id = ? ORDER BY due_date ASC NULLS LAST",
+            // due_date is TEXT in three shapes (Brightspace ISO-Z, datetime-local,
+            // Ruby-import 'YYYY-MM-DD HH:MM:SS') — datetime() normalizes them so
+            // the order is chronological, not lexicographic; no-date rows go last.
+            "SELECT id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url, manually_edited FROM assignments WHERE course_id = ? ORDER BY due_date IS NULL, COALESCE(datetime(due_date), due_date) ASC",
         )
         .bind(cid)
         .fetch_all(&state.pool).await?
     } else {
         sqlx::query_as::<_, Assignment>(
-            "SELECT id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url, manually_edited FROM assignments WHERE completed = 0 ORDER BY due_date ASC NULLS LAST",
+            "SELECT id, course_id, brightspace_id, name, due_date, description, is_graded, grade_item_id, assignment_type, completed, completed_at, synthetic, optional, external_url, manually_edited FROM assignments WHERE completed = 0 ORDER BY due_date IS NULL, COALESCE(datetime(due_date), due_date) ASC",
         )
         .fetch_all(&state.pool).await?
     };
