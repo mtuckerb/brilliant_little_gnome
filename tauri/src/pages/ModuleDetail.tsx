@@ -10,6 +10,7 @@ import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLi
 import { moduleUrl, topicViewUrl } from "../lib/brightspace";
 import RichText from "../components/RichText";
 import SyntheticTaskModal from "../components/SyntheticTaskModal";
+import { mdEscape, mdLink } from "../lib/markdown";
 
 // Module detail — shows the module's instructor commentary (description),
 // child sub-modules as clickable links, and the list of items inside the
@@ -120,21 +121,23 @@ export default function ModuleDetail() {
   }
 
   function taskFromItem(it: ContentItem) {
-    const where = current?.title ? `From module **${current.title}**` : "From a course module";
+    const where = current?.title ? `From module **${mdEscape(current.title)}**` : "From a course module";
     const link = itemBrightspaceUrl(it);
-    const linkLine = link ? `\n\n[${it.title}](${link})` : "";
-    return { name: it.title, description: `${where} — ${it.title}${linkLine}` };
+    const linkLine = link ? `\n\n${mdLink(it.title, link)}` : "";
+    return { name: it.title, description: `${where} — ${mdEscape(it.title)}${linkLine}` };
   }
 
   // A sub-module is a folder, so the task is "work through all of it" — the
   // note links to the sub-module page rather than a single file.
   function taskFromSubModule(c: ContentModule) {
-    const where = current?.title ? `From module **${current.title}**` : "From a course module";
+    const where = current?.title ? `From module **${mdEscape(current.title)}**` : "From a course module";
     const link = bsHost && courseId ? moduleUrl(bsHost, courseId, c.brightspace_id) : null;
-    const linkLine = link ? `\n\n[${c.title}](${link})` : "";
+    const linkLine = link ? `\n\n${mdLink(c.title, link)}` : "";
     return {
+      // The name is a plain-text field, so it stays unescaped; only the
+      // description is rendered as markdown.
       name: `${c.title} — everything in this section`,
-      description: `${where} — sub-module **${c.title}**${linkLine}`,
+      description: `${where} — sub-module **${mdEscape(c.title)}**${linkLine}`,
     };
   }
 
