@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api, onAppEvent } from "./api";
 import type { AuthStatus, SyncStatus } from "./types";
 import DesktopVision from "./components/DesktopVision";
+import StartupErrorBanner from "./components/StartupErrorBanner";
 import MobileLayout from "./components/MobileLayout";
 import { useIsMobile } from "./hooks/useIsMobile";
 import Dashboard from "./pages/Dashboard";
@@ -164,6 +165,10 @@ function AppInner() {
 export default function App() {
   return (
     <ToastProvider>
+      {/* Outside AppInner on purpose: when startup fails, authStatus() fails
+          too and AppInner renders the Setup screen, which would otherwise hide
+          the only explanation of what actually went wrong. */}
+      <StartupErrorBanner />
       <AppInner />
     </ToastProvider>
   );

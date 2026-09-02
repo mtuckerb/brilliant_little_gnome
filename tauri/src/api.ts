@@ -280,7 +280,18 @@ export const api = {
   // hand it out via this command. Surfaced as a "Show log" disclosure in
   // Settings → Sync for on-device pairing debugging.
   p2pDebugLog: () => invoke<string[]>("p2p_debug_log"),
+  // Why the app is degraded, or why the previous launch died. Takes no
+  // arguments and needs no backend state on purpose — the state is what
+  // fails when startup breaks.
+  startupError: () => invoke<StartupError>("startup_error"),
 };
+
+export interface StartupError {
+  /// Setup failed on this launch; the app is running without a backend.
+  setup: string | null;
+  /// The previous launch panicked before any UI existed. Reported once.
+  previous_panic: string | null;
+}
 
 // Tauri-event subscriptions (replacing the Ruby SSE stream).
 export type AppEvent =
