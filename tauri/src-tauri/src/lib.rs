@@ -9,6 +9,7 @@ pub mod error;
 pub mod events;
 pub mod models;
 pub mod rest_api;
+pub mod startup;
 pub mod state;
 pub mod sync;
 pub mod zotero;
@@ -43,6 +44,10 @@ use tauri::{RunEvent, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything else: a launch panic must leave a trace. Tauri aborts the
+    // process when setup fails, and the iOS crash report omits the message.
+    startup::install_panic_hook();
+
     use tracing_subscriber::layer::SubscriberExt as _;
     use tracing_subscriber::util::SubscriberInitExt as _;
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -79,10 +84,12 @@ pub fn run() {
     builder
         .setup(|app| {
             #[cfg(not(debug_assertions))]
-            release_webview_uses_embedded_assets(app)?;
+            if let Err(e) = release_webview_uses_embedded_assets(app) {
+                startup::record_setup_error(e);
+            }
 
             let handle = app.handle().clone();
-            tauri::async_runtime::block_on(async move {
+            let init = tauri::async_runtime::block_on(async move {
                 let state = Arc::new(AppState::initialize(handle.clone()).await?);
                 handle.manage(state.clone());
 
@@ -137,7 +144,14 @@ pub fn run() {
                 }
 
                 anyhow::Ok(())
-            })?;
+            });
+            // Deliberately not `?`: returning Err here makes Tauri panic, which
+            // on iOS is an abort at launch with no message anywhere the user or
+            // we can read. Record it and boot degraded — the UI surfaces it via
+            // the `startup_error` command.
+            if let Err(e) = init {
+                startup::record_setup_error(format!("{e:#}"));
+            }
 
             // Kick off background sync loop after init
             let handle2 = app.handle().clone();
@@ -194,6 +208,7 @@ pub fn run() {
             commands::courses::get_course,
             commands::courses::reorder_courses,
             commands::courses::set_course_pinned,
+            commands::diagnostics::startup_error,
             commands::updates::check_for_updates,
             commands::updates::install_update,
             commands::courses::update_course_color,
