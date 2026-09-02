@@ -51,8 +51,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 0.1.0
-        CFBundleVersion: "0.1.0"
+        CFBundleShortVersionString: 2.0.12
+        CFBundleVersion: "2.0.12"
         # Required by iOS 14+ for any UDP traffic on the local subnet —
         # iroh probes peers on the same Wi-Fi to skip the relay path.
         NSLocalNetworkUsageDescription: "Brilliant syncs your edits directly with your other devices when they're on the same Wi-Fi, skipping the relay."
