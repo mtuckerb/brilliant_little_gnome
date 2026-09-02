@@ -43,6 +43,33 @@ Each script runs `tauri ios build --export-method ...` so Tauri does not fall ba
 ## Installing the IPA
 
 - Development/ad-hoc: open Xcode -> Window -> Devices and Simulators, select the iPad, and drag the exported `.ipa` onto the installed apps list.
-- TestFlight: upload the App Store export through the normal App Store Connect/TestFlight flow.
+- TestFlight: run `scripts/release-testflight.sh` (see below), or upload the App Store export by hand through App Store Connect.
+
+## TestFlight releases
+
+`scripts/release-testflight.sh` is the one-command local release path (the iOS
+counterpart to `release-desktop.sh` — no CI involved): it builds the
+`app-store-connect` export, validates the IPA against App Store Connect, and
+uploads it to TestFlight with `xcrun altool`.
+
+On top of the build prerequisites above it needs App Store Connect
+credentials, either of:
+
+- **API key** (preferred): set `APP_STORE_CONNECT_KEY_ID` and
+  `APP_STORE_CONNECT_ISSUER_ID`, and put the matching `AuthKey_<KEY_ID>.p8`
+  in `~/.appstoreconnect/private_keys/`. Keys are minted at App Store
+  Connect -> Users and Access -> Integrations.
+- **Apple ID fallback**: set `APPLE_ID` and `APPLE_APP_PASSWORD` (an
+  app-specific password from appleid.apple.com — your normal password won't
+  work).
+
+```sh
+export APPLE_DEVELOPMENT_TEAM=YOURTEAMID
+scripts/release-testflight.sh
+```
+
+The uploaded version is whatever `src-tauri/tauri.conf.json` says. App Store
+Connect rejects a version+build it has already seen for iOS, so bump the
+version there (the usual `chore(release)` commit) before re-releasing.
 
 The release IPA should launch from bundled assets and should not require the Vite dev server. Use `npm run dev:ios` only for the live-development workflow.
