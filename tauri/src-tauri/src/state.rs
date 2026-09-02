@@ -31,8 +31,16 @@ pub struct AppState {
 
 impl AppState {
     pub async fn initialize(app: AppHandle) -> Result<Self> {
-        let pool = db::init(&app).await?;
-        let client = BrightspaceClient::from_db(&pool, app.clone()).await?;
+        // Both steps are tagged because this runs in the launch path: when it
+        // fails on a user's device the message is all we get back (see
+        // `startup.rs`), and "db::init: ..." vs "client init: ..." is the
+        // difference between looking at SQLite and looking at TLS.
+        let pool = db::init(&app)
+            .await
+            .map_err(|e| crate::error::AppError::Other(format!("db::init: {e}")))?;
+        let client = BrightspaceClient::from_db(&pool, app.clone())
+            .await
+            .map_err(|e| crate::error::AppError::Other(format!("client init: {e}")))?;
         Ok(Self {
             pool,
             client: Arc::new(client),
