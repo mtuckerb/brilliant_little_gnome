@@ -47,7 +47,10 @@ const config = JSON.stringify({
   bundle: {
     iOS: {
       developmentTeam,
-      minimumSystemVersion: '13.0',
+      // Apple requires >= 15.0 for App Store Connect uploads from
+      // Spring 2027; the archive's real floor comes from the Xcode project
+      // (project.yml / project.pbxproj), so all three must agree.
+      minimumSystemVersion: '15.0',
     },
   },
 });

@@ -2,7 +2,7 @@ name: brilliant-tauri
 options:
   bundleIdPrefix: com.tuckerbradford.brilliant
   deploymentTarget:
-    iOS: 14.0
+    iOS: 15.0
 fileGroups: [../../src]
 configs:
   debug: debug
