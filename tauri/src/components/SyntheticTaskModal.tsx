@@ -16,11 +16,12 @@ interface Props {
   /// so the user lands on a partially-completed form.
   initialName?: string;
   initialDescription?: string;
+  initialDue?: string;
 }
 
-export default function SyntheticTaskModal({ courseId, open, onClose, onCreated, initialName, initialDescription }: Props) {
+export default function SyntheticTaskModal({ courseId, open, onClose, onCreated, initialName, initialDescription, initialDue }: Props) {
   const [name, setName] = useState(initialName ?? "");
-  const [due, setDue] = useState("");
+  const [due, setDue] = useState(initialDue ?? "");
   const [desc, setDesc] = useState(initialDescription ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -31,14 +32,14 @@ export default function SyntheticTaskModal({ courseId, open, onClose, onCreated,
     if (open) {
       setName(initialName ?? "");
       setDesc(initialDescription ?? "");
-      setDue("");
+      setDue(initialDue ?? "");
       setErr(null);
     }
-  }, [open, initialName, initialDescription]);
+  }, [open, initialName, initialDescription, initialDue]);
 
   function reset() {
     setName(initialName ?? "");
-    setDue("");
+    setDue(initialDue ?? "");
     setDesc(initialDescription ?? "");
     setErr(null);
   }

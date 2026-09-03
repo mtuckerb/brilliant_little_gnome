@@ -5,7 +5,12 @@ import type { ContentItem, ContentModule } from "../types";
 import { triggerDownload } from "../lib/download";
 import HeaderBand from "../components/HeaderBand";
 import { useBrightspaceHost } from "../components/BrightspaceLink";
-import { topicViewUrl } from "../lib/brightspace";
+import { moduleUrl, topicViewUrl } from "../lib/brightspace";
+import SyntheticTaskModal from "../components/SyntheticTaskModal";
+import { useToast } from "../components/ToastProvider";
+import { mdEscape, mdLink } from "../lib/markdown";
+import { moduleTaskDue } from "../lib/moduleTasks";
+import type { Course } from "../types";
 
 // Course content as one tree: sub-modules are branches, items are leaves, and
 // nothing is hidden behind a click-through. The old page listed modules only,
@@ -66,10 +71,17 @@ export default function Modules() {
   const bsHost = useBrightspaceHost();
   const [modules, setModules] = useState<ContentModule[] | null>(null);
   const [items, setItems] = useState<ContentItem[] | null>(null);
+  const [course, setCourse] = useState<Course | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [downloading, setDownloading] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState<{
+    name: string;
+    description: string;
+    due?: string;
+  } | null>(null);
+  const toast = useToast();
 
   const foldKey = `modules.collapsed:${courseId}`;
 
@@ -77,8 +89,10 @@ export default function Modules() {
     if (!courseId) return;
     setModules(null);
     setItems(null);
+    setCourse(null);
     api.listModules(courseId).then(setModules);
     api.listCourseItems(courseId).then(setItems);
+    api.getCourse(courseId).then(setCourse);
     try {
       const saved = localStorage.getItem(`modules.collapsed:${courseId}`);
       setCollapsed(new Set(saved ? (JSON.parse(saved) as string[]) : []));
@@ -202,7 +216,40 @@ export default function Modules() {
     }
   }
 
-  if (!modules || !items) {
+  function moduleYear(): number {
+    const semester = course?.custom_semester || course?.semester || "";
+    return Number(/\b(20\d{2})\b/.exec(semester)?.[1] ?? new Date().getFullYear());
+  }
+
+  function itemUrl(it: ContentItem): string | null {
+    const raw = it.url ?? (bsHost && courseId ? topicViewUrl(bsHost, courseId, it.brightspace_id) : null);
+    if (!raw) return null;
+    return raw.startsWith("/") && bsHost ? `https://${bsHost}${raw}` : raw;
+  }
+
+  function taskFromItem(it: ContentItem) {
+    const parent = modules?.find((m) => m.brightspace_id === it.module_id);
+    const where = parent?.title ? `From module **${mdEscape(parent.title)}**` : "From a course module";
+    const link = itemUrl(it);
+    const linkLine = link ? `\n\n${mdLink(it.title, link)}` : "";
+    return {
+      name: it.title,
+      description: `${where} — ${mdEscape(it.title)}${linkLine}`,
+      due: moduleTaskDue(it.module_id, modules ?? [], course?.end_of_week_day ?? null, moduleYear()),
+    };
+  }
+
+  function taskFromModule(m: ContentModule) {
+    const link = bsHost && courseId ? moduleUrl(bsHost, courseId, m.brightspace_id) : null;
+    const linkLine = link ? `\n\n${mdLink(m.title, link)}` : "";
+    return {
+      name: m.title,
+      description: `From course content — module **${mdEscape(m.title)}**${linkLine}`,
+      due: moduleTaskDue(m.brightspace_id, modules ?? [], course?.end_of_week_day ?? null, moduleYear()),
+    };
+  }
+
+  if (!modules || !items || !course) {
     return (
       <div className="has-text-centered py-6">
         <span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span>
@@ -247,6 +294,14 @@ export default function Modules() {
           >
             {m.title}
           </button>
+          <button
+            className="button is-white is-small px-1"
+            title="Create a task from this module"
+            aria-label={`Create a task from ${m.title}`}
+            onClick={() => setCreating(taskFromModule(m))}
+          >
+            <span className="icon is-small has-text-grey-light"><i className="fas fa-list-check"></i></span>
+          </button>
           {total > 0 && <span className="tag is-light is-rounded is-size-7">{total}</span>}
           <Link
             to={`/course/${courseId}/content/${m.brightspace_id}`}
@@ -284,6 +339,14 @@ export default function Modules() {
                     title={leaf.mode === "viewer" ? "Open in Brilliant" : "Open in Brightspace"}
                   >
                     {it.title}
+                  </button>
+                  <button
+                    className="button is-white is-small px-1"
+                    title="Create a task from this item"
+                    aria-label={`Create a task from ${it.title}`}
+                    onClick={() => setCreating(taskFromItem(it))}
+                  >
+                    <span className="icon is-small has-text-grey-light"><i className="fas fa-list-check"></i></span>
                   </button>
                   {leaf.label && <span className="tag is-light is-size-7">{leaf.label}</span>}
                   {it.is_hidden && <span className="tag is-light is-size-7">hidden</span>}
@@ -361,6 +424,21 @@ export default function Modules() {
           visible
         )}
       </div>
+
+      {courseId && (
+        <SyntheticTaskModal
+          courseId={courseId}
+          open={creating !== null}
+          onClose={() => setCreating(null)}
+          onCreated={(assignment) => {
+            setCreating(null);
+            toast.show(`Task "${assignment.name}" created.`, "is-success");
+          }}
+          initialName={creating?.name}
+          initialDescription={creating?.description}
+          initialDue={creating?.due}
+        />
+      )}
     </div>
   );
 }
