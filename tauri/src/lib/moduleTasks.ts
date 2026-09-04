@@ -56,7 +56,7 @@ export function dateFromModuleTitle(title: string, fallbackYear = new Date().get
   const numericHasDateContext = !!numeric && (
     !!numeric[3] ||
     (numericPrefix.trim() === "" && numericSuffix.trim() === "") ||
-    /\b(?:week(?:\s+(?:of|\d+))?|ending(?:\s+on)?|starting|starts?|date|due)\s*[:;,–—-]?\s*$/i.test(
+    /\b(?:week\s+of|week\s+\d+\s*[:;,–—-]|ending(?:\s+on)?|starting|starts?|date|due)\s*[:;,–—-]?\s*$/i.test(
       numericPrefix,
     )
   );

@@ -35,6 +35,8 @@ describe("dateFromModuleTitle", () => {
 
   it("does not treat chapter fractions as dates", () => {
     expect(dateFromModuleTitle("Chapters 4/5", 2026)).toBeNull();
+    expect(dateFromModuleTitle("Week 4/5", 2026)).toBeNull();
+    expect(dateFromModuleTitle("Week 4/5: Combined topics", 2026)).toBeNull();
   });
 });
 
@@ -70,5 +72,11 @@ describe("moduleTaskDue", () => {
       module("2", "Chapters 4/5", "1"),
     ];
     expect(moduleTaskDue("2", modules, 5)).toBe("2026-09-18T23:59");
+
+    const combinedWeek = [
+      module("3", "Week 3: September 16, 2026"),
+      module("4", "Week 4/5: Combined topics", "3"),
+    ];
+    expect(moduleTaskDue("4", combinedWeek, 5)).toBe("2026-09-18T23:59");
   });
 });
