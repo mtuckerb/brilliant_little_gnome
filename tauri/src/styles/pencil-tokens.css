@@ -329,12 +329,30 @@
 }
 
 .pencil-due-row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: var(--pencil-font-sm);
   font-weight: 600;
   color: var(--pencil-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pencil-due-row-title > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pencil-due-row-course-id {
+  flex: 0 0 auto;
+  color: var(--pencil-text-secondary);
+  font-size: var(--pencil-font-xs);
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .pencil-due-row-meta {
