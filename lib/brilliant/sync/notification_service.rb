@@ -101,6 +101,7 @@ module Brilliant
         begin
           changes_detected = []
           newly_created = []
+          updated_content = []
 
           notifications_to_upsert.each do |n|
             existing = existing_notifications[n[:external_id]]
@@ -122,6 +123,11 @@ module Brilliant
 
               if content_changed || date_changed
                 changes_detected << n
+                # A Content row that changed in place is a Brightspace
+                # "Content Updated" notification. Fan it out as a Zotero
+                # UPDATE (not a create) so the existing library item is
+                # refreshed without duplication.
+                updated_content << n if n[:notification_type].to_s == 'Content'
               end
             end
           end
@@ -132,6 +138,17 @@ module Brilliant
           # the row's first appearance so subsequent sync passes can't create
           # duplicate Zotero items. Failures here MUST NOT abort the batch.
           push_new_content_to_zotero(newly_created)
+
+          # Refresh local Brightspace content records for Content rows that
+          # changed in place ("Content Updated" notifications). This uses the
+          # same TOC -> ContentService upsert flow as the regular course sync,
+          # so records are updated in place instead of duplicated. Failures
+          # here MUST NOT abort the notification batch.
+          refresh_updated_content_in_brightspace(updated_content)
+
+          # Keep Zotero mirrors fresh too, when configured. This is secondary
+          # to the Brightspace record refresh above and remains best-effort.
+          push_updated_content_to_zotero(updated_content)
 
           if publish_event_flag && !@session_changes
             # Only publish immediately if we aren't currently in a big sync session
@@ -160,6 +177,78 @@ module Brilliant
             Brilliant::Zotero.push_content(n)
           rescue => e
             puts "[Sync::NotificationService] Zotero push failed for #{n[:external_id]}: #{e.message}"
+          end
+        end
+      end
+
+      # Refresh local Brightspace content records for in-place Content changes
+      # ("Content Updated" notifications). The notification only carries the
+      # course/content identifiers, so resolve the affected course and run the
+      # existing safe TOC sync for that course. ContentService uses upsert_all
+      # with the existing unique indexes, so repeated notifications update in
+      # place and do not create duplicate records.
+      def refresh_updated_content_in_brightspace(updated_items)
+        return if updated_items.nil? || updated_items.empty?
+
+        content_items = updated_items.select { |n| n[:notification_type].to_s == 'Content' }
+        return if content_items.empty?
+
+        content_items.group_by { |n| n[:course_id].to_s }.each do |course_id, items|
+          if course_id.nil? || course_id.strip.empty?
+            ids = items.map { |n| n[:external_id] }.compact.join(', ')
+            puts "[Sync::NotificationService] Content update missing course_id; skipping Brightspace refresh for #{ids}"
+            next
+          end
+
+          missing_ids = items.select { |n| brightspace_content_identifier(n).nil? }
+          if missing_ids.any?
+            puts "[Sync::NotificationService] Content update missing content identifier for course #{course_id}: #{missing_ids.map { |n| n[:external_id] }.join(', ')}"
+          end
+
+          begin
+            toc = client.get_toc(course_id, force_refresh: true)
+            if toc.nil?
+              puts "[Sync::NotificationService] Content refresh returned no TOC for course #{course_id}; skipping"
+              next
+            end
+
+            client.sync_course_content(course_id, toc)
+          rescue => e
+            puts "[Sync::NotificationService] Brightspace content refresh failed for course #{course_id}: #{e.message}"
+          end
+        end
+      end
+
+      # Extract the Brightspace content object id from the notification's
+      # stable external_id ("content_<course_id>_<content_id>"). This is used
+      # only for validation/logging because the safe refresh path syncs the
+      # whole course TOC through ContentService.
+      def brightspace_content_identifier(notification)
+        external_id = notification[:external_id].to_s
+        course_id = notification[:course_id].to_s
+        prefix = "content_#{course_id}_"
+        return nil unless external_id.start_with?(prefix)
+
+        content_id = external_id[prefix.length..]
+        content_id.nil? || content_id.strip.empty? ? nil : content_id
+      end
+
+      # Fan out in-place Content changes ("Content Updated" notifications) to
+      # Zotero as updates. Mirror of push_new_content_to_zotero but routes
+      # through Brilliant::Zotero.update_content, which resolves the existing
+      # library item by external_id and refreshes it in place (no duplicates).
+      # Quiet no-op when Zotero is disabled/unavailable; per-item failures are
+      # swallowed so notification sync is never blocked.
+      def push_updated_content_to_zotero(updated_items)
+        return if updated_items.nil? || updated_items.empty?
+        return unless defined?(Brilliant::Zotero) && Brilliant::Zotero.enabled?
+
+        updated_items.each do |n|
+          next unless n[:notification_type].to_s == 'Content'
+          begin
+            Brilliant::Zotero.update_content(n)
+          rescue => e
+            puts "[Sync::NotificationService] Zotero update failed for #{n[:external_id]}: #{e.message}"
           end
         end
       end
