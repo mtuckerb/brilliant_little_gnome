@@ -32,6 +32,10 @@ describe("dateFromModuleTitle", () => {
   it("rejects impossible dates", () => {
     expect(dateFromModuleTitle("Week 4: February 30, 2026")).toBeNull();
   });
+
+  it("does not treat chapter fractions as dates", () => {
+    expect(dateFromModuleTitle("Chapters 4/5", 2026)).toBeNull();
+  });
 });
 
 describe("moduleTaskDue", () => {
@@ -58,5 +62,13 @@ describe("moduleTaskDue", () => {
       module("4", "PowerPoint", "3"),
     ];
     expect(moduleTaskDue("3", undatedCycle, 4)).toBeUndefined();
+  });
+
+  it("ignores an ambiguous numeric child title and inherits the dated week", () => {
+    const modules = [
+      module("1", "Week 3: September 16, 2026"),
+      module("2", "Chapters 4/5", "1"),
+    ];
+    expect(moduleTaskDue("2", modules, 5)).toBe("2026-09-18T23:59");
   });
 });

@@ -51,7 +51,16 @@ export function dateFromModuleTitle(title: string, fallbackYear = new Date().get
   if (iso) return validLocalDate(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
 
   const numeric = /\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2}|\d{4}))?\b/.exec(title);
-  if (numeric) {
+  const numericPrefix = numeric ? title.slice(0, numeric.index) : "";
+  const numericSuffix = numeric ? title.slice(numeric.index + numeric[0].length) : "";
+  const numericHasDateContext = !!numeric && (
+    !!numeric[3] ||
+    (numericPrefix.trim() === "" && numericSuffix.trim() === "") ||
+    /\b(?:week(?:\s+(?:of|\d+))?|ending(?:\s+on)?|starting|starts?|date|due)\s*[:;,–—-]?\s*$/i.test(
+      numericPrefix,
+    )
+  );
+  if (numeric && numericHasDateContext) {
     return validLocalDate(
       normalizedYear(numeric[3], fallbackYear),
       Number(numeric[1]) - 1,
