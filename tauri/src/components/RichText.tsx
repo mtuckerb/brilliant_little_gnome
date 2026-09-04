@@ -25,9 +25,14 @@ interface Props {
   format?: "auto" | "html" | "markdown";
 }
 
-// Anything that looks like an opening tag (letters after `<`, with optional
-// attributes) counts as HTML. Plain "<3" / "<- arrow" don't match.
-const HTML_TAG_RE = /<\s*[a-zA-Z][^>]*>/;
+// Require the tag name to end where HTML permits it to end. In particular,
+// Markdown's angle-bracket link destination (`[label](<https://…>)`) is not
+// an HTML tag: the colon immediately after `https` rules it out.
+const HTML_TAG_RE = /<\s*[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]*)?\/?\s*>/;
+
+export function looksLikeHtml(content: string): boolean {
+  return HTML_TAG_RE.test(content);
+}
 
 export default function RichText({
   content,
@@ -37,7 +42,7 @@ export default function RichText({
 }: Props) {
   if (!content) return null;
 
-  const isHtml = format === "html" || (format === "auto" && HTML_TAG_RE.test(content));
+  const isHtml = format === "html" || (format === "auto" && looksLikeHtml(content));
   const cls = `${bulmaContent ? "content " : ""}${className ?? ""}`.trim();
 
   if (isHtml) {

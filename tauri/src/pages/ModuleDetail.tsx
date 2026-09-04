@@ -11,6 +11,8 @@ import { moduleUrl, topicViewUrl } from "../lib/brightspace";
 import RichText from "../components/RichText";
 import SyntheticTaskModal from "../components/SyntheticTaskModal";
 import { mdEscape, mdLink } from "../lib/markdown";
+import { moduleTaskDue } from "../lib/moduleTasks";
+import type { Course } from "../types";
 
 // Module detail — shows the module's instructor commentary (description),
 // child sub-modules as clickable links, and the list of items inside the
@@ -22,6 +24,7 @@ export default function ModuleDetail() {
   const { id: courseId, moduleId } = useParams<{ id: string; moduleId: string }>();
   const [modules, setModules] = useState<ContentModule[] | null>(null);
   const [items, setItems] = useState<ContentItem[] | null>(null);
+  const [course, setCourse] = useState<Course | null>(null);
   const [downloading, setDownloading] = useState<Record<string, boolean>>({});
   const [moduleZipping, setModuleZipping] = useState(false);
   const [zoteroBusy, setZoteroBusy] = useState<Record<string, boolean>>({});
@@ -29,7 +32,7 @@ export default function ModuleDetail() {
   const [error, setError] = useState<string | null>(null);
   // Prefill for the task modal, set by the "make a task from this" action on
   // any row — content items and sub-modules both feed it.
-  const [creating, setCreating] = useState<{ name: string; description: string } | null>(null);
+  const [creating, setCreating] = useState<{ name: string; description: string; due?: string } | null>(null);
   const toast = useToast();
   const bsHost = useBrightspaceHost();
 
@@ -37,6 +40,7 @@ export default function ModuleDetail() {
     if (!courseId || !moduleId) return;
     api.listModules(courseId).then(setModules);
     api.listItems(moduleId).then(setItems);
+    api.getCourse(courseId).then(setCourse);
   }, [courseId, moduleId]);
 
   const current = useMemo(
@@ -115,7 +119,7 @@ export default function ModuleDetail() {
   // you have to do ("Levenson, 2017TIP" → read it), so it seeds the name and
   // the notes carry the trail back to where it came from.
   function itemBrightspaceUrl(it: ContentItem): string | null {
-    if (it.url) return it.url;
+    if (it.url) return it.url.startsWith("/") && bsHost ? `https://${bsHost}${it.url}` : it.url;
     if (bsHost && courseId) return topicViewUrl(bsHost, courseId, it.brightspace_id);
     return null;
   }
@@ -124,7 +128,16 @@ export default function ModuleDetail() {
     const where = current?.title ? `From module **${mdEscape(current.title)}**` : "From a course module";
     const link = itemBrightspaceUrl(it);
     const linkLine = link ? `\n\n${mdLink(it.title, link)}` : "";
-    return { name: it.title, description: `${where} — ${mdEscape(it.title)}${linkLine}` };
+    return {
+      name: it.title,
+      description: `${where} — ${mdEscape(it.title)}${linkLine}`,
+      due: moduleTaskDue(
+        it.module_id,
+        modules ?? [],
+        course?.end_of_week_day ?? null,
+        courseYear(),
+      ),
+    };
   }
 
   // A sub-module is a folder, so the task is "work through all of it" — the
@@ -136,9 +149,20 @@ export default function ModuleDetail() {
     return {
       // The name is a plain-text field, so it stays unescaped; only the
       // description is rendered as markdown.
-      name: `${c.title} — everything in this section`,
+      name: c.title,
       description: `${where} — sub-module **${mdEscape(c.title)}**${linkLine}`,
+      due: moduleTaskDue(
+        c.brightspace_id,
+        modules ?? [],
+        course?.end_of_week_day ?? null,
+        courseYear(),
+      ),
     };
+  }
+
+  function courseYear(): number {
+    const semester = course?.custom_semester || course?.semester || "";
+    return Number(/\b(20\d{2})\b/.exec(semester)?.[1] ?? new Date().getFullYear());
   }
 
   async function sendItemToZotero(it: ContentItem) {
@@ -160,7 +184,7 @@ export default function ModuleDetail() {
     setModuleSendingZotero(false);
   }
 
-  if (modules === null || items === null) {
+  if (modules === null || items === null || course === null) {
     return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
   }
 
@@ -327,6 +351,7 @@ export default function ModuleDetail() {
           }}
           initialName={creating?.name}
           initialDescription={creating?.description}
+          initialDue={creating?.due}
         />
       )}
     </div>
