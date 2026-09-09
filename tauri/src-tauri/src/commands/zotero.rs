@@ -597,7 +597,13 @@ async fn send_topic_to_zotero(
             }
             if let Some(attachment_key) = existing.attachment_key.as_deref() {
                 match zc
-                    .replace_attachment_file(attachment_key, &filename, mime.as_deref(), &bytes)
+                    .replace_attachment_file(
+                        attachment_key,
+                        existing.attachment_md5.as_deref(),
+                        &filename,
+                        mime.as_deref(),
+                        &bytes,
+                    )
                     .await
                 {
                     Ok(()) => {
@@ -991,8 +997,14 @@ pub async fn zotero_send_syllabus(
             return Ok(result);
         }
         if let Some(attachment_key) = existing.attachment_key.as_deref() {
-            zc.replace_attachment_file(attachment_key, &filename, mime.as_deref(), &bytes)
-                .await?;
+            zc.replace_attachment_file(
+                attachment_key,
+                existing.attachment_md5.as_deref(),
+                &filename,
+                mime.as_deref(),
+                &bytes,
+            )
+            .await?;
             let result = ZoteroResult {
                 created: vec![attachment_key.to_string()],
                 failures: Vec::new(),

@@ -15,7 +15,8 @@
 //!   2. POST /items/<key>/file with md5/filename/filesize/mtime — get auth or `exists: 1`
 //!   3. (unless exists) POST to the returned `url` with the file bytes wrapped in prefix/suffix
 //!   4. POST /items/<key>/file with `upload=<key>` to finalize
-//! `If-None-Match: *` is required on the file POSTs.
+//! New files use `If-None-Match: *` on both file POSTs; replacements use
+//! `If-Match: <previous MD5>` on both requests.
 
 use crate::error::{AppError, Result};
 use md5::{Digest, Md5};
@@ -27,6 +28,9 @@ const CLOUD_BASE: &str = "https://api.zotero.org";
 const LOCAL_BASE: &str = "http://127.0.0.1:23119/api";
 const LOCAL_USER_ID: &str = "0";
 const ZOTERO_API_VERSION: &str = "3";
+
+#[cfg(test)]
+mod replacement_tests;
 
 #[derive(Debug, Clone)]
 pub enum ZoteroMode {
@@ -93,9 +97,10 @@ pub struct CollectionData {
 #[derive(Debug, Clone)]
 pub struct ExistingItem {
     pub key: String,
-    /// MD5 of the first child attachment we find. None if the existing
-    /// item has no file attachment yet (we'll replace by re-uploading).
+    /// Key of the first child attachment, if one exists.
     pub attachment_key: Option<String>,
+    /// MD5 of its uploaded file. None (or empty) for an attachment shell
+    /// whose file upload has not completed.
     pub attachment_md5: Option<String>,
 }
 
@@ -747,9 +752,12 @@ impl ZoteroClient {
     /// Replace the file behind an existing attachment item. Same upload
     /// protocol as a new attachment but POSTs against the existing key
     /// instead of creating a fresh attachment-item shell first.
+    /// `existing_md5` is the checksum read when deciding to replace the file,
+    /// not the checksum of `bytes`. No checksum means the file is not uploaded yet.
     pub async fn replace_attachment_file(
         &self,
         attachment_key: &str,
+        existing_md5: Option<&str>,
         filename: &str,
         content_type: Option<&str>,
         bytes: &[u8],
@@ -763,12 +771,17 @@ impl ZoteroClient {
             ("filesize", &bytes.len().to_string()),
             ("mtime", &mtime.to_string()),
         ];
-        // `If-Match: <existing_md5>` is more correct here but we'd need
-        // an extra round-trip to fetch it. The `*` form replaces unconditionally
-        // which is what the caller has already decided to do.
+        // Zotero requires the previous file's MD5, not a wildcard If-Match.
+        // Keep the same precondition through registration so a concurrent
+        // change at either stage is reported as a conflict. An attachment
+        // shell left by an unfinished upload still needs If-None-Match.
+        let (precondition, previous_hash) = match existing_md5.filter(|hash| !hash.is_empty()) {
+            Some(hash) => ("If-Match", hash),
+            None => ("If-None-Match", "*"),
+        };
         let auth_resp = self
             .post(&auth_url)
-            .header("If-Match", "*")
+            .header(precondition, previous_hash)
             .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .form(&auth_form)
             .send()
@@ -832,7 +845,7 @@ impl ZoteroClient {
         let register_form = [("upload", upload_key.as_str())];
         let register = self
             .post(&auth_url)
-            .header("If-Match", "*")
+            .header(precondition, previous_hash)
             .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .form(&register_form)
             .send()
