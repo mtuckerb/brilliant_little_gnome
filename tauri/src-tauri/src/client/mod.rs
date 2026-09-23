@@ -12,6 +12,8 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+#[cfg(feature = "p2p")]
+use tauri::Manager;
 
 mod validation;
 pub use validation::{SessionValidation, SHARE_BLOCKED_INCONCLUSIVE, SHARE_BLOCKED_INVALID};
@@ -27,11 +29,17 @@ pub struct BrightspaceClient {
     pub user_id: RwLock<Option<String>>,
     pub degraded: RwLock<bool>,
     pub http: Client,
-    app: AppHandle,
+    app: Option<AppHandle>,
+    #[cfg(test)]
+    validation_url: Option<String>,
 }
 
 impl BrightspaceClient {
     pub async fn from_db(pool: &SqlitePool, app: AppHandle) -> Result<Self> {
+        Self::load(pool, Some(app)).await
+    }
+
+    async fn load(pool: &SqlitePool, app: Option<AppHandle>) -> Result<Self> {
         let row: Option<(Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT brightspace_host, brightspace_cookie, brightspace_uid, brightspace_user_id FROM user_preferences LIMIT 1",
         )
@@ -52,7 +60,17 @@ impl BrightspaceClient {
             degraded: RwLock::new(false),
             http,
             app,
+            #[cfg(test)]
+            validation_url: None,
         })
+    }
+
+    /// Exercise real HTTP validation and SQLite adoption without a GUI runtime.
+    #[cfg(test)]
+    pub(crate) async fn for_peer_test(pool: &SqlitePool, validation_url: String) -> Self {
+        let mut client = Self::load(pool, None).await.unwrap();
+        client.validation_url = Some(validation_url);
+        client
     }
 
     pub fn is_configured(&self) -> bool {
@@ -73,6 +91,10 @@ impl BrightspaceClient {
     /// but never logs the key and fails closed (a misconfigured or
     /// unreachable endpoint yields `Inconclusive`, not `Valid`).
     pub async fn validate_session(&self, host: &str, cookie: &str) -> SessionValidation {
+        #[cfg(test)]
+        if let Some(url) = &self.validation_url {
+            return validation::probe_session(&self.http, url, cookie).await;
+        }
         let probe_url = match validation::validation_probe_url(host) {
             Ok(u) => u,
             Err(e) => {
@@ -97,7 +119,10 @@ impl BrightspaceClient {
         let host = self.host.read().clone();
         let cookie = self.cookie.read().clone();
         let (Some(host), Some(cookie)) = (host, cookie) else {
-            // No credentials at all — definitively unauthenticated.
+            #[cfg(feature = "p2p")]
+            if self.try_peer_credential_recovery("").await {
+                return Ok(());
+            }
             self.commit_auth_failure(StatusCode::UNAUTHORIZED);
             return Err(AppError::Unauthenticated);
         };
@@ -108,7 +133,11 @@ impl BrightspaceClient {
                 Ok(())
             }
             SessionValidation::Invalid => {
-                tracing::warn!("preflight auth: session expired; aborting bulk download");
+                #[cfg(feature = "p2p")]
+                if self.try_peer_credential_recovery(&cookie).await {
+                    return Ok(());
+                }
+                tracing::warn!("preflight auth: session expired and no paired peer could recover it");
                 self.commit_auth_failure(StatusCode::FORBIDDEN);
                 Err(AppError::Unauthenticated)
             }
@@ -171,10 +200,10 @@ impl BrightspaceClient {
     /// run a reqwest cookie jar (cookies are attached as a static header), so
     /// without this those rotations are discarded and the stored cookie ages
     /// out — which on a sync-enabled device also strands paired peers on a
-    /// stale shared cookie. This replaces only the rotated values in the
+    /// stale recovery cookie. This replaces only the rotated values in the
     /// in-memory cookie string (preserving order and any other cookies) and
-    /// returns true if anything changed, so the sync layer can persist +
-    /// re-share the fresh value. Never clears or corrupts the cookie: empty or
+    /// returns true if anything changed, so the sync layer can persist the
+    /// fresh value. Never clears or corrupts the cookie: empty or
     /// unparsable Set-Cookie entries are ignored.
     pub fn absorb_rotated_cookie(&self, headers: &header::HeaderMap) -> bool {
         let set_cookies: Vec<&str> = headers
@@ -198,13 +227,49 @@ impl BrightspaceClient {
     /// re-fetches auth-status and starts a sync) after the joiner adopts
     /// a paired device's credentials.
     pub fn emit_auth_captured(&self, host: &str) -> std::result::Result<(), tauri::Error> {
-        self.app.emit("auth-captured", host)
+        self.emit("auth-captured", host)
+    }
+
+    /// Notify the UI that a previously degraded session was repaired without
+    /// asking it to start another sync; recovery usually happens inside a sync
+    /// that should simply continue.
+    pub fn emit_auth_recovered(&self, host: &str) -> std::result::Result<(), tauri::Error> {
+        self.emit("auth-recovered", host)
     }
 
     /// Emit a non-secret, actionable auth-share failure message for UI paths
     /// that adopt or publish credentials outside the primary login command.
     pub fn emit_auth_share_blocked(&self, message: &str) -> std::result::Result<(), tauri::Error> {
-        self.app.emit("auth-share-blocked", message)
+        self.emit("auth-share-blocked", message)
+    }
+
+    fn emit<S: serde::Serialize + Clone>(&self, event: &str, payload: S) -> std::result::Result<(), tauri::Error> {
+        match &self.app {
+            Some(app) => app.emit(event, payload),
+            None => Ok(()),
+        }
+    }
+
+    /// Clear the degraded flag after either local validation or automatic
+    /// recovery confirms a live session.
+    #[cfg(feature = "p2p")]
+    pub(crate) fn mark_auth_healthy(&self) {
+        *self.degraded.write() = false;
+    }
+
+    /// Reach the managed application state only after a definitive auth
+    /// rejection. Keeping this behind the client lets failures discovered by
+    /// any API call trigger the same transparent peer fallback, not just the
+    /// top-level periodic sync entry point.
+    #[cfg(feature = "p2p")]
+    async fn try_peer_credential_recovery(&self, rejected_cookie: &str) -> bool {
+        let Some(app) = &self.app else { return false };
+        let Some(state) = app.try_state::<Arc<crate::state::AppState>>() else {
+            return false;
+        };
+        state
+            .recover_credentials_from_peers(rejected_cookie)
+            .await
     }
 
     /// Probe `/users/whoami` to confirm the session is genuinely dead
@@ -213,24 +278,24 @@ impl BrightspaceClient {
     /// transient gateway hiccups) rather than session expiry. Without
     /// this probe we kept showing "session expired" toasts on a healthy
     /// account, which trained the user to ignore them.
-    async fn maybe_mark_auth_failure(&self, origin_path: &str, status: StatusCode) {
+    async fn maybe_mark_auth_failure(&self, origin_path: &str, status: StatusCode) -> bool {
         // Already-known-degraded: don't bother re-probing — saves API
         // chatter while the user is mid-reauth.
         if self.is_degraded() {
-            return;
+            return false;
         }
         let host = self.host.read().clone();
         let cookie = self.cookie.read().clone();
         let (Some(host), Some(cookie)) = (host, cookie) else {
             // No creds to probe with — the failure is real.
             self.commit_auth_failure(status);
-            return;
+            return false;
         };
         let probe_url = format!("https://{}/d2l/api/lp/{}/users/whoami", host, API_VERSION);
         match self
             .http
             .get(&probe_url)
-            .header(header::COOKIE, cookie)
+            .header(header::COOKIE, cookie.clone())
             .send()
             .await
         {
@@ -243,13 +308,17 @@ impl BrightspaceClient {
                         status,
                         origin_path,
                     );
-                    return;
+                    return false;
                 }
                 if matches!(probe_status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                    tracing::warn!(
-                        "auth probe confirmed expiry (whoami {}); marking degraded",
-                        probe_status,
-                    );
+                    #[cfg(feature = "p2p")]
+                    if self.try_peer_credential_recovery(&cookie).await {
+                        tracing::info!(
+                            "auth probe confirmed local expiry; recovered from a paired peer"
+                        );
+                        return true;
+                    }
+                    tracing::warn!("auth probe confirmed expiry (whoami {}); no paired peer recovered it", probe_status);
                     self.commit_auth_failure(status);
                 } else {
                     tracing::warn!(
@@ -262,12 +331,13 @@ impl BrightspaceClient {
                 tracing::warn!("auth probe network error: {} — not flipping degraded", e);
             }
         }
+        false
     }
 
     fn commit_auth_failure(&self, status: StatusCode) {
         *self.degraded.write() = true;
         let host = self.host.read().clone().unwrap_or_default();
-        if let Err(e) = self.app.emit(
+        if let Err(e) = self.emit(
             "app-event",
             json!({
                 "kind": "authentication_failure",
@@ -331,60 +401,56 @@ impl BrightspaceClient {
     }
 
     async fn fetch(&self, path: &str) -> Result<Value> {
-        let host = self
-            .host
-            .read()
-            .clone()
-            .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
-        let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
-        let url = format!("https://{}{}", host, path);
+        for attempt in 0..2 {
+            let host = self
+                .host
+                .read()
+                .clone()
+                .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
+            let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
+            let url = format!("https://{}{}", host, path);
 
-        tracing::debug!("GET {}", url);
-        let resp = self
-            .http
-            .get(&url)
-            .header(header::ACCEPT, "application/json")
-            .header(header::COOKIE, cookie)
-            .send()
-            .await?;
+            tracing::debug!("GET {}", url);
+            let resp = self
+                .http
+                .get(&url)
+                .header(header::ACCEPT, "application/json")
+                .header(header::COOKIE, cookie)
+                .send()
+                .await?;
 
-        // Pick up any rotated session cookie before the body consumes `resp`.
-        self.absorb_rotated_cookie(resp.headers());
+            // Pick up any rotated session cookie before the body consumes `resp`.
+            self.absorb_rotated_cookie(resp.headers());
 
-        let status = resp.status();
-        if status.is_success() {
-            *self.degraded.write() = false;
-            let value: Value = resp.json().await?;
-            // Brightspace error envelopes occasionally return 200 with Errors array.
-            if value.is_object() && (value.get("Errors").is_some() || value.get("ErrorMessage").is_some()) {
-                let body = value.to_string();
-                return Err(AppError::BrightspaceApi { status: 200, body });
-            }
-            Ok(value)
-        } else if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-            // 401s and most 403s are treated as global auth failures. Discussion
-            // API 403s are often course/forum/topic-scoped permissions problems;
-            // do not force global re-auth for those unless an independent auth
-            // validation call fails elsewhere.
-            if Self::is_resource_scoped_auth_failure(path, status) {
-                // Discussion forum/topic 403s are expected for areas the user
-                // doesn't have permission to read (instructor-only forums,
-                // restricted topics). Demoted from warn to keep clean syncs
-                // free of recurring noise.
-                tracing::debug!(
-                    "resource-scoped Brightspace auth failure for {}: {}",
-                    path,
-                    status
-                );
-            } else {
-                self.maybe_mark_auth_failure(path, status).await;
+            let status = resp.status();
+            if status.is_success() {
+                *self.degraded.write() = false;
+                let value: Value = resp.json().await?;
+                // Brightspace error envelopes occasionally return 200 with Errors array.
+                if value.is_object() && (value.get("Errors").is_some() || value.get("ErrorMessage").is_some()) {
+                    let body = value.to_string();
+                    return Err(AppError::BrightspaceApi { status: 200, body });
+                }
+                return Ok(value);
+            } else if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+                // 401s and most 403s are treated as global auth failures. Discussion
+                // API 403s are often course/forum/topic-scoped permissions problems;
+                // do not force global re-auth for those unless an independent auth
+                // validation call fails elsewhere.
+                if Self::is_resource_scoped_auth_failure(path, status) {
+                    tracing::debug!(
+                        "resource-scoped Brightspace auth failure for {}: {}",
+                        path,
+                        status
+                    );
+                } else if attempt == 0 && self.maybe_mark_auth_failure(path, status).await {
+                    continue;
+                }
             }
             let body = resp.text().await.unwrap_or_default();
-            Err(AppError::BrightspaceApi { status: status.as_u16(), body })
-        } else {
-            let body = resp.text().await.unwrap_or_default();
-            Err(AppError::BrightspaceApi { status: status.as_u16(), body })
+            return Err(AppError::BrightspaceApi { status: status.as_u16(), body });
         }
+        unreachable!("credential retry loop always returns")
     }
 
     /// Paginated fetch following PagingInfo.HasMoreItems + Bookmark.
@@ -430,51 +496,63 @@ impl BrightspaceClient {
     /// state updates (`/discussions/topics/.../MyReadStatus`). Returns
     /// nothing — these endpoints are write-only fire-and-forget.
     pub async fn put_json(&self, path: &str, body: serde_json::Value) -> Result<()> {
-        let host = self.host.read().clone()
-            .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
-        let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
-        let url = format!("https://{}{}", host, path);
-        let resp = self.http.put(&url)
-            .header(header::COOKIE, cookie)
-            .header(header::CONTENT_TYPE, "application/json")
-            .header(header::ACCEPT, "application/json")
-            .body(body.to_string())
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                self.maybe_mark_auth_failure(path, status).await;
+        for attempt in 0..2 {
+            let host = self.host.read().clone()
+                .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
+            let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
+            let url = format!("https://{}{}", host, path);
+            let resp = self.http.put(&url)
+                .header(header::COOKIE, cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::ACCEPT, "application/json")
+                .body(body.to_string())
+                .send()
+                .await?;
+            let status = resp.status();
+            if status.is_success() {
+                *self.degraded.write() = false;
+                return Ok(());
             }
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::BrightspaceApi { status: status.as_u16(), body });
+            if attempt == 0
+                && matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+                && self.maybe_mark_auth_failure(path, status).await
+            {
+                continue;
+            }
+            let response_body = resp.text().await.unwrap_or_default();
+            return Err(AppError::BrightspaceApi { status: status.as_u16(), body: response_body });
         }
-        *self.degraded.write() = false;
-        Ok(())
+        unreachable!("credential retry loop always returns")
     }
 
     /// Fetch a raw HTML page (not JSON, not cached). Used by the PSY-220
     /// scraper which has to parse the rendered grades view.
     pub async fn fetch_html(&self, path: &str) -> Result<String> {
-        let host = self.host.read().clone()
-            .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
-        let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
-        let url = format!("https://{}{}", host, path);
-        let resp = self.http.get(&url)
-            .header(header::ACCEPT, "text/html,application/xhtml+xml")
-            .header(header::COOKIE, cookie)
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                self.maybe_mark_auth_failure(path, status).await;
+        for attempt in 0..2 {
+            let host = self.host.read().clone()
+                .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
+            let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
+            let url = format!("https://{}{}", host, path);
+            let resp = self.http.get(&url)
+                .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                .header(header::COOKIE, cookie)
+                .send()
+                .await?;
+            let status = resp.status();
+            if status.is_success() {
+                *self.degraded.write() = false;
+                return Ok(resp.text().await?);
             }
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::BrightspaceApi { status: status.as_u16(), body });
+            if attempt == 0
+                && matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+                && self.maybe_mark_auth_failure(path, status).await
+            {
+                continue;
+            }
+            let response_body = resp.text().await.unwrap_or_default();
+            return Err(AppError::BrightspaceApi { status: status.as_u16(), body: response_body });
         }
-        *self.degraded.write() = false;
-        Ok(resp.text().await?)
+        unreachable!("credential retry loop always returns")
     }
 
     /// Fetch arbitrary binary content (PDFs, attachments, etc.) with the user's
@@ -489,52 +567,58 @@ impl BrightspaceClient {
     /// the response body. `Content-Length` is rejected up front when present, and
     /// chunked/missing-length responses are aborted once they exceed the cap.
     pub async fn fetch_bytes_with_limit(&self, url_or_path: &str, max_bytes: Option<usize>) -> Result<(Vec<u8>, Option<String>, Option<String>)> {
-        let host = self.host.read().clone()
-            .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
-        let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
+        for attempt in 0..2 {
+            let host = self.host.read().clone()
+                .ok_or_else(|| AppError::Other("no Brightspace host configured".into()))?;
+            let cookie = self.cookie.read().clone().ok_or(AppError::Unauthenticated)?;
 
-        // Brightspace attachment URLs may be absolute (https://…) or root-relative.
-        let url = if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
-            url_or_path.to_string()
-        } else {
-            format!("https://{}{}", host, url_or_path)
-        };
+            // Brightspace attachment URLs may be absolute (https://…) or root-relative.
+            let url = if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
+                url_or_path.to_string()
+            } else {
+                format!("https://{}{}", host, url_or_path)
+            };
 
-        let resp = self.http.get(&url)
-            .header(header::COOKIE, cookie)
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                self.maybe_mark_auth_failure(url_or_path, status).await;
+            let resp = self.http.get(&url)
+                .header(header::COOKIE, cookie)
+                .send()
+                .await?;
+            let status = resp.status();
+            if !status.is_success() {
+                if attempt == 0
+                    && matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+                    && self.maybe_mark_auth_failure(url_or_path, status).await
+                {
+                    continue;
+                }
+                return Err(AppError::BrightspaceApi { status: status.as_u16(), body: format!("GET {} -> {}", url, status) });
             }
-            return Err(AppError::BrightspaceApi { status: status.as_u16(), body: format!("GET {} -> {}", url, status) });
-        }
-        *self.degraded.write() = false;
-        if let (Some(max), Some(length)) = (max_bytes, resp.content_length()) {
-            if length > max as u64 {
-                return Err(AppError::Other("File too large to preview — open externally".to_string()));
-            }
-        }
-        let content_type = resp.headers().get(header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        let filename = resp.headers().get(header::CONTENT_DISPOSITION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(parse_filename_from_content_disposition);
-        let mut bytes = Vec::with_capacity(max_bytes.unwrap_or_default().min(resp.content_length().unwrap_or(0) as usize));
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            if let Some(max) = max_bytes {
-                if bytes.len().saturating_add(chunk.len()) > max {
+            *self.degraded.write() = false;
+            if let (Some(max), Some(length)) = (max_bytes, resp.content_length()) {
+                if length > max as u64 {
                     return Err(AppError::Other("File too large to preview — open externally".to_string()));
                 }
             }
-            bytes.extend_from_slice(&chunk);
+            let content_type = resp.headers().get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let filename = resp.headers().get(header::CONTENT_DISPOSITION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_filename_from_content_disposition);
+            let mut bytes = Vec::with_capacity(max_bytes.unwrap_or_default().min(resp.content_length().unwrap_or(0) as usize));
+            let mut stream = resp.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                if let Some(max) = max_bytes {
+                    if bytes.len().saturating_add(chunk.len()) > max {
+                        return Err(AppError::Other("File too large to preview — open externally".to_string()));
+                    }
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            return Ok((bytes, content_type, filename));
         }
-        Ok((bytes, content_type, filename))
+        unreachable!("credential retry loop always returns")
     }
 
     pub async fn archive_cache(&self, pool: &SqlitePool, path: &str) -> Result<()> {

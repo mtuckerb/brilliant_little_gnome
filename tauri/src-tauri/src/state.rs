@@ -27,6 +27,11 @@ pub struct AppState {
     // engine alive for the duration of their borrow.
     #[cfg(feature = "p2p")]
     pub sync: RwLock<Option<Arc<crate::p2p::SyncEngine>>>,
+    /// Serializes automatic credential recovery. A sync fans out many HTTP
+    /// requests, and several can discover the same expiry at once; only one
+    /// ordered walk of the peer roster should run.
+    #[cfg(feature = "p2p")]
+    auth_recovery: Mutex<()>,
 }
 
 impl AppState {
@@ -50,6 +55,8 @@ impl AppState {
             app,
             #[cfg(feature = "p2p")]
             sync: RwLock::new(None),
+            #[cfg(feature = "p2p")]
+            auth_recovery: Mutex::new(()),
         })
     }
 
@@ -61,32 +68,19 @@ impl AppState {
         self.sync.read().clone()
     }
 
-    /// Push the current Brightspace cookie + host into the Loro doc so
-    /// paired peers pick up the fresh session. Called after every
-    /// `store_credentials` so the aggregate session lifetime across the
-    /// device fleet stays as long as possible — when one device's auth
-    /// expires, another peer's session takes over silently.
-    ///
-    /// The credentials are already saved locally before this is called;
-    /// this only governs whether they are *shared* to peers.
-    ///
-    /// Pre-share validation gate: the Brightspace key is probed against the
-    /// known-good auth endpoint first, and is published to the Loro doc only
-    /// when confirmed live (`Valid`). An expired/incorrect key (`Invalid`)
-    /// or an unverifiable one (`Inconclusive` — endpoint unreachable or
-    /// misconfigured) fails closed and returns an actionable, key-free
-    /// error instead of mirroring. Returns `Ok(())` (no-op) when sync is
-    /// not enabled or there is nothing to share.
+    /// Validate credentials that have just been stored while device sync is
+    /// enabled. Cookies are deliberately not put in the replicated Loro doc;
+    /// peers receive them only through the targeted request/response recovery
+    /// protocol when their own session is invalid.
     #[cfg(feature = "p2p")]
-    pub async fn mirror_credentials_to_loro(&self) -> Result<()> {
-        let Some(engine) = self.sync_engine() else { return Ok(()) };
+    pub async fn validate_credentials_for_peer_recovery(&self) -> Result<()> {
+        if self.sync_engine().is_none() {
+            return Ok(());
+        }
         use crate::client::SessionValidation;
         use crate::error::AppError;
-        use crate::p2p::bridge::{LocalChange, PrefField};
-
         let (Some(cookie), Some(host)) = (self.client.cookie_clone(), self.client.host_clone())
         else {
-            // No key/host to share.
             return Ok(());
         };
 
@@ -104,29 +98,54 @@ impl AppState {
             }
         }
 
-        let bridge = engine.bridge();
-        bridge
-            .apply_local(LocalChange::Pref(PrefField::BrightspaceCookie(cookie)))
-            .await
-            .map_err(|e| AppError::Other(format!("apply_local brightspace_cookie: {e}")))?;
-        bridge
-            .apply_local(LocalChange::Pref(PrefField::BrightspaceHost(host)))
-            .await
-            .map_err(|e| AppError::Other(format!("apply_local brightspace_host: {e}")))?;
         Ok(())
     }
 
-    /// Persist a rotated Brightspace cookie and re-share it to paired peers.
+    /// Recover from an invalid local Brightspace session by asking saved peers
+    /// one at a time. The engine validates every response before persistence.
+    /// Returns false when sync is disabled, the roster is empty, or no peer has
+    /// a usable session.
+    #[cfg(feature = "p2p")]
+    pub async fn recover_credentials_from_peers(&self, rejected_cookie: &str) -> bool {
+        let _guard = self.auth_recovery.lock().await;
+
+        // Another request may have completed recovery while this caller was
+        // waiting for the lock. Only re-probe when the cookie actually
+        // changed; the caller already proved `rejected_cookie` invalid.
+        if let (Some(host), Some(cookie)) = (self.client.host_clone(), self.client.cookie_clone()) {
+            if cookie != rejected_cookie
+                && self.client.validate_session(&host, &cookie).await
+                    == crate::client::SessionValidation::Valid
+            {
+                self.client.mark_auth_healthy();
+                return true;
+            }
+        }
+
+        let Some(engine) = self.sync_engine() else {
+            return false;
+        };
+        match engine
+            .recover_credentials_from_peers(&self.pool, self.client.as_ref())
+            .await
+        {
+            Ok(recovered) => recovered,
+            Err(e) => {
+                tracing::warn!("peer credential recovery failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// Persist a rotated Brightspace cookie so it is ready for a future peer
+    /// request.
     ///
     /// Called at the end of a successful sync. `client.absorb_rotated_cookie`
     /// keeps the in-memory cookie current as Brightspace reissues the session
     /// during normal API calls; here we notice when that live value has
-    /// diverged from what's stored, write it back (so it survives restart and
-    /// is what the P2P bootstrap hands new peers), and re-mirror it into the
-    /// Loro doc. The mirror runs the live-session validation gate and fails
-    /// closed, so a bad value is never shared. The net effect: a paired phone
-    /// stays authenticated as the desktop's session renews, with no manual
-    /// re-login. No-ops when nothing rotated.
+    /// diverged from what's stored and write it back so it survives restart
+    /// and is what the P2P responder hands an expired peer. No-ops when nothing
+    /// rotated.
     pub async fn refresh_shared_credentials(&self) {
         let (Some(cookie), Some(host)) = (self.client.cookie_clone(), self.client.host_clone())
         else {
@@ -139,7 +158,7 @@ impl AppState {
                 .ok()
                 .flatten();
         if stored.as_deref() == Some(cookie.as_str()) {
-            return; // nothing rotated since the last share
+            return; // nothing rotated since the last persistence
         }
         if let Err(e) = sqlx::query(
             "UPDATE user_preferences SET brightspace_cookie = ?, brightspace_host = ?, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM user_preferences LIMIT 1)",
@@ -152,10 +171,10 @@ impl AppState {
             tracing::warn!("refresh_shared_credentials: persist failed: {e}");
             return;
         }
-        tracing::info!("Brightspace session cookie rotated — persisted and re-sharing to peers");
+        tracing::info!("Brightspace session cookie rotated — persisted for peer recovery");
         #[cfg(feature = "p2p")]
-        if let Err(e) = self.mirror_credentials_to_loro().await {
-            tracing::warn!("refresh_shared_credentials: mirror failed: {e}");
+        if let Err(e) = self.validate_credentials_for_peer_recovery().await {
+            tracing::warn!("refresh_shared_credentials: validation failed: {e}");
         }
     }
 }

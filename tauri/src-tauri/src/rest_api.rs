@@ -1052,13 +1052,11 @@ async fn auth_cookies(
         )
         .await
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    // Pre-share validation gates this REST path too: the key is stored
-    // locally above, but only shared to peers if it validates as live.
-    // A blocked share returns an actionable, key-free 409 rather than
-    // silently mirroring an unvalidated key.
+    // Validate before this key becomes eligible to answer a paired device's
+    // recovery request. A blocked key returns an actionable, key-free 409.
     #[cfg(feature = "p2p")]
     state
-        .mirror_credentials_to_loro()
+        .validate_credentials_for_peer_recovery()
         .await
         .map_err(|e| api_error(StatusCode::CONFLICT, e.to_string()))?;
     Ok(Json(json!({ "status": "ok" })))

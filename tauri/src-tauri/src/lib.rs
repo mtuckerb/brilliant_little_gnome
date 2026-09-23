@@ -196,6 +196,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Auth
             commands::auth::auth_status,
+            commands::auth::recover_peer_auth,
             commands::auth::setup_cookies,
             commands::auth::clear_auth,
             commands::auth::export_auth,

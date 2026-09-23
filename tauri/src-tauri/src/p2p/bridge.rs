@@ -326,8 +326,6 @@ impl Bridge {
             PrefField::CalendarShowEmptyDays(v) => {
                 self.doc.set_pref_calendar_show_empty_days(v)?
             }
-            PrefField::BrightspaceCookie(v) => self.doc.set_pref_brightspace_cookie(&v)?,
-            PrefField::BrightspaceHost(v) => self.doc.set_pref_brightspace_host(&v)?,
         }
         Ok(())
     }
@@ -399,14 +397,6 @@ pub enum PrefField {
     ShowCourseList(bool),
     ShowRecentUpdates(bool),
     CalendarShowEmptyDays(bool),
-    /// Brightspace auth cookie. Shared across paired devices so when one
-    /// device re-authenticates, the others automatically pick up the new
-    /// session — keeps the aggregate session lifetime as long as possible
-    /// instead of every device degrading independently.
-    BrightspaceCookie(String),
-    /// Institutional host (e.g. `courses.maine.edu`). Synced for the same
-    /// reason — a freshly-paired device shouldn't need re-entry.
-    BrightspaceHost(String),
 }
 
 /// What changed in this batch of remote diffs. We collect a HashSet of
@@ -642,9 +632,6 @@ async fn write_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
     let show_course_list = doc.get_pref_show_course_list().map(|b| b as i64);
     let show_recent = doc.get_pref_show_recent_updates().map(|b| b as i64);
     let calendar_show_empty = doc.get_pref_calendar_show_empty_days().map(|b| b as i64);
-    let brightspace_cookie = doc.get_pref_brightspace_cookie();
-    let brightspace_host = doc.get_pref_brightspace_host();
-
     let semester_colors_json = serde_json::to_string(
         &doc.iter_pref_semester_colors()
             .into_iter()
@@ -671,8 +658,6 @@ async fn write_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
            show_course_list          = COALESCE(?, show_course_list), \
            show_recent_updates       = COALESCE(?, show_recent_updates), \
            calendar_show_empty_days  = COALESCE(?, calendar_show_empty_days), \
-           brightspace_cookie        = COALESCE(?, brightspace_cookie), \
-           brightspace_host          = COALESCE(?, brightspace_host), \
            semester_colors           = ?, \
            collapsed_topics          = ?, \
            updated_at                = CURRENT_TIMESTAMP",
@@ -686,8 +671,6 @@ async fn write_prefs_to_sqlite(doc: &SyncDoc, pool: &SqlitePool) -> Result<()> {
     .bind(show_course_list)
     .bind(show_recent)
     .bind(calendar_show_empty)
-    .bind(brightspace_cookie)
-    .bind(brightspace_host)
     .bind(semester_colors_json)
     .bind(collapsed_topics_json)
     .execute(pool)

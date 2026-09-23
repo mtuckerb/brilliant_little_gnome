@@ -31,7 +31,7 @@ use crate::client::SessionValidation;
 use crate::p2p::bridge::Bridge;
 use crate::p2p::doc::SyncDoc;
 use crate::p2p::persistence::{SyncStore, CHECKPOINT_WAL_THRESHOLD};
-use crate::p2p::transport::{Transport, TransportEvent, WireMsg};
+use crate::p2p::transport::{PeerCredentials, Transport, TransportEvent, WireMsg};
 use crate::state::AppState;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use iroh::{EndpointId, SecretKey};
@@ -50,6 +50,13 @@ use zeroize::Zeroizing;
 /// snapshot at most every `CHECKPOINT_INTERVAL`, and also opportunistically
 /// when WAL entries exceed `CHECKPOINT_WAL_THRESHOLD`.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Bound how long a peer can hold up ordered auth recovery after delivery.
+const CREDENTIAL_PEER_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[cfg(test)]
+#[path = "auth_tests.rs"]
+mod auth_tests;
 
 /// Snapshot size that triggers a `p2p:warning` event on the
 /// receiving Tauri app (T-022). Design.md §14 calls 50 MB out as
@@ -79,7 +86,12 @@ impl SyncEngine {
     /// on-disk SyncStore under `app_data_dir()/sync/`, brings up the
     /// transport, and spawns all background tasks.
     pub async fn start(state: Arc<AppState>) -> Result<Arc<Self>> {
-        Self::start_with_bootstrap(state, Vec::new()).await
+        // EndpointIds are sufficient for iroh's discovery layer to find a
+        // direct route or the configured relay. Seeding every normal startup
+        // with the durable roster is what makes paired devices reconnect when
+        // they are no longer on the same LAN.
+        let peers = load_paired_endpoint_ids(&state.pool).await?;
+        Self::start_with_bootstrap(state, peers).await
     }
 
     /// Like [`start`] but seeds the gossip transport with peers to
@@ -165,6 +177,11 @@ impl SyncEngine {
         let mut rx = engine.transport.subscribe();
         info!("pair_via_payload: awaiting peer-connected for {seed_str}");
         let joined = tokio::time::timeout(PEER_JOIN_WAIT, async {
+            // Subscribe first, then check current state: NeighborUp may have
+            // arrived before this pairing waiter was installed.
+            if engine.transport.is_peer_connected(&seed_str) {
+                return true;
+            }
             loop {
                 match rx.recv().await {
                     Ok(TransportEvent::PeerConnected(id)) if id == seed_str => {
@@ -365,6 +382,17 @@ impl SyncEngine {
                             }
                             Ok(TransportEvent::PeerConnected(id)) => {
                                 info!("peer connected: {id}; requesting state resync");
+                                if let Some(pool) = pool.as_ref() {
+                                    if let Err(e) = crate::commands::sync_p2p::remember_paired_device(
+                                        pool,
+                                        &id,
+                                        None,
+                                    )
+                                    .await
+                                    {
+                                        warn!("failed to refresh paired peer {id}: {e}");
+                                    }
+                                }
                                 let vv = doc.doc().oplog_vv().encode();
                                 if let Err(e) = transport.broadcast(WireMsg::StateRequest { vv }).await {
                                     warn!("state request broadcast after peer connect {id} failed: {e}");
@@ -435,7 +463,7 @@ impl SyncEngine {
 
         info!("sync engine started: endpoint_id={endpoint_id}");
 
-        Ok(Arc::new(Self {
+        let engine = Arc::new(Self {
             doc,
             store,
             transport,
@@ -446,7 +474,16 @@ impl SyncEngine {
             _local_pump: local_pump,
             _inbox_task: inbox_task,
             _checkpoint_task: checkpoint_task,
-        }))
+        });
+
+        // Prior builds briefly stored Brightspace auth in the replicated
+        // preferences map. Delete those keys after the local-update pump is
+        // installed so the tombstone is persisted and propagated.
+        if engine.doc.remove_legacy_shared_credentials()? {
+            info!("removed legacy credentials from the replicated sync document");
+        }
+
+        Ok(engine)
     }
 
     pub fn endpoint_id(&self) -> EndpointId {
@@ -467,6 +504,109 @@ impl SyncEngine {
 
     pub fn bridge(&self) -> Arc<Bridge> {
         self.bridge.clone()
+    }
+
+    /// Ask paired devices for a live Brightspace session, one at a time in
+    /// durable roster order. A candidate is validated locally before it can
+    /// replace the current cookie. Invalid, unavailable, and timed-out peers
+    /// are skipped; the first confirmed-live response wins.
+    pub async fn recover_credentials_from_peers(
+        &self,
+        pool: &sqlx::SqlitePool,
+        client: &crate::client::BrightspaceClient,
+    ) -> Result<bool> {
+        let peers = load_paired_endpoint_ids(pool).await?;
+        if peers.is_empty() {
+            return Ok(false);
+        }
+
+        let our_id = self.endpoint_id.to_string();
+        let mut rx = self.transport.subscribe();
+
+        for peer in peers {
+            if self.cancel.is_cancelled() {
+                return Ok(false);
+            }
+            if peer == self.endpoint_id {
+                continue;
+            }
+            let peer_id = peer.to_string();
+            let mut id_bytes = [0_u8; 16];
+            rand::thread_rng().fill_bytes(&mut id_bytes);
+            let request_id = hex::encode(id_bytes);
+
+            info!("requesting replacement Brightspace credentials from peer {peer_id}");
+            if let Err(e) = self
+                .transport
+                .send_credentials(peer, WireMsg::CredentialRequest {
+                    request_id: request_id.clone(),
+                    to: peer_id.clone(),
+                })
+                .await
+            {
+                warn!("credential request to {peer_id} failed: {e}");
+                continue;
+            }
+
+            let response = tokio::time::timeout(CREDENTIAL_PEER_TIMEOUT, async {
+                loop {
+                    match rx.recv().await {
+                        Ok(TransportEvent::Message {
+                            from,
+                            payload:
+                                WireMsg::CredentialResponse {
+                                    request_id: response_id,
+                                    to,
+                                    credentials,
+                                },
+                        }) if from == peer_id && response_id == request_id && to == our_id => {
+                            return Some(credentials);
+                        }
+                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) => return None,
+                    }
+                }
+            })
+            .await;
+
+            let Ok(Some(Some(credentials))) = response else {
+                info!("peer {peer_id} had no usable credential response");
+                continue;
+            };
+
+            match client
+                .validate_session(&credentials.host, &credentials.cookie)
+                .await
+            {
+                SessionValidation::Valid => {
+                    if self.cancel.is_cancelled() {
+                        return Ok(false);
+                    }
+                    client
+                        .store_credentials(
+                            pool,
+                            &credentials.host,
+                            &credentials.cookie,
+                            credentials.uid.as_deref(),
+                            credentials.user_id.as_deref(),
+                        )
+                        .await?;
+                    crate::commands::sync_p2p::remember_paired_device(pool, &peer_id, None)
+                        .await?;
+                    info!("recovered Brightspace credentials from peer {peer_id}");
+                    let _ = client.emit_auth_recovered(&credentials.host);
+                    return Ok(true);
+                }
+                SessionValidation::Invalid => {
+                    warn!("peer {peer_id} returned an invalid Brightspace session");
+                }
+                SessionValidation::Inconclusive => {
+                    warn!("could not validate Brightspace session returned by peer {peer_id}");
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     /// Force a checkpoint immediately. Called on graceful shutdown.
@@ -500,6 +640,8 @@ async fn handle_inbound(
         WireMsg::Update { bytes } | WireMsg::Snapshot { bytes } => {
             if let Err(e) = doc.doc().import(&bytes) {
                 warn!("inbound import from {from} failed: {e}");
+            } else if let Err(e) = doc.remove_legacy_shared_credentials() {
+                warn!("removing legacy credentials after import from {from} failed: {e}");
             }
         }
         WireMsg::StateRequest { vv: their_vv_bytes } => {
@@ -526,6 +668,8 @@ async fn handle_inbound(
         WireMsg::StateResponse { bytes, .. } => {
             if let Err(e) = doc.doc().import(&bytes) {
                 warn!("state response import from {from} failed: {e}");
+            } else if let Err(e) = doc.remove_legacy_shared_credentials() {
+                warn!("removing legacy credentials after state response from {from} failed: {e}");
             }
         }
         WireMsg::PairingRequest { nonce } => {
@@ -574,27 +718,19 @@ async fn handle_inbound(
                     return;
                 }
             }
-            // One-shot credential bootstrap so the joining device (often
-            // a fresh iOS install with no way to drive Brightspace
-            // sign-in) can skip first-time login. Sent after the
-            // snapshot so the joiner already has its overlay data
-            // imported by the time the credentials land. No-op if the
-            // seed itself isn't authenticated, or if we lack a pool
-            // (test wiring).
-            if let Some(pool) = pool {
-                match fetch_bootstrap_credentials(pool).await {
-                    Ok(Some(creds)) => {
-                        info!("seed: broadcasting bootstrap credentials to {from}");
-                        if let Err(e) = transport.broadcast(creds).await {
-                            warn!("bootstrap credentials broadcast to {from} failed: {e}");
-                        } else {
-                            info!("seed: bootstrap credentials broadcast queued");
+            // Bootstrap only a confirmed-live in-memory session, privately to
+            // the joiner. Brightspace may have rotated it since the last sync.
+            if let (Some(client), Ok(peer)) = (client, from.parse()) {
+                if let Some(creds) = current_peer_credentials(client) {
+                    if client.validate_session(&creds.host, &creds.cookie).await == SessionValidation::Valid {
+                        let msg = WireMsg::BootstrapCredentials {
+                            host: creds.host, cookie: creds.cookie,
+                            uid: creds.uid, user_id: creds.user_id,
+                        };
+                        if let Err(e) = transport.send_credentials(peer, msg).await {
+                            warn!("private bootstrap to {from} failed: {e}");
                         }
                     }
-                    Ok(None) => {
-                        info!("seed: skipping credential bootstrap (not authenticated)");
-                    }
-                    Err(e) => warn!("read bootstrap credentials failed: {e}"),
                 }
             }
         }
@@ -657,6 +793,47 @@ async fn handle_inbound(
                 Err(e) => warn!("store_credentials from {from} failed: {e}"),
             }
         }
+        WireMsg::CredentialRequest { request_id, to } => {
+            // The transport verified both the remote endpoint identity and
+            // possession of the current group's secret before dispatching.
+            if to != transport.endpoint_id().to_string() {
+                return;
+            }
+
+            // Read the live client value rather than SQLite: Brightspace can
+            // rotate a session during an active sync, just before the normal
+            // end-of-sync persistence step runs.
+            let credentials = if let Some(client) = client {
+                match current_peer_credentials(client) {
+                    Some(credentials) => match client
+                        .validate_session(&credentials.host, &credentials.cookie)
+                        .await
+                    {
+                        SessionValidation::Valid => Some(credentials),
+                        SessionValidation::Invalid | SessionValidation::Inconclusive => None,
+                    },
+                    None => None,
+                }
+            } else {
+                None
+            };
+
+            let Ok(peer) = from.parse() else { return };
+            if let Err(e) = transport
+                .send_credentials(peer, WireMsg::CredentialResponse {
+                    request_id,
+                    to: from.to_string(),
+                    credentials,
+                })
+                .await
+            {
+                warn!("credential response to {from} failed: {e}");
+            }
+        }
+        // The requester has its own subscribed receiver so it can preserve
+        // peer ordering and match request IDs. The main inbox intentionally
+        // leaves responses alone.
+        WireMsg::CredentialResponse { .. } => {}
     }
 }
 
@@ -668,6 +845,8 @@ fn wire_kind(msg: &WireMsg) -> &'static str {
         WireMsg::StateResponse { .. } => "StateResponse",
         WireMsg::PairingRequest { .. } => "PairingRequest",
         WireMsg::BootstrapCredentials { .. } => "BootstrapCredentials",
+        WireMsg::CredentialRequest { .. } => "CredentialRequest",
+        WireMsg::CredentialResponse { .. } => "CredentialResponse",
     }
 }
 
@@ -675,9 +854,24 @@ fn wire_kind(msg: &WireMsg) -> &'static str {
 /// `user_preferences` for a `BootstrapCredentials` push. Returns
 /// `Ok(None)` if the seed isn't currently authenticated, so the seed
 /// can quietly skip the push for that joiner.
+#[cfg(test)]
 async fn fetch_bootstrap_credentials(
     pool: &sqlx::SqlitePool,
 ) -> Result<Option<WireMsg>> {
+    Ok(fetch_peer_credentials(pool)
+        .await?
+        .map(|credentials| WireMsg::BootstrapCredentials {
+            host: credentials.host,
+            cookie: credentials.cookie,
+            uid: credentials.uid,
+            user_id: credentials.user_id,
+        }))
+}
+
+#[cfg(test)]
+async fn fetch_peer_credentials(
+    pool: &sqlx::SqlitePool,
+) -> Result<Option<PeerCredentials>> {
     let row: Option<(
         Option<String>,
         Option<String>,
@@ -695,12 +889,49 @@ async fn fetch_bootstrap_credentials(
     if host.trim().is_empty() || cookie.trim().is_empty() {
         return Ok(None);
     }
-    Ok(Some(WireMsg::BootstrapCredentials {
+    Ok(Some(PeerCredentials {
         host,
         cookie,
         uid,
         user_id,
     }))
+}
+
+fn current_peer_credentials(
+    client: &Arc<crate::client::BrightspaceClient>,
+) -> Option<PeerCredentials> {
+    let host = client.host_clone()?;
+    let cookie = client.cookie_clone()?;
+    if host.trim().is_empty() || cookie.trim().is_empty() {
+        return None;
+    }
+    Some(PeerCredentials {
+        host,
+        cookie,
+        uid: client.uid_clone(),
+        user_id: client.user_id_clone(),
+    })
+}
+
+/// Load peers in the same order shown in Settings: most recently reachable
+/// first, then pairing order. Invalid legacy rows are skipped rather than
+/// preventing the rest of the roster from reconnecting.
+async fn load_paired_endpoint_ids(pool: &sqlx::SqlitePool) -> Result<Vec<EndpointId>> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM paired_devices ORDER BY last_seen_at DESC, created_at DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|id| match id.parse() {
+            Ok(peer) => Some(peer),
+            Err(e) => {
+                warn!("skipping invalid paired endpoint id {id}: {e}");
+                None
+            }
+        })
+        .collect())
 }
 
 /// Read the iroh node secret + shared sync_doc_secret, generating
@@ -1736,6 +1967,43 @@ mod tests {
                 }
                 other => panic!("unexpected wire kind: {other:?}"),
             }
+        }
+    }
+
+    mod paired_peer_order {
+        use super::super::load_paired_endpoint_ids;
+        use iroh::SecretKey;
+        use sqlx::sqlite::SqlitePoolOptions;
+
+        #[tokio::test]
+        async fn loads_most_recent_peer_first_and_skips_bad_legacy_ids() {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+            let older = SecretKey::generate().public();
+            let newer = SecretKey::generate().public();
+            for (id, seen) in [
+                (older.to_string(), "2026-01-01 00:00:00"),
+                ("not-an-endpoint-id".to_string(), "2026-01-02 00:00:00"),
+                (newer.to_string(), "2026-01-03 00:00:00"),
+            ] {
+                sqlx::query(
+                    "INSERT INTO paired_devices (id, public_key, last_seen_at) VALUES (?, ?, ?)",
+                )
+                .bind(&id)
+                .bind(&id)
+                .bind(seen)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+
+            let peers = load_paired_endpoint_ids(&pool).await.unwrap();
+            assert_eq!(peers, vec![newer, older]);
         }
     }
 }

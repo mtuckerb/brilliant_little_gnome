@@ -41,6 +41,7 @@ import type {
 export const api = {
   // Auth & status
   authStatus: () => invoke<AuthStatus>("auth_status"),
+  recoverPeerAuth: () => invoke<AuthStatus>("recover_peer_auth"),
   setupCookies: (host: string, cookieString: string) =>
     invoke<AuthStatus>("setup_cookies", { host, cookieString }),
   openLoginWindow: (host: string) =>

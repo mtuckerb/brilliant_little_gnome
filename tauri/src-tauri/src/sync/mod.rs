@@ -40,9 +40,9 @@ const COURSE_CONCURRENCY: usize = 3;
 /// `force` bypasses the per-course freshness probe; the upstream HTTP cache in
 /// `client::do_get` is also told to refresh when `force == true`.
 pub async fn sync_all(state: Arc<AppState>, force: bool) -> Result<()> {
-    if !state.client.is_configured() {
-        return Err(crate::error::AppError::Unauthenticated);
-    }
+    // This live check also performs ordered peer credential recovery after a
+    // definitive rejection, before any of the fan-out work begins.
+    state.client.preflight_auth().await?;
 
     set_status(&state, SyncState::Syncing, "starting", 0.0);
     state.events.sync_progress("starting", 0.0);
@@ -106,8 +106,8 @@ pub async fn sync_all(state: Arc<AppState>, force: bool) -> Result<()> {
         tracing::warn!("notifications sync failed: {}", e);
     }
 
-    // Re-persist + re-share the session cookie if Brightspace rotated it during
-    // this sync, so paired devices stay authenticated without a manual re-login.
+    // Re-persist the session cookie if Brightspace rotated it during this sync,
+    // so a future peer recovery request receives the freshest value.
     state.refresh_shared_credentials().await;
 
     // Done.
@@ -117,6 +117,7 @@ pub async fn sync_all(state: Arc<AppState>, force: bool) -> Result<()> {
 }
 
 pub async fn sync_course(state: Arc<AppState>, course_id: &str) -> Result<()> {
+    state.client.preflight_auth().await?;
     set_status(&state, SyncState::Syncing, &format!("course {}", course_id), 0.0);
     state.events.sync_progress(&format!("course:{}", course_id), 0.0);
 

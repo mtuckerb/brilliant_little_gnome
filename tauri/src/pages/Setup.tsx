@@ -3,6 +3,7 @@ import { api } from "../api";
 import { useReauthenticate } from "../hooks/useReauthenticate";
 import type { AuthStatus } from "../types";
 import { useIsMobile } from "../hooks/useIsMobile";
+import SyncPanel from "../components/SyncPanel";
 
 interface Props {
   onComplete: (auth: AuthStatus) => void;
@@ -16,6 +17,7 @@ export default function Setup({ onComplete, initialHost, reauth }: Props) {
   const [host, setHost] = useState(initialHost || "courses.maine.edu");
   const [cookies, setCookies] = useState("");
   const [busy, setBusy] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const browserLogin = useReauthenticate(host, onComplete);
   const isMobile = useIsMobile();
@@ -43,6 +45,20 @@ export default function Setup({ onComplete, initialHost, reauth }: Props) {
     await browserLogin.reauthenticate();
   }
 
+  async function usePairedDevice() {
+    setRecovering(true);
+    setErr(null);
+    try {
+      const auth = await api.recoverPeerAuth();
+      onComplete(auth);
+      api.syncAll(false).catch(() => {});
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setRecovering(false);
+    }
+  }
+
   return (
     <div className="main-content container" style={{ maxWidth: 640 }}>
       <h1 className="title">{reauth ? "Re-authenticate" : "Welcome to Brilliant"}</h1>
@@ -51,6 +67,14 @@ export default function Setup({ onComplete, initialHost, reauth }: Props) {
           ? "Your Brightspace session expired. Refresh it below."
           : "Connect to your Brightspace account."}
       </p>
+      <div className="box">
+        <h2 className="title is-5">Sign in from a paired device</h2>
+        <p className="mb-3">Open Brilliant on any signed-in device in your sync group. Your devices can share a verified session over Wi-Fi or the internet.</p>
+        <button type="button" className={`button is-link ${recovering ? "is-loading" : ""}`} disabled={recovering || busy} onClick={usePairedDevice}>
+          Use paired device
+        </button>
+      </div>
+      <SyncPanel />
       {isMobile && (
         <div className="notification is-info is-light">
           <p className="mb-2"><strong>On mobile?</strong> The easiest path is to sign in once on a desktop or laptop and then pair this phone with it.</p>
@@ -59,7 +83,7 @@ export default function Setup({ onComplete, initialHost, reauth }: Props) {
             <li>In Settings → Device pairing on the desktop, generate a QR code.</li>
             <li>Scan it here — your session syncs automatically.</li>
           </ol>
-          <p className="is-size-7 mt-2 has-text-grey">You can also paste cookies below if you've grabbed them from a browser, but native in-app sign-in for mobile is still on the punch list.</p>
+          <p className="is-size-7 mt-2 has-text-grey">Use the device pairing controls above to scan a QR code or paste a pairing code. You can also paste session cookies below.</p>
         </div>
       )}
       <form onSubmit={submit} className="box">

@@ -64,7 +64,10 @@ out-of-sync between iPad and laptop, is the actual user pain point.
 These are device-specific by definition. Including them would be a security
 hole or a footgun.
 
-- `user_preferences.brightspace_cookie` — per-device session
+- `user_preferences.brightspace_cookie` — stored per-device and excluded from
+  the CRDT; a device with a definitively invalid session may request a
+  confirmed-live replacement directly from paired peers, sequentially in
+  `last_seen_at` order
 - `user_preferences.jwt_secret`, `api_key` — per-device REST API auth
 - `user_preferences.api_enabled`, `api_listen_all`, `api_port` — per-device
   network config
@@ -209,14 +212,37 @@ takes care of ordering.
 - The "sync group" is one gossip topic. Topic ID is derived deterministically
   from the shared `sync_doc_secret` (§6) so only paired devices land on the
   same topic.
-- Devices subscribe to the topic and broadcast their `NodeId` periodically;
-  iroh handles dialing.
+- Devices persist paired `NodeId`s and pass the ordered roster to the gossip
+  subscription on every startup. Iroh resolves each endpoint through its
+  discovery service, hole-punches when possible, and falls back to an
+  end-to-end-encrypted relay across networks without user configuration.
 - Messages are framed as `(version, kind, payload)`:
   - `kind = 0`: Loro incremental update (`doc.export(ExportMode::updates)`)
   - `kind = 1`: Loro snapshot (sent on first connect, periodically, and on
     request)
   - `kind = 2`: Sync state vector exchange (so a freshly-paired device can
     request the parts it's missing)
+  - credential request/response: targeted to one paired `NodeId`; a responder
+    validates its current cookie before replying, and the requester validates
+    again before persistence. An unavailable/invalid response advances to the
+    next saved peer. Credentials never enter a Loro snapshot or WAL.
+
+Credential messages (including pairing bootstrap) use the separate
+`brilliant/credentials/1` QUIC ALPN, not gossip broadcasts. Iroh authenticates
+the remote endpoint; an HMAC keyed from the current sync secret binds each
+message to both endpoint IDs and its payload. This permits any member of the
+current paired group to respond, including peers learned through the mesh,
+while rejecting other groups and rotated-out devices. Frames are limited to
+64 KiB and connection attempts time out. Gossip credential frames are ignored.
+Both participants must run a build supporting this protocol.
+
+Recovery dials saved endpoints directly without waiting for gossip neighbors.
+Native discovery uses both DNS and HTTPS lookup, with direct connections when
+available and encrypted relay connections otherwise. Missing sessions recover
+on launch, after pairing, on an explicit sign-in retry, and every 30 seconds
+while missing/degraded and the app is running. Expired sessions also recover
+inside the sync/request that detected expiry. The UI polls auth status to
+reconcile events missed during mobile suspension.
 
 ### Mobile transport notes
 

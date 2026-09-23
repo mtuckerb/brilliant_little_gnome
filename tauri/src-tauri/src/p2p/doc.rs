@@ -158,6 +158,25 @@ impl SyncDoc {
 
     // ---- Prefs ------------------------------------------------------------
 
+    /// Remove credential fields written by older builds. Auth recovery now
+    /// uses targeted transport messages, so secrets must not remain in CRDT
+    /// snapshots or WALs. The delete is itself a CRDT operation and therefore
+    /// propagates to upgraded peers.
+    pub fn remove_legacy_shared_credentials(&self) -> Result<bool> {
+        let prefs = self.prefs();
+        let mut changed = false;
+        for key in ["brightspace_cookie", "brightspace_host"] {
+            if prefs.get(key).is_some() {
+                prefs.delete(key)?;
+                changed = true;
+            }
+        }
+        if changed {
+            self.commit();
+        }
+        Ok(changed)
+    }
+
     pub fn set_pref_display_name(&self, value: &str) -> Result<()> {
         let prefs = self.prefs();
         let text = prefs.get_or_create_container("display_name", LoroText::new())?;
@@ -178,26 +197,6 @@ impl SyncDoc {
 
     pub fn get_pref_time_zone(&self) -> Option<String> {
         get_string(&self.prefs(), "time_zone")
-    }
-
-    pub fn set_pref_brightspace_cookie(&self, value: &str) -> Result<()> {
-        self.prefs().insert("brightspace_cookie", value)?;
-        self.commit();
-        Ok(())
-    }
-
-    pub fn get_pref_brightspace_cookie(&self) -> Option<String> {
-        get_string(&self.prefs(), "brightspace_cookie")
-    }
-
-    pub fn set_pref_brightspace_host(&self, value: &str) -> Result<()> {
-        self.prefs().insert("brightspace_host", value)?;
-        self.commit();
-        Ok(())
-    }
-
-    pub fn get_pref_brightspace_host(&self) -> Option<String> {
-        get_string(&self.prefs(), "brightspace_host")
     }
 
     pub fn set_pref_historic_gpa(&self, value: f64) -> Result<()> {
@@ -849,6 +848,20 @@ mod tests {
         let mut reads = d.iter_notifications_read();
         reads.sort();
         assert_eq!(reads, vec![("ext-1".into(), true), ("ext-2".into(), false)]);
+    }
+
+    #[test]
+    fn removes_only_legacy_replicated_credentials() {
+        let d = SyncDoc::new();
+        d.prefs().insert("brightspace_cookie", "secret-cookie").unwrap();
+        d.prefs().insert("brightspace_host", "courses.example.edu").unwrap();
+        d.set_pref_time_zone("America/New_York").unwrap();
+
+        assert!(d.remove_legacy_shared_credentials().unwrap());
+        assert!(d.prefs().get("brightspace_cookie").is_none());
+        assert!(d.prefs().get("brightspace_host").is_none());
+        assert_eq!(d.get_pref_time_zone().as_deref(), Some("America/New_York"));
+        assert!(!d.remove_legacy_shared_credentials().unwrap());
     }
 
     #[test]

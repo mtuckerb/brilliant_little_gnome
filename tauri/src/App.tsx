@@ -93,6 +93,17 @@ function AppInner() {
       api.syncAll(false).catch(() => {});
     });
 
+    // Peer recovery happens inside the request/sync that found the expired
+    // cookie, so only refresh the indicator here; the in-flight work continues
+    // with the replacement credentials.
+    const unlistenAuthRecovered = listen<string>("auth-recovered", async () => {
+      try {
+        setAuth(await api.authStatus());
+      } catch {
+        // ignore — the regular status refresh will catch up
+      }
+    });
+
     // Desktop OTA: the Rust side checks for updates on launch and emits this.
     const unlistenUpdate = listen<{ version?: string }>("update://available", (e) => {
       toast.show(
@@ -104,12 +115,16 @@ function AppInner() {
 
     const interval = setInterval(() => {
       api.syncStatus().then(setSync).catch(() => {});
+      // Native recovery can finish while mobile JS is suspended or before
+      // event listeners attach. Reconcile the persisted auth state on resume.
+      api.authStatus().then(setAuth).catch(() => {});
     }, 4000);
 
     return () => {
       clearInterval(interval);
       unlistenP.then((fn) => fn()).catch(() => {});
       unlistenAuthCaptured.then((fn) => fn()).catch(() => {});
+      unlistenAuthRecovered.then((fn) => fn()).catch(() => {});
       unlistenUpdate.then((fn) => fn()).catch(() => {});
     };
   }, []);

@@ -4,6 +4,22 @@ This note documents focused manual validation for the P2P `WireMsg::BootstrapCre
 
 ## Scope
 
+Automated coverage for ongoing recovery lives in
+`tauri/src-tauri/src/p2p/auth_tests.rs`. Run `cargo test --features p2p peer_auth_`
+from `tauri/src-tauri`. It exercises real private credential connections and
+SQLite adoption using synthetic cookies and a local HTTP stub. One test uses
+direct IP connections with relays disabled; the other disables all IP
+transports and uses a local test relay. Neither test needs a gossip neighbor.
+Both cover missing and expired sessions, skipping an invalid donor, selecting
+the donor's latest in-memory cookie, recipient-side invalid/inconclusive
+validation, and rejection of a different sync group. Credential broadcasts
+are rejected. The tests do not contact a real Brightspace account or a public
+relay.
+
+Bootstrap credentials now use the same private, group-authenticated transport.
+Both apps must be updated; credential messages from old gossip-based builds
+are ignored.
+
 The reviewed path is `tauri/src-tauri/src/p2p/engine.rs` handling of `WireMsg::BootstrapCredentials { host, cookie, uid, user_id }`.
 
 Required invariant:

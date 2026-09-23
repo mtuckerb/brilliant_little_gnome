@@ -19,6 +19,18 @@ pub async fn auth_status(state: AppStateArg<'_>) -> Result<AuthStatus> {
     })
 }
 
+/// Explicit retry from setup/reauth, also available before a local cookie exists.
+#[tauri::command]
+pub async fn recover_peer_auth(state: AppStateArg<'_>) -> Result<AuthStatus> {
+    #[cfg(feature = "p2p")]
+    if state.recover_credentials_from_peers("").await {
+        return auth_status(state).await;
+    }
+    Err(AppError::Other(
+        "No paired device supplied a working Brightspace session. Open Brilliant on a signed-in paired device and try again.".into(),
+    ))
+}
+
 #[tauri::command]
 pub async fn setup_cookies(
     state: AppStateArg<'_>,
@@ -31,11 +43,10 @@ pub async fn setup_cookies(
         .client
         .store_credentials(&state.pool, &host, &cookie_string, uid.as_deref(), user_id.as_deref())
         .await?;
-    // Pre-share validation gates the device sync: the key is stored locally
-    // above, but is only shared to peers if it validates as live. A failure
-    // here surfaces an actionable, key-free error to the caller.
+    // Validate now so a bad capture never becomes eligible to answer a paired
+    // device's recovery request.
     #[cfg(feature = "p2p")]
-    state.mirror_credentials_to_loro().await?;
+    state.validate_credentials_for_peer_recovery().await?;
     Ok(AuthStatus {
         authenticated: state.client.is_configured(),
         degraded: state.client.is_degraded(),
@@ -154,12 +165,10 @@ pub async fn open_login_window(app: AppHandle, host: String) -> Result<()> {
                         let cookie_str = all.join("; ");
                         let st = app_for_task.state::<std::sync::Arc<crate::state::AppState>>();
                         let _ = st.client.store_credentials(&st.pool, &host_for_task, &cookie_str, None, None).await;
-                        // Validate-before-share also gates this capture path,
-                        // not just the primary command path. If the freshly
-                        // captured key fails validation it is not shared; emit
-                        // an actionable, key-free event so the UI can react.
+                        // Validate this capture before it becomes eligible to
+                        // answer a paired device's recovery request.
                         #[cfg(feature = "p2p")]
-                        if let Err(e) = st.mirror_credentials_to_loro().await {
+                        if let Err(e) = st.validate_credentials_for_peer_recovery().await {
                             let _ = app_for_task.emit("auth-share-blocked", e.to_string());
                         }
                         let _ = app_for_task.emit("auth-captured", &host_for_task);
