@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { type Course } from "../types";
 import SyllabusPanel from "../components/SyllabusPanel";
+import ClassListPanel from "../components/ClassListPanel";
 import SyntheticTasksPanel from "../components/SyntheticTasksPanel";
 import { triggerDownload } from "../lib/download";
 import HeaderBand from "../components/HeaderBand";
@@ -224,6 +225,8 @@ export default function CourseDetail() {
       </div>
 
       <SyllabusPanel courseId={course.org_unit_id} />
+
+      <ClassListPanel key={course.org_unit_id} courseId={course.org_unit_id} />
 
       <SyntheticTasksPanel courseId={course.org_unit_id} />
 

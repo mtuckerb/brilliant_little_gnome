@@ -8,6 +8,10 @@ export function courseHomeUrl(host: string, courseId: string): string {
   return `https://${host}/d2l/home/${courseId}`;
 }
 
+export function classlistUrl(host: string, courseId: string): string {
+  return `https://${host}/d2l/lms/classlist/classlist.d2l?ou=${encodeURIComponent(courseId)}`;
+}
+
 export function moduleUrl(host: string, courseId: string, moduleId: string): string {
   // The "Content/Home" route accepts an `identifier` query that scrolls /
   // selects the module in the LMS sidebar.

@@ -20,6 +20,22 @@ export interface Course {
   last_accessed_at: string | null;
 }
 
+export interface CourseRosterPerson {
+  brightspace_user_id: string;
+  display_name: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  role_name: string | null;
+  pronouns: string | null;
+  is_current_user: boolean;
+}
+
+export interface CourseRoster {
+  people: CourseRosterPerson[];
+  synced_at: string | null;
+}
+
 export function displayCourseName(course: Course): string {
   return course.custom_name || course.name;
 }

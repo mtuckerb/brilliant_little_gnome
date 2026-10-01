@@ -54,7 +54,7 @@ pub struct DownloadBytes {
     pub saved_path: Option<String>,
 }
 
-fn emit_saved(app: &AppHandle, payload: &DownloadBytes) {
+pub(super) fn emit_saved(app: &AppHandle, payload: &DownloadBytes) {
     // Best-effort: never let a missed listener break a real download.
     if let Err(e) = app.emit(DOWNLOAD_EVENT, payload) {
         tracing::warn!("emit {} failed: {}", DOWNLOAD_EVENT, e);
