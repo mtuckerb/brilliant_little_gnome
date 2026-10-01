@@ -350,7 +350,9 @@ impl BrightspaceClient {
     }
 
     fn is_resource_scoped_auth_failure(path: &str, status: StatusCode) -> bool {
-        status == StatusCode::FORBIDDEN && is_discussion_resource_path(path)
+        status == StatusCode::FORBIDDEN
+            && (is_discussion_resource_path(path)
+                || (path.starts_with("/d2l/api/le/") && path.contains("/classlist/")))
     }
 
     /// GET a JSON path with cache-aware semantics. Returns `Value` so callers can
@@ -658,6 +660,15 @@ impl BrightspaceClient {
             return Ok(data);
         }
         Ok(serde_json::json!({ "Modules": [] }))
+    }
+
+    pub async fn get_classlist(&self, course_id: &str) -> Result<Vec<Value>> {
+        let path = format!("/d2l/api/le/{}/{}/classlist/", API_VERSION, course_id);
+        // The roster table is the durable offline copy. Do not use do_get's
+        // stale HTTP-cache fallback here: a failed refresh must not be reported
+        // as a fresh snapshot with a new updated_at timestamp.
+        let data = self.fetch(&path).await?;
+        Ok(ensure_array(&data))
     }
 
     pub async fn get_assignments(&self, pool: &SqlitePool, course_id: &str, force_refresh: bool) -> Result<Vec<Value>> {
@@ -1051,5 +1062,12 @@ mod tests {
             "/d2l/api/le/1.40/447090/discussions/forums/375900/topics/",
             StatusCode::UNAUTHORIZED,
         ));
+    }
+
+    #[test]
+    fn roster_permissions_do_not_expire_the_session() {
+        let path = "/d2l/api/le/1.40/447090/classlist/";
+        assert!(BrightspaceClient::is_resource_scoped_auth_failure(path, StatusCode::FORBIDDEN));
+        assert!(!BrightspaceClient::is_resource_scoped_auth_failure(path, StatusCode::UNAUTHORIZED));
     }
 }

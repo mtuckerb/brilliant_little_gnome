@@ -339,6 +339,7 @@ pub async fn delete_course(state: AppStateArg<'_>, id: String) -> Result<()> {
     // declared on every table here, but we want them gone regardless.
     sqlx::query("DELETE FROM assignments WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM grades WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM course_roster WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM content_modules WHERE course_id = ?").bind(&id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM content_items WHERE module_id IN (SELECT brightspace_id FROM content_modules WHERE course_id = ?)")
         .bind(&id).execute(&mut *tx).await?;

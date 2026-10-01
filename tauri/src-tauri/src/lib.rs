@@ -223,6 +223,9 @@ pub fn run() {
             commands::courses::delete_course,
             commands::courses::refresh_course,
             commands::courses::fetch_course_banner,
+            commands::roster::get_course_roster,
+            commands::roster::refresh_course_roster,
+            commands::roster::download_course_roster,
             commands::import_old::import_from_old_brilliant,
             // Grades
             commands::grades::grades_summary,

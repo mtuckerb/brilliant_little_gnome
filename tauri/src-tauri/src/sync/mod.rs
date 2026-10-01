@@ -11,6 +11,7 @@ pub mod discussions;
 pub mod grades;
 pub mod notifications;
 pub mod psy220;
+pub mod roster;
 
 use crate::error::Result;
 use crate::models::SyncState;
@@ -130,22 +131,24 @@ pub async fn sync_course(state: Arc<AppState>, course_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run the four independent data-type syncs for a course in parallel, then the
+/// Run the independent data-type syncs for a course in parallel, then the
 /// PSY-220 scraper. Errors are logged per-service so a failure in one (e.g.
 /// discussions disabled by the instructor) doesn't take the others down.
 async fn sync_course_data(state: &AppState, course_id: &str) {
-    let (c, a, g, d, n) = tokio::join!(
+    let (c, a, g, d, n, r) = tokio::join!(
         content::sync(state, course_id),
         assignments::sync(state, course_id),
         grades::sync(state, course_id),
         discussions::sync(state, course_id),
         course_news::sync(state, course_id),
+        roster::sync(state, course_id),
     );
     if let Err(e) = c { tracing::warn!("[{}] content sync failed: {}", course_id, e); }
     if let Err(e) = a { tracing::warn!("[{}] assignment sync failed: {}", course_id, e); }
     if let Err(e) = g { tracing::warn!("[{}] grade sync failed: {}", course_id, e); }
     if let Err(e) = d { tracing::warn!("[{}] discussion sync failed: {}", course_id, e); }
     if let Err(e) = n { tracing::warn!("[{}] news sync failed: {}", course_id, e); }
+    if let Err(e) = r { tracing::warn!("[{}] class list sync failed: {}", course_id, e); }
 
     // PSY-220 scraper: only runs for course 446900, no-op otherwise. Kept
     // sequential because it scrapes a rendered HTML page that depends on the

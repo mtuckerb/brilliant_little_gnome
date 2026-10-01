@@ -2,6 +2,7 @@ pub mod auth;
 pub mod diagnostics;
 pub mod prefs;
 pub mod courses;
+pub mod roster;
 pub mod grades;
 pub mod assignments;
 pub mod notifications;
