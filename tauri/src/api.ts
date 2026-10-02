@@ -8,6 +8,13 @@ export interface ZoteroResult {
   collection_key: string | null;
   /** Items already in Zotero with the same file — nothing needed doing. */
   up_to_date: number;
+  /**
+   * Modules whose items could not be cross-linked under "Related". The
+   * documents still arrived, so this is not a failed send — but it is not
+   * a clean one either, and reporting it as clean hid a server rejecting
+   * every relation write.
+   */
+  relation_failures: string[];
 }
 
 export interface UpdateInfo {
