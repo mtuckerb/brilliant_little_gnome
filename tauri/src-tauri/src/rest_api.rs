@@ -505,7 +505,7 @@ async fn list_courses(
 ) -> std::result::Result<Json<Value>, Response> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
-            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'custom_room', custom_room, 'custom_meeting_days', custom_meeting_days, 'custom_meeting_time', custom_meeting_time, 'semester', semester,
+            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'custom_room', custom_room, 'custom_meeting_days', custom_meeting_days, 'custom_meeting_time', custom_meeting_time, 'syllabus_meeting_info', syllabus_meeting_info, 'semester', semester,
             'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url,
             'units', units, 'target_grade', target_grade, 'status', status,
             'sort_order', sort_order, 'last_accessed_at', last_accessed_at
@@ -549,7 +549,7 @@ async fn get_course(
 ) -> std::result::Result<Json<Value>, Response> {
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT json_object(
-            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'custom_room', custom_room, 'custom_meeting_days', custom_meeting_days, 'custom_meeting_time', custom_meeting_time, 'semester', semester,
+            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'custom_room', custom_room, 'custom_meeting_days', custom_meeting_days, 'custom_meeting_time', custom_meeting_time, 'syllabus_meeting_info', syllabus_meeting_info, 'semester', semester,
             'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url,
             'units', units, 'target_grade', target_grade, 'status', status,
             'sort_order', sort_order, 'last_accessed_at', last_accessed_at
@@ -976,7 +976,7 @@ async fn dashboard_summary(
 ) -> std::result::Result<Json<Value>, Response> {
     let courses: Vec<(String,)> = sqlx::query_as(
         "SELECT json_object(
-            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'custom_room', custom_room, 'custom_meeting_days', custom_meeting_days, 'custom_meeting_time', custom_meeting_time, 'semester', semester,
+            'org_unit_id', org_unit_id, 'name', COALESCE(custom_name, name), 'custom_name', custom_name, 'code', code, 'custom_room', custom_room, 'custom_meeting_days', custom_meeting_days, 'custom_meeting_time', custom_meeting_time, 'syllabus_meeting_info', syllabus_meeting_info, 'semester', semester,
             'is_pinned', is_pinned, 'custom_color', custom_color, 'banner_url', banner_url
          ) FROM courses ORDER BY is_pinned DESC, sort_order ASC, last_accessed_at DESC LIMIT 100",
     )

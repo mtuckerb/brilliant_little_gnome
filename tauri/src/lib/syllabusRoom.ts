@@ -92,13 +92,15 @@ export interface CourseMeetingInfo {
   daysSource?: string;
   timeSource?: string;
   error?: string;
+  readable?: boolean;
 }
 
 async function readCourseMeetingInfo(courseId: string, roomOnly = false): Promise<CourseMeetingInfo> {
   const result: CourseMeetingInfo = {};
   let failed = false;
   const read = (text: string | null, source: string) => {
-    if (!text) return;
+    if (!text?.trim()) return;
+    result.readable = true;
     const room = extractSyllabusRoom(text);
     if (!result.room && room) { result.room = room; result.roomSource = source; }
     if (!roomOnly) {
@@ -145,4 +147,17 @@ export async function findCourseRoom(courseId: string): Promise<SyllabusRoom | n
   if (info.room) return { room: info.room, source: info.roomSource! };
   if (info.error) throw new Error(info.error);
   return null;
+}
+
+export function parseCourseMeetingInfo(raw: string | null | undefined): CourseMeetingInfo | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const info: CourseMeetingInfo = {};
+    for (const key of ["room", "roomSource", "days", "daysSource", "time", "timeSource"] as const) {
+      if (typeof value[key] === "string" && value[key].trim()) info[key] = value[key];
+    }
+    return info;
+  } catch { return null; }
 }

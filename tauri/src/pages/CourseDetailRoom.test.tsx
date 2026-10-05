@@ -4,14 +4,14 @@ import { createRoot } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import CourseDetail from "./CourseDetail";
-import { api } from "../api";
-import { findCourseMeetingInfo } from "../lib/syllabusRoom";
+import { api, onCourseUpdated } from "../api";
+import { findCourseMeetingInfo, parseCourseMeetingInfo } from "../lib/syllabusRoom";
 import type { Course } from "../types";
 
 vi.mock("../api", () => ({ api: {
-  getCourse: vi.fn(), getPrefs: vi.fn(), courseCacheStatus: vi.fn(), updateCourseRoom: vi.fn(), updateCourseSchedule: vi.fn(),
-} }));
-vi.mock("../lib/syllabusRoom", () => ({ findCourseMeetingInfo: vi.fn() }));
+  getCourse: vi.fn(), getPrefs: vi.fn(), courseCacheStatus: vi.fn(), updateCourseRoom: vi.fn(), updateCourseSchedule: vi.fn(), cacheCourseMeetingInfo: vi.fn(),
+}, onCourseUpdated: vi.fn() }));
+vi.mock("../lib/syllabusRoom", () => ({ findCourseMeetingInfo: vi.fn(), parseCourseMeetingInfo: vi.fn() }));
 vi.mock("../components/ToastProvider", () => ({ useToast: () => ({ show: vi.fn() }) }));
 vi.mock("../components/SyllabusPanel", () => ({ default: () => null }));
 vi.mock("../components/ClassListPanel", () => ({ default: () => null }));
@@ -28,6 +28,9 @@ describe("room overrides on the course overview", () => {
     vi.mocked(api.getPrefs).mockResolvedValue({ cache_content: false } as Awaited<ReturnType<typeof api.getPrefs>>);
     vi.mocked(api.courseCacheStatus).mockResolvedValue({ count: 0, bytes: 0, last_cached_at: null });
     vi.mocked(api.updateCourseRoom).mockResolvedValue();
+    vi.mocked(api.cacheCourseMeetingInfo).mockImplementation(async (_id, info) => info);
+    vi.mocked(onCourseUpdated).mockResolvedValue(() => {});
+    vi.mocked(parseCourseMeetingInfo).mockImplementation((raw) => raw ? JSON.parse(raw) : null);
     vi.mocked(api.updateCourseSchedule).mockResolvedValue();
     vi.mocked(findCourseMeetingInfo).mockResolvedValue({ room: "214", roomSource: "Syllabus" });
     const container = document.createElement("div");

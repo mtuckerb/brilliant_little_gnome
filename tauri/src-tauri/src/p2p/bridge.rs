@@ -305,6 +305,50 @@ impl Bridge {
         Ok(())
     }
 
+    pub async fn seed_course_meeting_details(&self) -> Result<()> {
+        let Some(pool) = self.pool.as_ref() else { return Ok(()) };
+        let ids: Vec<String> = sqlx::query_scalar("SELECT org_unit_id FROM courses WHERE meeting_sync_pending != 0 OR custom_room IS NOT NULL OR custom_meeting_days IS NOT NULL OR custom_meeting_time IS NOT NULL OR syllabus_meeting_info IS NOT NULL")
+            .fetch_all(pool).await?;
+        for id in ids { self.publish_course_meeting_details(&id).await?; }
+        // The persisted document may contain a peer change whose SQLite
+        // mirror was interrupted by the previous shutdown.
+        for (id, overlay) in self.doc.iter_course_overlays() {
+            if !overlay.custom_room_set && !overlay.custom_meeting_days_set && !overlay.custom_meeting_time_set && !overlay.syllabus_meeting_info_set { continue; }
+            let rows = sqlx::query("UPDATE courses SET custom_room = CASE WHEN ? AND (meeting_sync_pending & 1) = 0 THEN ? ELSE custom_room END, custom_meeting_days = CASE WHEN ? AND (meeting_sync_pending & 2) = 0 THEN ? ELSE custom_meeting_days END, custom_meeting_time = CASE WHEN ? AND (meeting_sync_pending & 4) = 0 THEN ? ELSE custom_meeting_time END, syllabus_meeting_info = CASE WHEN ? AND (meeting_sync_pending & 8) = 0 THEN ? ELSE syllabus_meeting_info END WHERE org_unit_id = ?")
+                .bind(overlay.custom_room_set).bind(overlay.custom_room.as_deref())
+                .bind(overlay.custom_meeting_days_set).bind(overlay.custom_meeting_days.as_deref())
+                .bind(overlay.custom_meeting_time_set).bind(overlay.custom_meeting_time.as_deref())
+                .bind(overlay.syllabus_meeting_info_set).bind(overlay.syllabus_meeting_info.as_deref())
+                .bind(&id).execute(pool).await?.rows_affected();
+            if rows == 0 { defer_overlay(pool, OverlayKind::Course, &id, &overlay).await?; }
+            if let Some(events) = self.events.as_ref() { events.course_updated(&id); }
+        }
+        Ok(())
+    }
+
+    pub async fn publish_course_meeting_details(&self, id: &str) -> Result<()> {
+        let Some(pool) = self.pool.as_ref() else { return Ok(()) };
+        let row: Option<(Option<String>, Option<String>, Option<String>, Option<String>, i64)> =
+            sqlx::query_as("SELECT custom_room, custom_meeting_days, custom_meeting_time, syllabus_meeting_info, meeting_sync_pending FROM courses WHERE org_unit_id = ?")
+                .bind(id).fetch_optional(pool).await?;
+        let Some((room, days, time, info, pending)) = row else { return Ok(()) };
+        let overlay = self.doc.get_course_overlay(id).unwrap_or_default();
+        for (bit, present, column, value, field) in [
+            (1, overlay.custom_room_set, "custom_room", room.clone(), CourseField::CustomRoom(room)),
+            (2, overlay.custom_meeting_days_set, "custom_meeting_days", days.clone(), CourseField::CustomMeetingDays(days)),
+            (4, overlay.custom_meeting_time_set, "custom_meeting_time", time.clone(), CourseField::CustomMeetingTime(time)),
+            (8, overlay.syllabus_meeting_info_set, "syllabus_meeting_info", info.clone(), CourseField::SyllabusMeetingInfo(info)),
+        ] {
+            if pending & bit != 0 || (!present && value.is_some()) {
+                self.apply_local(LocalChange::Course { id: id.into(), field }).await?;
+                // A newer local write of this field must remain pending.
+                let query = format!("UPDATE courses SET meeting_sync_pending = meeting_sync_pending & ? WHERE org_unit_id = ? AND {column} IS ?");
+                sqlx::query(&query).bind(!bit).bind(id).bind(value).execute(pool).await?;
+            }
+        }
+        Ok(())
+    }
+
     fn apply_pref(&self, field: PrefField) -> Result<()> {
         match field {
             PrefField::DisplayName(v) => self.doc.set_pref_display_name(&v)?,
@@ -707,9 +751,10 @@ async fn write_course_to_sqlite(
            custom_color    = ?, \
            custom_name     = ?, \
            custom_code     = ?, \
-           custom_room     = CASE WHEN ? THEN ? ELSE custom_room END, \
-           custom_meeting_days = CASE WHEN ? THEN ? ELSE custom_meeting_days END, \
-           custom_meeting_time = CASE WHEN ? THEN ? ELSE custom_meeting_time END, \
+           custom_room     = CASE WHEN ? AND (meeting_sync_pending & 1) = 0 THEN ? ELSE custom_room END, \
+           custom_meeting_days = CASE WHEN ? AND (meeting_sync_pending & 2) = 0 THEN ? ELSE custom_meeting_days END, \
+           custom_meeting_time = CASE WHEN ? AND (meeting_sync_pending & 4) = 0 THEN ? ELSE custom_meeting_time END, \
+           syllabus_meeting_info = CASE WHEN ? AND (meeting_sync_pending & 8) = 0 THEN ? ELSE syllabus_meeting_info END, \
            units           = COALESCE(?, units), \
            target_grade    = COALESCE(?, target_grade), \
            sort_order      = COALESCE(?, sort_order), \
@@ -728,6 +773,8 @@ async fn write_course_to_sqlite(
     .bind(o.custom_meeting_days.as_deref())
     .bind(o.custom_meeting_time_set)
     .bind(o.custom_meeting_time.as_deref())
+    .bind(o.syllabus_meeting_info_set)
+    .bind(o.syllabus_meeting_info.as_deref())
     .bind(o.units)
     .bind(o.target_grade)
     .bind(o.sort_order)
@@ -1437,6 +1484,63 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn meeting_details_seed_existing_edits_and_defer_until_peer_course_exists() {
+        let pool_a = mem_pool().await;
+        let pool_b = mem_pool().await;
+        sqlx::query(r#"INSERT INTO courses (org_unit_id, name, custom_room, custom_meeting_days, custom_meeting_time, syllabus_meeting_info) VALUES ('meeting', 'Biology', '214', 'Monday', '9 AM', '{"room":"100","days":"Tuesday","time":"10 AM"}')"#)
+            .execute(&pool_a).await.unwrap();
+        let doc_a = Arc::new(SyncDoc::new());
+        let doc_b = Arc::new(SyncDoc::new());
+        let sink_b = Arc::new(RecordingSink::default());
+        let bridge_a = Bridge::with_sql(doc_a.clone(), pool_a.clone(), Arc::new(RecordingSink::default()));
+        let _bridge_b = Bridge::with_sql(doc_b.clone(), pool_b.clone(), sink_b.clone());
+        bridge_a.seed_course_meeting_details().await.unwrap();
+        apply_into(&doc_b, &doc_a).await;
+        wait_for(|| { let pool = pool_b.clone(); async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pending_overlay_apply WHERE kind = 'course' AND key = 'meeting'")
+                .fetch_one(&pool).await.unwrap_or(0) == 1
+        }}).await;
+        sqlx::query("INSERT INTO courses (org_unit_id, name) VALUES ('meeting', 'Biology')").execute(&pool_b).await.unwrap();
+        drain_pending_overlay(&pool_b, OverlayKind::Course, "meeting").await.unwrap();
+        let meeting = sqlx::query_as::<_, crate::models::Course>("SELECT * FROM courses WHERE org_unit_id = 'meeting'").fetch_one(&pool_b).await.unwrap();
+        assert_eq!(meeting.custom_room.as_deref(), Some("214"));
+        assert_eq!(meeting.custom_meeting_days.as_deref(), Some("Monday"));
+        assert_eq!(meeting.custom_meeting_time.as_deref(), Some("9 AM"));
+        assert!(meeting.syllabus_meeting_info.is_some());
+        assert!(sink_b.course_updated.lock().contains(&"meeting".to_string()));
+        // An explicit peer reset is present, even when stale local SQLite still has a value.
+        doc_a.set_course_overlay("meeting", CourseField::CustomRoom(None)).unwrap();
+        doc_a.set_course_overlay("meeting", CourseField::CustomMeetingDays(None)).unwrap();
+        doc_a.set_course_overlay("meeting", CourseField::CustomMeetingTime(None)).unwrap();
+        bridge_a.seed_course_meeting_details().await.unwrap();
+        let overlay = doc_a.get_course_overlay("meeting").unwrap();
+        assert!(overlay.custom_room.is_none());
+        assert!(overlay.custom_meeting_days.is_none());
+        assert!(overlay.custom_meeting_time.is_none());
+        let restored = sqlx::query_as::<_, crate::models::Course>("SELECT * FROM courses WHERE org_unit_id = 'meeting'").fetch_one(&pool_a).await.unwrap();
+        assert!(restored.custom_room.is_none());
+        assert!(restored.custom_meeting_days.is_none());
+        assert!(restored.custom_meeting_time.is_none());
+        sqlx::query("UPDATE courses SET custom_room = '999', custom_meeting_days = NULL, custom_meeting_time = '3 PM', meeting_sync_pending = 7 WHERE org_unit_id = 'meeting'")
+            .execute(&pool_a).await.unwrap();
+        // An in-flight peer mirror must not overwrite an unsent local intent.
+        let peer_overlay = CourseOverlay {
+            custom_room: Some("old peer room".into()), custom_room_set: true,
+            custom_meeting_days: Some("old peer day".into()), custom_meeting_days_set: true,
+            custom_meeting_time: Some("old peer time".into()), custom_meeting_time_set: true,
+            ..Default::default()
+        };
+        write_course_to_sqlite(&pool_a, "meeting", &peer_overlay).await.unwrap();
+        bridge_a.seed_course_meeting_details().await.unwrap();
+        let overlay = doc_a.get_course_overlay("meeting").unwrap();
+        assert_eq!(overlay.custom_room.as_deref(), Some("999"));
+        assert!(overlay.custom_meeting_days_set && overlay.custom_meeting_days.is_none());
+        assert_eq!(overlay.custom_meeting_time.as_deref(), Some("3 PM"));
+        let pending: i64 = sqlx::query_scalar("SELECT meeting_sync_pending FROM courses WHERE org_unit_id = 'meeting'").fetch_one(&pool_a).await.unwrap();
+        assert_eq!(pending, 0);
     }
 
     #[tokio::test]

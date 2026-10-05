@@ -217,6 +217,7 @@ pub fn run() {
             commands::courses::update_course_code,
             commands::courses::update_course_room,
             commands::courses::update_course_schedule,
+            commands::courses::cache_course_meeting_info,
             commands::courses::update_course_semester,
             commands::courses::update_course_units,
             commands::courses::update_course_target_grade,

@@ -12,7 +12,7 @@ pub struct CourseBanner {
 #[tauri::command]
 pub async fn list_courses(state: AppStateArg<'_>) -> Result<Vec<Course>> {
     let rows = sqlx::query_as::<_, Course>(
-        "SELECT org_unit_id, name, custom_name, code, custom_code, custom_room, custom_meeting_days, custom_meeting_time, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses ORDER BY is_pinned DESC, sort_order ASC, COALESCE(custom_name, name) ASC",
+        "SELECT org_unit_id, name, custom_name, code, custom_code, custom_room, custom_meeting_days, custom_meeting_time, syllabus_meeting_info, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses ORDER BY is_pinned DESC, sort_order ASC, COALESCE(custom_name, name) ASC",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -22,7 +22,7 @@ pub async fn list_courses(state: AppStateArg<'_>) -> Result<Vec<Course>> {
 #[tauri::command]
 pub async fn get_course(state: AppStateArg<'_>, id: String) -> Result<Course> {
     let course = sqlx::query_as::<_, Course>(
-        "SELECT org_unit_id, name, custom_name, code, custom_code, custom_room, custom_meeting_days, custom_meeting_time, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses WHERE org_unit_id = ?",
+        "SELECT org_unit_id, name, custom_name, code, custom_code, custom_room, custom_meeting_days, custom_meeting_time, syllabus_meeting_info, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses WHERE org_unit_id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -236,45 +236,81 @@ pub async fn update_course_color(state: AppStateArg<'_>, id: String, color: Opti
 #[tauri::command]
 pub async fn update_course_room(state: AppStateArg<'_>, id: String, room: Option<String>) -> Result<()> {
     let trimmed = room.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
-    sqlx::query("UPDATE courses SET custom_room = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+    sqlx::query("UPDATE courses SET custom_room = ?, meeting_sync_pending = meeting_sync_pending | 1, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
         .bind(&trimmed)
         .bind(&id)
         .execute(&state.pool)
         .await?;
     #[cfg(feature = "p2p")]
-    {
-        use crate::p2p::bridge::LocalChange;
-        use crate::p2p::doc::CourseField;
-        if let Some(engine) = state.sync_engine() {
-            if let Err(e) = engine.bridge().apply_local(LocalChange::Course {
-                id: id.clone(),
-                field: CourseField::CustomRoom(trimmed),
-            }).await {
-                tracing::warn!("apply_local custom_room {}: {}", id, e);
-            }
-        }
+    if let Some(engine) = state.sync_engine() {
+        engine.bridge().publish_course_meeting_details(&id).await?;
     }
     state.events.course_updated(&id);
     Ok(())
+}
+
+// Only small extracted display values cross the wire, never syllabus files.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseMeetingInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_source: Option<String>,
+}
+
+async fn store_course_meeting_info(pool: &sqlx::SqlitePool, id: &str, info: CourseMeetingInfo, replace: bool) -> Result<(CourseMeetingInfo, bool)> {
+    for value in [&info.room, &info.room_source, &info.days, &info.days_source, &info.time, &info.time_source].into_iter().flatten() {
+        if value.len() > 1024 { return Err(crate::error::AppError::BadRequest("Course meeting value is too long".into())); }
+    }
+    let mut tx = pool.begin().await?;
+    let stored: Option<String> = sqlx::query_scalar("SELECT syllabus_meeting_info FROM courses WHERE org_unit_id = ?")
+        .bind(id).fetch_one(&mut *tx).await?;
+    let old = stored.as_deref().and_then(|v| serde_json::from_str::<CourseMeetingInfo>(v).ok());
+    let next = if replace { info } else {
+        let mut next = old.clone().unwrap_or_default();
+        if info.room.is_some() { next.room = info.room; next.room_source = info.room_source; }
+        if info.days.is_some() { next.days = info.days; next.days_source = info.days_source; }
+        if info.time.is_some() { next.time = info.time; next.time_source = info.time_source; }
+        next
+    };
+    let changed = old.as_ref() != Some(&next);
+    if changed {
+        sqlx::query("UPDATE courses SET syllabus_meeting_info = ?, meeting_sync_pending = meeting_sync_pending | 8, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+            .bind(serde_json::to_string(&next)?).bind(id).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok((next, changed))
+}
+
+#[tauri::command]
+pub async fn cache_course_meeting_info(state: AppStateArg<'_>, id: String, info: CourseMeetingInfo, replace: bool) -> Result<CourseMeetingInfo> {
+    let (info, changed) = store_course_meeting_info(&state.pool, &id, info, replace).await?;
+    #[cfg(feature = "p2p")]
+    if let Some(engine) = state.sync_engine() {
+        engine.bridge().publish_course_meeting_details(&id).await?;
+    }
+    if changed { state.events.course_updated(&id); }
+    Ok(info)
 }
 
 #[tauri::command]
 pub async fn update_course_schedule(state: AppStateArg<'_>, id: String, days: Option<String>, time: Option<String>) -> Result<()> {
     let days = days.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let time = time.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    sqlx::query("UPDATE courses SET custom_meeting_days = ?, custom_meeting_time = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+    sqlx::query("UPDATE courses SET custom_meeting_days = ?, custom_meeting_time = ?, meeting_sync_pending = meeting_sync_pending | 6, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
         .bind(&days).bind(&time).bind(&id).execute(&state.pool).await?;
     #[cfg(feature = "p2p")]
-    {
-        use crate::p2p::bridge::LocalChange;
-        use crate::p2p::doc::CourseField;
-        if let Some(engine) = state.sync_engine() {
-            for field in [CourseField::CustomMeetingDays(days), CourseField::CustomMeetingTime(time)] {
-                if let Err(e) = engine.bridge().apply_local(LocalChange::Course { id: id.clone(), field }).await {
-                    tracing::warn!("apply_local course schedule {}: {}", id, e);
-                }
-            }
-        }
+    if let Some(engine) = state.sync_engine() {
+        engine.bridge().publish_course_meeting_details(&id).await?;
     }
     state.events.course_updated(&id);
     Ok(())
@@ -426,5 +462,30 @@ pub async fn fetch_course_banner(state: AppStateArg<'_>, id: String) -> Result<O
             tracing::warn!("banner fetch for {}: {}", id, e);
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod meeting_info_tests {
+    use super::*;
+    #[tokio::test]
+    async fn partial_syllabus_reads_preserve_peer_values_and_never_modify_overrides() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO courses (org_unit_id, name, custom_room, custom_meeting_days, custom_meeting_time) VALUES ('a', 'Biology', '305', 'Friday', '2 PM')").execute(&pool).await.unwrap();
+        let initial = CourseMeetingInfo { room: Some("214".into()), days: Some("Monday".into()), time: Some("9 AM".into()), ..Default::default() };
+        assert!(store_course_meeting_info(&pool, "a", initial.clone(), true).await.unwrap().1);
+        assert!(!store_course_meeting_info(&pool, "a", initial, true).await.unwrap().1);
+        let partial = CourseMeetingInfo { room: Some("999".into()), ..Default::default() };
+        let (stored, _) = store_course_meeting_info(&pool, "a", partial, false).await.unwrap();
+        assert_eq!(stored.days.as_deref(), Some("Monday"));
+        assert_eq!(stored.time.as_deref(), Some("9 AM"));
+        assert_eq!(stored.room.as_deref(), Some("999"));
+        let (stored, _) = store_course_meeting_info(&pool, "a", CourseMeetingInfo::default(), true).await.unwrap();
+        assert_eq!(stored, CourseMeetingInfo::default());
+        let course = sqlx::query_as::<_, crate::models::Course>("SELECT * FROM courses WHERE org_unit_id = 'a'").fetch_one(&pool).await.unwrap();
+        assert_eq!(course.custom_room.as_deref(), Some("305"));
+        assert_eq!(course.custom_meeting_days.as_deref(), Some("Friday"));
+        assert_eq!(course.custom_meeting_time.as_deref(), Some("2 PM"));
     }
 }

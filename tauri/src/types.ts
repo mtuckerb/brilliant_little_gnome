@@ -10,6 +10,7 @@ export interface Course {
   custom_room: string | null;
   custom_meeting_days: string | null;
   custom_meeting_time: string | null;
+  syllabus_meeting_info: string | null;
   semester: string | null;
   custom_semester: string | null;
   is_pinned: boolean;

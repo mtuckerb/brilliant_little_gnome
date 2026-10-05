@@ -77,7 +77,7 @@ describe("shared room and schedule reader", () => {
     const { findCourseMeetingInfo } = await import("./syllabusRoom");
     vi.mocked(api.getCourseOverview).mockResolvedValue({ description_html: null, has_attachment: true, attachment_name: null, attachment_url: null });
     vi.mocked(api.fetchCourseOverviewAttachment).mockResolvedValue({ filename: "syllabus.txt", mime: "text/plain", bytes_base64: btoa("Classroom: 214\nClass meets: MWF 9:00-9:50 AM") });
-    expect(await findCourseMeetingInfo("a")).toEqual({ room: "214", roomSource: "syllabus.txt", days: "Monday, Wednesday, Friday", daysSource: "syllabus.txt", time: "9:00-9:50 AM", timeSource: "syllabus.txt" });
+    expect(await findCourseMeetingInfo("a")).toMatchObject({ room: "214", roomSource: "syllabus.txt", days: "Monday, Wednesday, Friday", daysSource: "syllabus.txt", time: "9:00-9:50 AM", timeSource: "syllabus.txt" });
     expect(api.fetchCourseOverviewAttachment).toHaveBeenCalledTimes(1);
     expect(api.listCourseItems).not.toHaveBeenCalled();
   });
