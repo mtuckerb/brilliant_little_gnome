@@ -10,10 +10,11 @@ name = "brilliant_tauri_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.0", features = [] }
+tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.1", features = [] }
+# 2.11.5 includes WKWebView content-process recovery on macOS/iOS.
+tauri = { version = "2.11.5", features = [] }
 tauri-plugin-shell = "2.0"
 
 # HTTP client
@@ -122,3 +123,8 @@ custom-protocol = ["tauri/custom-protocol"]
 # P2P device-to-device sync. On by default during development; flip off
 # (or split deps into optional) once we want a smaller no-network build.
 p2p = ["dep:keyring"]
+
+# Ignore UIKit callbacks delivered after the iOS event loop has terminated.
+# See vendor/tao/BRILLIANT-PATCH.md and tao issue #1314.
+[patch.crates-io]
+tao = { path = "vendor/tao" }

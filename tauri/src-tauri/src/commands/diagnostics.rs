@@ -8,7 +8,7 @@ use serde::Serialize;
 pub struct StartupError {
     /// Setup failed on *this* launch; the app is running degraded.
     pub setup: Option<String>,
-    /// The previous launch died before the UI existed. Read once, then cleared.
+    /// A panic ended the previous session. Read once, then cleared.
     pub previous_panic: Option<String>,
 }
 

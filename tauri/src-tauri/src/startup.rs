@@ -1,4 +1,4 @@
-//! Launch-failure breadcrumbs.
+//! Setup-failure and runtime-panic breadcrumbs.
 //!
 //! Tauri panics when the `setup` hook returns an `Err` (app.rs: `panic!("Failed
 //! to setup app: {e}")`), which on iOS is a SIGABRT before any window exists.
@@ -23,7 +23,7 @@ use std::sync::OnceLock;
 /// a launch is interesting — later ones are usually its consequences.
 static SETUP_ERROR: OnceLock<String> = OnceLock::new();
 
-/// Breadcrumb from a *previous* launch that died before the UI existed.
+/// Breadcrumb from a *previous* session, including panics after the UI opened.
 /// On iOS `temp_dir()` resolves inside the app container, so this outlives the
 /// crash without needing the app-data dir (which is itself a suspect when
 /// startup fails).
