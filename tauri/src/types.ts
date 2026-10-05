@@ -8,6 +8,8 @@ export interface Course {
   code: string | null;
   custom_code: string | null;
   custom_room: string | null;
+  custom_meeting_days: string | null;
+  custom_meeting_time: string | null;
   semester: string | null;
   custom_semester: string | null;
   is_pinned: boolean;

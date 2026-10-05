@@ -70,3 +70,28 @@ describe("syllabus sources", () => {
     expect(await findCourseRoom("a")).toBeNull();
   });
 });
+
+describe("shared room and schedule reader", () => {
+  beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.listCourseItems).mockResolvedValue([]); });
+  it("reads a syllabus once for all three fields", async () => {
+    const { findCourseMeetingInfo } = await import("./syllabusRoom");
+    vi.mocked(api.getCourseOverview).mockResolvedValue({ description_html: null, has_attachment: true, attachment_name: null, attachment_url: null });
+    vi.mocked(api.fetchCourseOverviewAttachment).mockResolvedValue({ filename: "syllabus.txt", mime: "text/plain", bytes_base64: btoa("Classroom: 214\nClass meets: MWF 9:00-9:50 AM") });
+    expect(await findCourseMeetingInfo("a")).toEqual({ room: "214", roomSource: "syllabus.txt", days: "Monday, Wednesday, Friday", daysSource: "syllabus.txt", time: "9:00-9:50 AM", timeSource: "syllabus.txt" });
+    expect(api.fetchCourseOverviewAttachment).toHaveBeenCalledTimes(1);
+    expect(api.listCourseItems).not.toHaveBeenCalled();
+  });
+  it("fills a missing schedule from Modules while preserving the overview room", async () => {
+    const { findCourseMeetingInfo } = await import("./syllabusRoom");
+    vi.mocked(api.getCourseOverview).mockResolvedValue({ description_html: "<p>Classroom: 214</p>", has_attachment: false, attachment_name: null, attachment_url: null });
+    vi.mocked(api.listCourseItems).mockResolvedValue([{ id: 1, module_id: "m", brightspace_id: "s", title: "Syllabus", item_type: "File", url: null, is_hidden: false, sort_order: 0 }]);
+    vi.mocked(api.previewTopicFile).mockResolvedValue({ filename: "syllabus.txt", mime: "text/plain", bytes_base64: btoa("Classroom: 999\nClass days: TR\nMeeting time: 10:00-11:15 AM") });
+    expect(await findCourseMeetingInfo("a")).toMatchObject({ room: "214", roomSource: "Course overview", days: "Tuesday, Thursday", time: "10:00-11:15 AM" });
+  });
+  it("keeps a room even when the remaining syllabus is unavailable", async () => {
+    const { findCourseMeetingInfo } = await import("./syllabusRoom");
+    vi.mocked(api.getCourseOverview).mockResolvedValue({ description_html: "<p>Classroom: 214</p>", has_attachment: true, attachment_name: null, attachment_url: null });
+    vi.mocked(api.fetchCourseOverviewAttachment).mockRejectedValue(new Error("offline"));
+    expect(await findCourseMeetingInfo("a")).toMatchObject({ room: "214", error: expect.stringContaining("Could not read") });
+  });
+});

@@ -4,10 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import CourseRoomPanel from "./CourseRoomPanel";
 import { api } from "../api";
-import { findCourseRoom, type SyllabusRoom } from "../lib/syllabusRoom";
+import { findCourseRoom, findCourseMeetingInfo, type SyllabusRoom } from "../lib/syllabusRoom";
 
-vi.mock("../lib/syllabusRoom", () => ({ findCourseRoom: vi.fn() }));
-vi.mock("../api", () => ({ api: { updateCourseRoom: vi.fn() } }));
+vi.mock("../lib/syllabusRoom", () => ({ findCourseRoom: vi.fn(), findCourseMeetingInfo: vi.fn() }));
+vi.mock("../api", () => ({ api: { updateCourseRoom: vi.fn(), updateCourseSchedule: vi.fn() } }));
 
 describe("course overview room number", () => {
   let container: HTMLDivElement;
@@ -19,6 +19,10 @@ describe("course overview room number", () => {
     root = createRoot(container);
     vi.resetAllMocks();
     vi.mocked(api.updateCourseRoom).mockResolvedValue();
+    vi.mocked(findCourseMeetingInfo).mockImplementation(async (id) => {
+      const room = await findCourseRoom(id);
+      return room ? { room: room.room, roomSource: room.source } : {};
+    });
   });
   afterEach(() => {
     act(() => root.unmount());

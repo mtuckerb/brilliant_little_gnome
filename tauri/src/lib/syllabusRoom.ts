@@ -1,3 +1,4 @@
+import { extractSyllabusSchedule } from "./syllabusSchedule";
 import { api } from "../api";
 import { base64ToBytes, extensionForFile, PREVIEW_MAX_BYTES } from "./fileViewer";
 import { extractOfficeText } from "./officeText";
@@ -62,7 +63,7 @@ export function extractSyllabusRoom(text: string): string | null {
   return candidates[0]?.room ?? null;
 }
 
-async function attachmentRoom(file: { bytes_base64: string; mime: string | null; filename: string }): Promise<string | null> {
+async function attachmentText(file: { bytes_base64: string; mime: string | null; filename: string }): Promise<string | null> {
   // Check before decoding the backend response as well as before PDF parsing.
   if (file.bytes_base64.length > Math.ceil(PREVIEW_MAX_BYTES / 3) * 4) return null;
   const bytes = base64ToBytes(file.bytes_base64);
@@ -80,36 +81,68 @@ async function attachmentRoom(file: { bytes_base64: string; mime: string | null;
   } else {
     return null;
   }
-  return extractSyllabusRoom(text);
+  return text;
 }
 
-export async function findCourseRoom(courseId: string): Promise<SyllabusRoom | null> {
-  // Some instructors attach the syllabus to Overview; others put it in Modules.
-  // A missing overview or unreadable file should not stop the other sources.
+export interface CourseMeetingInfo {
+  room?: string;
+  roomSource?: string;
+  days?: string;
+  time?: string;
+  daysSource?: string;
+  timeSource?: string;
+  error?: string;
+}
+
+async function readCourseMeetingInfo(courseId: string, roomOnly = false): Promise<CourseMeetingInfo> {
+  const result: CourseMeetingInfo = {};
   let failed = false;
+  const read = (text: string | null, source: string) => {
+    if (!text) return;
+    const room = extractSyllabusRoom(text);
+    if (!result.room && room) { result.room = room; result.roomSource = source; }
+    if (!roomOnly) {
+      const schedule = extractSyllabusSchedule(text);
+      if (!result.days && schedule.days) { result.days = schedule.days; result.daysSource = source; }
+      if (!result.time && schedule.time) { result.time = schedule.time; result.timeSource = source; }
+    }
+  };
+  const complete = () => result.room && (roomOnly || (result.days && result.time));
   try {
     const overview = await api.getCourseOverview(courseId);
-    if (overview.description_html) {
-      const room = extractSyllabusRoom(syllabusHtmlText(overview.description_html));
-      if (room) return { room, source: "Course overview" };
-    }
+    if (overview.description_html) read(syllabusHtmlText(overview.description_html), "Course overview");
+    if (complete()) return result;
     if (overview.has_attachment) {
       try {
         const file = await api.fetchCourseOverviewAttachment(courseId);
-        const room = await attachmentRoom(file);
-        if (room) return { room, source: file.filename };
+        read(await attachmentText(file), file.filename);
+        if (complete()) return result;
       } catch { failed = true; }
     }
-  } catch { /* A course may have no overview at all. */ }
-  const items = await api.listCourseItems(courseId);
-  const syllabi = items.filter((item) => /\bsyllabus\b|\bsyllabi\b|course\s+overview/i.test(item.title) && !item.is_hidden);
-  for (const item of syllabi) {
-    try {
-      const file = await api.previewTopicFile(courseId, item.brightspace_id);
-      const room = await attachmentRoom(file);
-      if (room) return { room, source: item.title };
-    } catch { failed = true; }
-  }
-  if (failed) throw new Error("Could not read the syllabus. Try syncing this course again.");
+  } catch { /* Some courses have no overview. Continue to the syllabus in Modules. */ }
+  try {
+    const items = await api.listCourseItems(courseId);
+    const syllabi = items.filter((item) => /\bsyllabus\b|\bsyllabi\b|course\s+overview/i.test(item.title) && !item.is_hidden);
+    for (const item of syllabi) {
+      try {
+        const file = await api.previewTopicFile(courseId, item.brightspace_id);
+        read(await attachmentText(file), item.title);
+        if (complete()) return result;
+      } catch { failed = true; }
+    }
+  } catch { failed = true; }
+  // Keep partial information when another source is unavailable.
+  if (failed) result.error = "Could not read the syllabus. Sync this course to try again.";
+  return result;
+}
+
+export function findCourseMeetingInfo(courseId: string): Promise<CourseMeetingInfo> {
+  return readCourseMeetingInfo(courseId);
+}
+
+export async function findCourseRoom(courseId: string): Promise<SyllabusRoom | null> {
+  const info = await readCourseMeetingInfo(courseId, true);
+  if (info.room) return { room: info.room, source: info.roomSource! };
+  if (info.error) throw new Error(info.error);
   return null;
 }
