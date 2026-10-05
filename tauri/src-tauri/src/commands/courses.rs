@@ -12,7 +12,7 @@ pub struct CourseBanner {
 #[tauri::command]
 pub async fn list_courses(state: AppStateArg<'_>) -> Result<Vec<Course>> {
     let rows = sqlx::query_as::<_, Course>(
-        "SELECT org_unit_id, name, custom_name, code, custom_code, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses ORDER BY is_pinned DESC, sort_order ASC, COALESCE(custom_name, name) ASC",
+        "SELECT org_unit_id, name, custom_name, code, custom_code, custom_room, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses ORDER BY is_pinned DESC, sort_order ASC, COALESCE(custom_name, name) ASC",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -22,7 +22,7 @@ pub async fn list_courses(state: AppStateArg<'_>) -> Result<Vec<Course>> {
 #[tauri::command]
 pub async fn get_course(state: AppStateArg<'_>, id: String) -> Result<Course> {
     let course = sqlx::query_as::<_, Course>(
-        "SELECT org_unit_id, name, custom_name, code, custom_code, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses WHERE org_unit_id = ?",
+        "SELECT org_unit_id, name, custom_name, code, custom_code, custom_room, semester, custom_semester, is_pinned, custom_color, banner_url, units, target_grade, status, sort_order, end_of_week_day, last_accessed_at FROM courses WHERE org_unit_id = ?",
     )
     .bind(&id)
     .fetch_one(&state.pool)
@@ -230,6 +230,31 @@ pub async fn update_course_color(state: AppStateArg<'_>, id: String, color: Opti
             }
         }
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_course_room(state: AppStateArg<'_>, id: String, room: Option<String>) -> Result<()> {
+    let trimmed = room.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+    sqlx::query("UPDATE courses SET custom_room = ?, updated_at = CURRENT_TIMESTAMP WHERE org_unit_id = ?")
+        .bind(&trimmed)
+        .bind(&id)
+        .execute(&state.pool)
+        .await?;
+    #[cfg(feature = "p2p")]
+    {
+        use crate::p2p::bridge::LocalChange;
+        use crate::p2p::doc::CourseField;
+        if let Some(engine) = state.sync_engine() {
+            if let Err(e) = engine.bridge().apply_local(LocalChange::Course {
+                id: id.clone(),
+                field: CourseField::CustomRoom(trimmed),
+            }).await {
+                tracing::warn!("apply_local custom_room {}: {}", id, e);
+            }
+        }
+    }
+    state.events.course_updated(&id);
     Ok(())
 }
 

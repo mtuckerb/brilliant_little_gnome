@@ -7,6 +7,7 @@ export interface Course {
   custom_name: string | null;
   code: string | null;
   custom_code: string | null;
+  custom_room: string | null;
   semester: string | null;
   custom_semester: string | null;
   is_pinned: boolean;

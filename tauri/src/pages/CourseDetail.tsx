@@ -4,6 +4,7 @@ import { api } from "../api";
 import { type Course } from "../types";
 import SyllabusPanel from "../components/SyllabusPanel";
 import ClassListPanel from "../components/ClassListPanel";
+import CourseRoomPanel from "../components/CourseRoomPanel";
 import SyntheticTasksPanel from "../components/SyntheticTasksPanel";
 import { triggerDownload } from "../lib/download";
 import HeaderBand from "../components/HeaderBand";
@@ -17,6 +18,7 @@ export default function CourseDetail() {
   const [course, setCourse] = useState<Course | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syllabusRevision, setSyllabusRevision] = useState(0);
   const [downloading, setDownloading] = useState(false);
   const [sendingZotero, setSendingZotero] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -158,6 +160,7 @@ export default function CourseDetail() {
       await api.syncCourse(course.org_unit_id);
       const fresh = await api.getCourse(course.org_unit_id);
       setCourse(fresh);
+      setSyllabusRevision((revision) => revision + 1);
     } finally {
       setSyncing(false);
     }
@@ -165,7 +168,10 @@ export default function CourseDetail() {
 
   return (
     <div>
-      <HeaderBand courseId={course.org_unit_id} onCourseUpdated={setCourse} />
+      <HeaderBand courseId={course.org_unit_id} onCourseUpdated={(updated) => setCourse((current) =>
+        current?.org_unit_id === updated.org_unit_id
+          ? { ...updated, custom_room: current.custom_room }
+          : updated)} />
 
       <div className="is-flex is-align-items-center is-flex-wrap-wrap mb-4" style={{ gap: 12 }}>
         <label className="is-flex is-align-items-center" style={{ gap: 8 }}>
@@ -224,7 +230,16 @@ export default function CourseDetail() {
         )}
       </div>
 
-      <SyllabusPanel courseId={course.org_unit_id} />
+      <CourseRoomPanel
+        key={course.org_unit_id}
+        courseId={course.org_unit_id}
+        revision={syllabusRevision}
+        customRoom={course.custom_room}
+        onRoomUpdated={(room) => setCourse((current) => current?.org_unit_id === course.org_unit_id
+          ? { ...current, custom_room: room } : current)}
+      />
+
+      <SyllabusPanel key={`${course.org_unit_id}:${syllabusRevision}`} courseId={course.org_unit_id} />
 
       <ClassListPanel key={course.org_unit_id} courseId={course.org_unit_id} />
 

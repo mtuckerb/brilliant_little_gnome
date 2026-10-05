@@ -215,6 +215,7 @@ pub fn run() {
             commands::courses::update_course_color,
             commands::courses::update_course_name,
             commands::courses::update_course_code,
+            commands::courses::update_course_room,
             commands::courses::update_course_semester,
             commands::courses::update_course_units,
             commands::courses::update_course_target_grade,
