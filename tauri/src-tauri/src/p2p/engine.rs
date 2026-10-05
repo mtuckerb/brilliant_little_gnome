@@ -123,9 +123,10 @@ impl SyncEngine {
         bridge.set_client(state.client.clone());
 
         info!("start_with_bootstrap: starting engine parts");
-        let result = Self::start_with_parts(store, doc, transport, bridge).await;
-        info!("start_with_bootstrap: done ok={}", result.is_ok());
-        result
+        let engine = Self::start_with_parts(store, doc, transport, bridge).await?;
+        engine.bridge().seed_course_meeting_details().await?;
+        info!("start_with_bootstrap: done ok=true");
+        Ok(engine)
     }
 
     /// Joiner-side QR-pairing entry point (T-013). Persists the
@@ -1144,6 +1145,10 @@ mod tests {
                 )
                 .unwrap();
 
+            use crate::p2p::doc::CourseField;
+            for field in [CourseField::CustomRoom(Some("214".into())), CourseField::CustomMeetingDays(Some("Monday".into())), CourseField::CustomMeetingTime(Some("9 AM".into())), CourseField::SyllabusMeetingInfo(Some(r#"{"room":"100","days":"Tuesday","time":"10 AM"}"#.into()))] {
+                doc_a.set_course_overlay("12345", field).unwrap();
+            }
             let observed = timeout(Duration::from_secs(5), async {
                 loop {
                     if doc_b.get_pref_display_name().as_deref() == Some("Alice")
@@ -1151,6 +1156,8 @@ mod tests {
                             .get_course_overlay("12345")
                             .and_then(|c| c.is_pinned)
                             == Some(true)
+                        && doc_b.get_course_overlay("12345").is_some_and(|o|
+                            o.custom_room.as_deref() == Some("214") && o.custom_meeting_days.as_deref() == Some("Monday") && o.custom_meeting_time.as_deref() == Some("9 AM") && o.syllabus_meeting_info.is_some())
                     {
                         return ();
                     }
@@ -1159,6 +1166,17 @@ mod tests {
             })
             .await;
             assert!(observed.is_ok(), "engine B did not receive A's mutations within 5s");
+
+            // Reset on B must return A to the same shared syllabus values.
+            for field in [CourseField::CustomRoom(None), CourseField::CustomMeetingDays(None), CourseField::CustomMeetingTime(None)] {
+                doc_b.set_course_overlay("12345", field).unwrap();
+            }
+            timeout(Duration::from_secs(5), async {
+                loop {
+                    if doc_a.get_course_overlay("12345").is_some_and(|o| o.custom_room_set && o.custom_room.is_none() && o.custom_meeting_days_set && o.custom_meeting_days.is_none() && o.custom_meeting_time_set && o.custom_meeting_time.is_none() && o.syllabus_meeting_info.is_some()) { break; }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }).await.expect("peer reset did not converge");
 
             // -- shut down A; force its checkpoint -----------------------
             engine_a.shutdown().await.unwrap();
@@ -1180,6 +1198,11 @@ mod tests {
         // The transport doesn't matter for this assertion — we're proving
         // the WAL/snapshot survived, which is purely a SyncStore concern.
         let reloaded = SyncDoc::from_doc(store_a.load().unwrap());
+        let meeting = reloaded.get_course_overlay("12345").unwrap();
+        assert!(meeting.custom_room_set && meeting.custom_room.is_none());
+        assert!(meeting.custom_meeting_days_set && meeting.custom_meeting_days.is_none());
+        assert!(meeting.custom_meeting_time_set && meeting.custom_meeting_time.is_none());
+        assert!(meeting.syllabus_meeting_info.is_some());
         assert_eq!(reloaded.get_pref_display_name().as_deref(), Some("Alice"));
         assert_eq!(
             reloaded.get_course_overlay("12345").and_then(|c| c.is_pinned),
@@ -1377,6 +1400,9 @@ mod tests {
                     crate::p2p::doc::CourseField::CustomColor(Some("#0099ff".into())),
                 )
                 .unwrap();
+            for field in [crate::p2p::doc::CourseField::CustomRoom(Some("214".into())), crate::p2p::doc::CourseField::CustomMeetingDays(Some("Monday".into())), crate::p2p::doc::CourseField::CustomMeetingTime(Some("9 AM".into())), crate::p2p::doc::CourseField::SyllabusMeetingInfo(Some(r#"{"room":"100","days":"Tuesday","time":"10 AM"}"#.into()))] {
+                doc_seed.set_course_overlay("111", field).unwrap();
+            }
             // A composite-key overlay whose underlying assignment row
             // doesn't exist on the joiner — should land in pending.
             doc_seed
@@ -1446,6 +1472,11 @@ mod tests {
                     .await
                     .unwrap();
             assert_eq!(row111.0, 1);
+            let meeting = sqlx::query_as::<_, crate::models::Course>("SELECT * FROM courses WHERE org_unit_id = '111'").fetch_one(&pool_join).await.unwrap();
+            assert_eq!(meeting.custom_room.as_deref(), Some("214"));
+            assert_eq!(meeting.custom_meeting_days.as_deref(), Some("Monday"));
+            assert_eq!(meeting.custom_meeting_time.as_deref(), Some("9 AM"));
+            assert!(meeting.syllabus_meeting_info.is_some());
 
             let row222: (Option<String>,) = sqlx::query_as(
                 "SELECT custom_color FROM courses WHERE org_unit_id = '222'",

@@ -48,7 +48,7 @@ export default function CourseSchedulePanel({ courseId, info, customDays = null,
   }
 
   function display(value: string | undefined | null, edited: boolean, source: string | undefined, missing: string) {
-    return value ? <><p className="has-text-weight-semibold">{value}</p><p className="help">{edited ? "Edited by you" : `From ${source}`}</p></>
+    return value ? <><p className="has-text-weight-semibold">{value}</p><p className="help">{edited ? "Edited by you" : `From ${source ?? "syllabus"}`}</p></>
       : <p className="has-text-grey is-size-7">{!info ? "Checking syllabus…" : info.error ?? missing}</p>;
   }
 

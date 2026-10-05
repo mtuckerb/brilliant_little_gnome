@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { CourseMeetingInfo } from "./lib/syllabusRoom";
 import type { DownloadResult } from "./lib/download";
 
 export interface ZoteroResult {
@@ -71,6 +72,8 @@ export const api = {
     invoke<Course>("update_course_name", { id, name }),
   updateCourseCode: (id: string, code: string | null) =>
     invoke<void>("update_course_code", { id, code }),
+  cacheCourseMeetingInfo: (id: string, info: CourseMeetingInfo, replace: boolean) =>
+    invoke<CourseMeetingInfo>("cache_course_meeting_info", { id, info, replace }),
   updateCourseSchedule: (id: string, days: string | null, time: string | null) =>
     invoke<void>("update_course_schedule", { id, days, time }),
   updateCourseRoom: (id: string, room: string | null) =>
@@ -322,4 +325,10 @@ export async function onAppEvent(
   cb: (e: AppEvent) => void,
 ): Promise<UnlistenFn> {
   return await listen<AppEvent>("app-event", (e) => cb(e.payload));
+}
+
+// Paired-device course overlays arrive on this channel, independently of a
+// Brightspace sync-status transition.
+export async function onCourseUpdated(cb: (courseId: string) => void): Promise<UnlistenFn> {
+  return await listen<{ course_id: string }>("course:updated", (event) => cb(event.payload.course_id));
 }

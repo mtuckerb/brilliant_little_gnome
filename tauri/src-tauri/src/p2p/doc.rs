@@ -50,6 +50,10 @@ pub struct CourseOverlay {
     pub custom_meeting_time: Option<String>,
     #[serde(default)]
     pub custom_meeting_time_set: bool,
+    #[serde(default)]
+    pub syllabus_meeting_info: Option<String>,
+    #[serde(default)]
+    pub syllabus_meeting_info_set: bool,
     pub units: Option<f64>,
     pub target_grade: Option<f64>,
     pub sort_order: Option<i64>,
@@ -105,6 +109,7 @@ pub enum CourseField {
     CustomRoom(Option<String>),
     CustomMeetingDays(Option<String>),
     CustomMeetingTime(Option<String>),
+    SyllabusMeetingInfo(Option<String>),
     Units(Option<f64>),
     TargetGrade(Option<f64>),
     SortOrder(Option<i64>),
@@ -346,6 +351,10 @@ impl SyncDoc {
             CourseField::CustomMeetingTime(v) => match v {
                 Some(time) => m.insert("custom_meeting_time", time.as_str())?,
                 None => m.insert("custom_meeting_time", LoroValue::Null)?,
+            },
+            CourseField::SyllabusMeetingInfo(v) => match v {
+                Some(info) => m.insert("syllabus_meeting_info", info.as_str())?,
+                None => m.insert("syllabus_meeting_info", LoroValue::Null)?,
             },
             CourseField::Units(v) => insert_opt_f64(&m, "units", v)?,
             CourseField::TargetGrade(v) => insert_opt_f64(&m, "target_grade", v)?,
@@ -660,6 +669,8 @@ fn read_course_overlay(m: &LoroMap) -> CourseOverlay {
         custom_meeting_days_set: m.get("custom_meeting_days").is_some(),
         custom_meeting_time: get_string(m, "custom_meeting_time"),
         custom_meeting_time_set: m.get("custom_meeting_time").is_some(),
+        syllabus_meeting_info: get_string(m, "syllabus_meeting_info"),
+        syllabus_meeting_info_set: m.get("syllabus_meeting_info").is_some(),
         units: get_f64(m, "units"),
         target_grade: get_f64(m, "target_grade"),
         sort_order: get_i64(m, "sort_order"),
@@ -768,6 +779,8 @@ mod tests {
             custom_meeting_days_set: false,
             custom_meeting_time: None,
             custom_meeting_time_set: false,
+            syllabus_meeting_info: None,
+            syllabus_meeting_info_set: false,
             units: Some(3.0),
             target_grade: Some(95.0),
             sort_order: Some(7),

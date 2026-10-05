@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, onCourseUpdated } from "../api";
 import { type Course } from "../types";
 import SyllabusPanel from "../components/SyllabusPanel";
 import ClassListPanel from "../components/ClassListPanel";
@@ -30,9 +30,30 @@ export default function CourseDetail() {
 
   useEffect(() => {
     if (!id) return;
-    api.getCourse(id).then(setCourse).catch((e) => setErr(String(e?.message ?? e)));
-    api.getPrefs().then((p) => setCacheEnabled(p.cache_content)).catch(() => {});
-    api.courseCacheStatus(id).then(setCacheStatus).catch(() => {});
+    let disposed = false;
+    let request = 0;
+    setCourse(null);
+    setErr(null);
+    const refresh = async () => {
+      const version = ++request;
+      try {
+        const fresh = await api.getCourse(id);
+        if (!disposed && version === request) setCourse(fresh);
+      } catch (error) {
+        if (!disposed && version === request) setErr(String((error as { message?: string })?.message ?? error));
+      }
+    };
+    void refresh();
+    const unsubscribe = onCourseUpdated((courseId) => { if (courseId === id && !disposed) void refresh(); });
+    return () => { disposed = true; void unsubscribe.then((stop) => stop()).catch(() => {}); };
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    let disposed = false;
+    api.getPrefs().then((p) => { if (!disposed) setCacheEnabled(p.cache_content); }).catch(() => {});
+    api.courseCacheStatus(id).then((status) => { if (!disposed) setCacheStatus(status); }).catch(() => {});
+    return () => { disposed = true; };
   }, [id]);
 
   const fmtBytes = (b: number) =>
@@ -170,7 +191,7 @@ export default function CourseDetail() {
     <div>
       <HeaderBand courseId={course.org_unit_id} onCourseUpdated={(updated) => setCourse((current) =>
         current?.org_unit_id === updated.org_unit_id
-          ? { ...updated, custom_room: current.custom_room, custom_meeting_days: current.custom_meeting_days, custom_meeting_time: current.custom_meeting_time }
+          ? { ...updated, custom_room: current.custom_room, custom_meeting_days: current.custom_meeting_days, custom_meeting_time: current.custom_meeting_time, syllabus_meeting_info: current.syllabus_meeting_info }
           : updated)} />
 
       <div className="is-flex is-align-items-center is-flex-wrap-wrap mb-4" style={{ gap: 12 }}>
@@ -234,6 +255,9 @@ export default function CourseDetail() {
         key={`meeting-${course.org_unit_id}`}
         courseId={course.org_unit_id}
         revision={syllabusRevision}
+        cachedMeetingInfo={course.syllabus_meeting_info}
+        onMeetingInfoUpdated={(info) => setCourse((current) => current?.org_unit_id === course.org_unit_id
+          ? { ...current, syllabus_meeting_info: info } : current)}
         customDays={course.custom_meeting_days}
         customTime={course.custom_meeting_time}
         onScheduleUpdated={(days, time) => setCourse((current) => current?.org_unit_id === course.org_unit_id

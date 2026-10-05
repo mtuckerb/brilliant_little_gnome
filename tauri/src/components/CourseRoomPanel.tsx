@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import CourseSchedulePanel from "./CourseSchedulePanel";
-import { findCourseMeetingInfo, type CourseMeetingInfo } from "../lib/syllabusRoom";
+import { findCourseMeetingInfo, parseCourseMeetingInfo, type CourseMeetingInfo } from "../lib/syllabusRoom";
 
 interface Props {
   courseId: string;
   revision?: number;
+  cachedMeetingInfo?: string | null;
+  onMeetingInfoUpdated?: (info: string) => void;
   customDays?: string | null;
   customTime?: string | null;
   onScheduleUpdated?: (days: string | null, time: string | null) => void;
@@ -13,13 +15,15 @@ interface Props {
   onRoomUpdated?: (room: string | null) => void;
 }
 
-export default function CourseRoomPanel({ courseId, revision = 0, customRoom = null, onRoomUpdated, customDays, customTime, onScheduleUpdated }: Props) {
+export default function CourseRoomPanel({ courseId, revision = 0, customRoom = null, onRoomUpdated, customDays, customTime, onScheduleUpdated, cachedMeetingInfo, onMeetingInfoUpdated }: Props) {
   const [result, setResult] = useState<{ courseId: string; info: CourseMeetingInfo; error?: string } | null>(null);
   const [override, setOverride] = useState({ courseId, room: customRoom });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const cachedInfoRef = useRef(cachedMeetingInfo);
+  cachedInfoRef.current = cachedMeetingInfo;
   const activeCourse = useRef(courseId);
   activeCourse.current = courseId;
   useEffect(() => {
@@ -34,13 +38,35 @@ export default function CourseRoomPanel({ courseId, revision = 0, customRoom = n
   }, [courseId]);
   useEffect(() => {
     let cancelled = false;
+    const cacheAtStart = cachedInfoRef.current;
     setResult(null);
     findCourseMeetingInfo(courseId)
-      .then((info) => { if (!cancelled) setResult({ courseId, info }); })
+      .then(async (info) => {
+        if (cancelled) return;
+        if (cachedInfoRef.current !== cacheAtStart) {
+          setResult({ courseId, info: parseCourseMeetingInfo(cachedInfoRef.current) ?? info });
+          return;
+        }
+        if (info.readable || info.room || info.days || info.time) {
+          try {
+            const shared = await api.cacheCourseMeetingInfo(courseId, info, !!info.readable && !info.error);
+            if (cancelled) return;
+            onMeetingInfoUpdated?.(JSON.stringify(shared));
+            info = { ...shared, error: info.error };
+          } catch {
+            if (cancelled) return;
+            setSaveError("Could not save syllabus details for device sync. Sync this course to try again.");
+          }
+        }
+        if (!cancelled) setResult({ courseId, info });
+      })
       .catch(() => { if (!cancelled) setResult({ courseId, info: {}, error: "Could not read the syllabus. Sync this course to try again." }); });
     return () => { cancelled = true; };
   }, [courseId, revision]);
-  const current = result?.courseId === courseId ? result : null;
+  const shared = useMemo(() => parseCourseMeetingInfo(cachedMeetingInfo), [cachedMeetingInfo]);
+  const current = result?.courseId === courseId
+    ? { ...result, info: shared ? { ...shared, error: result.info.error } : result.info }
+    : shared ? { courseId, info: shared, error: undefined } : null;
   const manualRoom = override.courseId === courseId ? override.room : customRoom;
   const displayedRoom = manualRoom ?? current?.info.room;
 
@@ -87,7 +113,7 @@ export default function CourseRoomPanel({ courseId, revision = 0, customRoom = n
           </div>
         </form>
       ) : <>
-      {displayedRoom ? <><p className="has-text-weight-semibold">{displayedRoom}</p><p className="help">{manualRoom !== null ? "Edited by you" : `From ${current?.info.roomSource}`}</p></>
+      {displayedRoom ? <><p className="has-text-weight-semibold">{displayedRoom}</p><p className="help">{manualRoom !== null ? "Edited by you" : `From ${current?.info.roomSource ?? "syllabus"}`}</p></>
         : !current ? <p className="has-text-grey is-size-7">Checking syllabus…</p>
         : <p className="has-text-grey is-size-7">{current.error ?? current.info.error ?? "No room number found in the syllabus."}</p>}
       <div className="buttons mt-3 mb-0">

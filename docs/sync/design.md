@@ -44,7 +44,7 @@ shipping the same bytes twice.
 - `discussion_forums`, `discussion_topics`, `discussion_posts`
 - `api_caches`
 
-### Class B — User-authored (SYNC via CRDT)
+### Class B — User-authored and shared meeting details (SYNC via CRDT)
 
 These are the "Brilliant value-add" — the manual overrides that distinguish
 the app from Brightspace itself. Losing them on a device swap, or having them
@@ -58,6 +58,19 @@ out-of-sync between iPad and laptop, is the actual user pain point.
 | `grades` (overlay)           | `is_extra_credit`, `hidden`, `manually_marked_ungraded`, `expected_score`, `comments` |
 | `content_items` (overlay)    | `is_hidden` |
 | `notifications` (overlay)    | `is_read` |
+
+Room, class days, and meeting time overrides (`custom_room`,
+`custom_meeting_days`, `custom_meeting_time`) sync through course overlays,
+including explicit resets to syllabus values. The small extracted display
+values in `syllabus_meeting_info` also sync so every paired device can display
+the same automatic fallback without downloading the syllabus. Syllabus files,
+`overview_raw`, and other Brightspace caches remain per-device. Existing local
+meeting values are seeded into missing overlay fields when sync starts; a
+present null in the shared document is a reset and is never seeded over by
+stale SQLite values. Local changes made while the sync service is stopped
+set per-device `meeting_sync_pending` bits; startup publishes those intents,
+including clears, before acknowledging them.
+Open course overviews refresh from `course:updated` after peer changes.
 
 ### Class C — Per-device secrets and runtime (NEVER sync)
 

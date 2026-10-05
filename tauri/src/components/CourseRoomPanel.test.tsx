@@ -4,10 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import CourseRoomPanel from "./CourseRoomPanel";
 import { api } from "../api";
-import { findCourseRoom, findCourseMeetingInfo, type SyllabusRoom } from "../lib/syllabusRoom";
+import { findCourseRoom, findCourseMeetingInfo, parseCourseMeetingInfo, type SyllabusRoom } from "../lib/syllabusRoom";
 
-vi.mock("../lib/syllabusRoom", () => ({ findCourseRoom: vi.fn(), findCourseMeetingInfo: vi.fn() }));
-vi.mock("../api", () => ({ api: { updateCourseRoom: vi.fn(), updateCourseSchedule: vi.fn() } }));
+vi.mock("../lib/syllabusRoom", () => ({ findCourseRoom: vi.fn(), findCourseMeetingInfo: vi.fn(), parseCourseMeetingInfo: vi.fn() }));
+vi.mock("../api", () => ({ api: { updateCourseRoom: vi.fn(), updateCourseSchedule: vi.fn(), cacheCourseMeetingInfo: vi.fn() } }));
 
 describe("course overview room number", () => {
   let container: HTMLDivElement;
@@ -19,6 +19,8 @@ describe("course overview room number", () => {
     root = createRoot(container);
     vi.resetAllMocks();
     vi.mocked(api.updateCourseRoom).mockResolvedValue();
+    vi.mocked(api.cacheCourseMeetingInfo).mockImplementation(async (_id, info) => info);
+    vi.mocked(parseCourseMeetingInfo).mockImplementation((raw) => raw ? JSON.parse(raw) : null);
     vi.mocked(findCourseMeetingInfo).mockImplementation(async (id) => {
       const room = await findCourseRoom(id);
       return room ? { room: room.room, roomSource: room.source } : {};
@@ -141,4 +143,50 @@ describe("course overview room number", () => {
     expect(container.textContent).not.toContain("305");
     expect(container.textContent).toContain("214");
   });
+  it("shares a successful extraction without syncing manual overrides", async () => {
+    const info = { room: "214", roomSource: "Syllabus", days: "Monday", daysSource: "Syllabus", time: "9 AM", timeSource: "Syllabus", readable: true };
+    const updated = vi.fn();
+    vi.mocked(findCourseMeetingInfo).mockResolvedValue(info);
+    await act(async () => root.render(<CourseRoomPanel courseId="biology" customRoom="305" onMeetingInfoUpdated={updated} />));
+    expect(api.cacheCourseMeetingInfo).toHaveBeenCalledWith("biology", info, true);
+    expect(updated).toHaveBeenCalled();
+    expect(container.textContent).toContain("305");
+    expect(container.textContent).toContain("Monday");
+    expect(container.textContent).toContain("9 AM");
+  });
+
+  it("uses peer syllabus values offline and refreshes them when the shared cache changes", async () => {
+    vi.mocked(findCourseMeetingInfo).mockRejectedValue(new Error("offline"));
+    await act(async () => root.render(<CourseRoomPanel courseId="biology" cachedMeetingInfo={JSON.stringify({ room: "214", roomSource: "Syllabus", days: "Monday", daysSource: "Syllabus", time: "9 AM", timeSource: "Syllabus" })} />));
+    expect(container.textContent).toContain("214");
+    expect(container.textContent).toContain("Monday");
+    expect(container.textContent).toContain("9 AM");
+    await act(async () => root.render(<CourseRoomPanel courseId="biology" cachedMeetingInfo={JSON.stringify({ room: "999", roomSource: "Syllabus", days: "Friday", daysSource: "Syllabus", time: "2 PM", timeSource: "Syllabus" })} />));
+    expect(container.textContent).toContain("999");
+    expect(container.textContent).toContain("Friday");
+    expect(container.textContent).toContain("2 PM");
+    expect(api.cacheCourseMeetingInfo).not.toHaveBeenCalled();
+  });
+
+  it("clears old automatic values when a peer shares an empty syllabus result", async () => {
+    vi.mocked(findCourseMeetingInfo).mockResolvedValue({ room: "214", roomSource: "Syllabus", days: "Monday", daysSource: "Syllabus", time: "9 AM", timeSource: "Syllabus" });
+    await act(async () => root.render(<CourseRoomPanel courseId="biology" />));
+    expect(container.textContent).toContain("214");
+    await act(async () => root.render(<CourseRoomPanel courseId="biology" cachedMeetingInfo="{}" />));
+    expect(container.textContent).not.toContain("214");
+    expect(container.textContent).not.toContain("Monday");
+    expect(container.textContent).not.toContain("9 AM");
+  });
+
+  it("does not publish an older local extraction after receiving newer peer details", async () => {
+    let finish!: (info: { room: string; roomSource: string; readable: boolean }) => void;
+    vi.mocked(findCourseMeetingInfo).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    await act(async () => root.render(<CourseRoomPanel courseId="biology" />));
+    await act(async () => root.render(<CourseRoomPanel courseId="biology" cachedMeetingInfo={JSON.stringify({ room: "999", roomSource: "Syllabus" })} />));
+    await act(async () => finish({ room: "214", roomSource: "Old syllabus", readable: true }));
+    expect(container.textContent).toContain("999");
+    expect(container.textContent).not.toContain("214");
+    expect(api.cacheCourseMeetingInfo).not.toHaveBeenCalled();
+  });
+
 });
