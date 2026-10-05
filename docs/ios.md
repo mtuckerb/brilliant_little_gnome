@@ -2,6 +2,22 @@
 
 Brilliant has two iOS/iPadOS workflows. They intentionally behave differently.
 
+## Webview and lifecycle recovery
+
+The Tauri runtime reloads a WKWebView when iOS terminates its web content process.
+This also applies to iPhone/iPad apps running on an Apple Silicon Mac. The shared
+SQLite data survives the reload; unsaved UI input can be lost.
+
+`src-tauri/vendor/tao/BRILLIANT-PATCH.md` documents the temporary Tao fix that ignores
+UIKit callbacks after the event loop has terminated. To run its native iOS
+regressions, boot an iOS simulator, install the `aarch64-apple-ios-sim` Rust target,
+and run `node scripts/test-ios-lifecycle.mjs` from `tauri/`.
+
+Before releasing, also check a bundled simulator build: send it to the background,
+terminate its WebContent process, and return to Brilliant. The UI should reload.
+On an Apple Silicon Mac, check quitting the iPhone/iPad app and reopening it; a
+normal quit should not leave a Tao `Terminated` crash breadcrumb.
+
 ## Development workflow: Vite dev server
 
 Use this only while actively developing from a Mac:

@@ -48,7 +48,7 @@ export default function StartupErrorBanner() {
       <p className="is-size-7 mt-1">
         {setupError
           ? "Data and sync will not work until this is fixed. The error was:"
-          : "The last launch stopped before the app opened. The error was:"}
+          : "The previous session ended unexpectedly. The error was:"}
       </p>
       <pre
         className="is-size-7 mt-2"
