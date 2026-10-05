@@ -26,6 +26,12 @@ pub struct ZoteroResult {
     /// and "there was nothing here to send" are opposite outcomes and the
     /// UI was reporting both as the latter.
     pub up_to_date: usize,
+    /// Modules whose items could not be cross-linked under "Related", one
+    /// entry per group. Kept apart from `failures` because the documents
+    /// themselves all arrived — the send succeeded, only the linking
+    /// didn't — but folding it into silence meant a library that rejects
+    /// every relation still reported a clean success.
+    pub relation_failures: Vec<String>,
 }
 
 fn emit_result(app: &AppHandle, result: &ZoteroResult) {
@@ -728,9 +734,16 @@ async fn walk_module_for_zotero(
 /// sub-modules ("Required Readings", "Case Study") all count as one set.
 ///
 /// Deliberately best-effort: a library that won't take relations is not a
-/// reason to fail a send whose files all arrived. Failures are logged once
-/// per group rather than pushed into `result.failures`.
-async fn relate_module_items(zc: &ZoteroClient, keys: &[String], module_title: &str) {
+/// reason to fail a send whose files all arrived, so this never touches
+/// `result.failures`. It does record one line per failed group in
+/// `result.relation_failures` so the UI can say so — logging alone meant a
+/// server that 500s every relation write looked like a clean success.
+async fn relate_module_items(
+    zc: &ZoteroClient,
+    keys: &[String],
+    module_title: &str,
+    result: &mut ZoteroResult,
+) {
     if keys.len() < 2 {
         return; // nothing to relate a lone item to
     }
@@ -755,13 +768,22 @@ async fn relate_module_items(zc: &ZoteroClient, keys: &[String], module_title: &
             module_title
         ),
         None => {}
-        Some(e) => tracing::warn!(
-            "zotero: could not relate items within '{}' ({} of {} updated): {}",
-            module_title,
-            linked,
-            keys.len(),
-            e,
-        ),
+        Some(e) => {
+            tracing::warn!(
+                "zotero: could not relate items within '{}' ({} of {} updated): {}",
+                module_title,
+                linked,
+                keys.len(),
+                e,
+            );
+            result.relation_failures.push(format!(
+                "'{}' ({} of {} linked): {}",
+                module_title,
+                linked,
+                keys.len(),
+                e
+            ));
+        }
     }
 }
 
@@ -795,6 +817,7 @@ pub async fn zotero_send_topic(
         failures: Vec::new(),
         collection_key: None,
         up_to_date: 0,
+        relation_failures: Vec::new(),
     };
     // A single-topic send has no sibling set to build, so it doesn't relate
     // anything; sending the module or the course does that.
@@ -860,6 +883,7 @@ pub async fn zotero_send_module(
         failures: Vec::new(),
         collection_key: None,
         up_to_date: 0,
+        relation_failures: Vec::new(),
     };
     let mut touched: Vec<String> = Vec::new();
     walk_module_for_zotero(
@@ -874,7 +898,7 @@ pub async fn zotero_send_module(
         &mut touched,
     )
     .await;
-    relate_module_items(&zc, &touched, &module_title).await;
+    relate_module_items(&zc, &touched, &module_title, &mut result).await;
     result.collection_key = target.reported_key();
     emit_result(&app, &result);
     Ok(result)
@@ -897,6 +921,7 @@ pub async fn zotero_send_course(
         failures: Vec::new(),
         collection_key: None,
         up_to_date: 0,
+        relation_failures: Vec::new(),
     };
     if let Some(modules) = toc.get("Modules").and_then(|v| v.as_array()) {
         for m in modules {
@@ -925,7 +950,7 @@ pub async fn zotero_send_course(
             // Relate within the week, not across the whole course — the point
             // is "these readings go together", which stops being true at the
             // course level.
-            relate_module_items(&zc, &touched, &module_title).await;
+            relate_module_items(&zc, &touched, &module_title, &mut result).await;
         }
     }
     result.collection_key = target.reported_course_key();
@@ -992,6 +1017,7 @@ pub async fn zotero_send_syllabus(
                 failures: Vec::new(),
                 collection_key: target.reported_key(),
                 up_to_date: 1,
+                relation_failures: Vec::new(),
             };
             emit_result(&app, &result);
             return Ok(result);
@@ -1010,6 +1036,7 @@ pub async fn zotero_send_syllabus(
                 failures: Vec::new(),
                 collection_key: target.reported_key(),
                 up_to_date: 0,
+                relation_failures: Vec::new(),
             };
             emit_result(&app, &result);
             return Ok(result);
@@ -1053,6 +1080,7 @@ pub async fn zotero_send_syllabus(
         failures: Vec::new(),
         collection_key: target.reported_key(),
         up_to_date: 0,
+        relation_failures: Vec::new(),
     };
     emit_result(&app, &result);
     Ok(result)
