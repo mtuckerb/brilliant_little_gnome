@@ -37,6 +37,11 @@ pub struct CourseOverlay {
     pub custom_name: Option<String>,
     pub custom_color: Option<String>,
     pub custom_code: Option<String>,
+    pub custom_room: Option<String>,
+    // Older documents do not have this field. Distinguish missing from an
+    // explicit null so unrelated peer edits cannot clear a local room.
+    #[serde(default)]
+    pub custom_room_set: bool,
     pub units: Option<f64>,
     pub target_grade: Option<f64>,
     pub sort_order: Option<i64>,
@@ -89,6 +94,7 @@ pub enum CourseField {
     CustomName(Option<String>),
     CustomColor(Option<String>),
     CustomCode(Option<String>),
+    CustomRoom(Option<String>),
     Units(Option<f64>),
     TargetGrade(Option<f64>),
     SortOrder(Option<i64>),
@@ -319,6 +325,10 @@ impl SyncDoc {
             CourseField::CustomName(v) => insert_opt_string(&m, "custom_name", v.as_deref())?,
             CourseField::CustomColor(v) => insert_opt_string(&m, "custom_color", v.as_deref())?,
             CourseField::CustomCode(v) => insert_opt_string(&m, "custom_code", v.as_deref())?,
+            CourseField::CustomRoom(v) => match v {
+                Some(room) => m.insert("custom_room", room.as_str())?,
+                None => m.insert("custom_room", LoroValue::Null)?,
+            },
             CourseField::Units(v) => insert_opt_f64(&m, "units", v)?,
             CourseField::TargetGrade(v) => insert_opt_f64(&m, "target_grade", v)?,
             CourseField::SortOrder(v) => insert_opt_i64(&m, "sort_order", v)?,
@@ -626,6 +636,8 @@ fn read_course_overlay(m: &LoroMap) -> CourseOverlay {
         custom_name: get_string(m, "custom_name"),
         custom_color: get_string(m, "custom_color"),
         custom_code: get_string(m, "custom_code"),
+        custom_room: get_string(m, "custom_room"),
+        custom_room_set: m.get("custom_room").is_some(),
         units: get_f64(m, "units"),
         target_grade: get_f64(m, "target_grade"),
         sort_order: get_i64(m, "sort_order"),
@@ -728,6 +740,8 @@ mod tests {
             custom_name: Some("Calculus I".into()),
             custom_color: Some("#abcdef".into()),
             custom_code: Some("MAT-101".into()),
+            custom_room: None,
+            custom_room_set: false,
             units: Some(3.0),
             target_grade: Some(95.0),
             sort_order: Some(7),
@@ -779,6 +793,26 @@ mod tests {
             d.get_assignment_overlay(key).unwrap().description.as_deref(),
             Some("Edited body, then more"),
         );
+    }
+
+    #[test]
+    fn custom_room_distinguishes_missing_override_from_explicit_reset() {
+        let d = SyncDoc::new();
+        d.set_course_overlay("12345", CourseField::IsPinned(true)).unwrap();
+        assert!(!d.get_course_overlay("12345").unwrap().custom_room_set);
+        d.set_course_overlay("12345", CourseField::CustomRoom(Some("Science Hall 214".into()))).unwrap();
+        let room = d.get_course_overlay("12345").unwrap();
+        assert_eq!(room.custom_room.as_deref(), Some("Science Hall 214"));
+        assert!(room.custom_room_set);
+        d.set_course_overlay("12345", CourseField::CustomRoom(None)).unwrap();
+        let room = d.get_course_overlay("12345").unwrap();
+        assert!(room.custom_room.is_none());
+        assert!(room.custom_room_set);
+        let stored = serde_json::to_string(&room).unwrap();
+        let restored: CourseOverlay = serde_json::from_str(&stored).unwrap();
+        assert_eq!(restored, room);
+        let old: CourseOverlay = serde_json::from_str("{}").unwrap();
+        assert!(!old.custom_room_set);
     }
 
     #[test]

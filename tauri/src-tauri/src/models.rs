@@ -9,6 +9,7 @@ pub struct Course {
     pub custom_name: Option<String>,
     pub code: Option<String>,
     pub custom_code: Option<String>,
+    pub custom_room: Option<String>,
     pub semester: Option<String>,
     pub custom_semester: Option<String>,
     #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]

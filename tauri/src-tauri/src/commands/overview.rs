@@ -49,7 +49,10 @@ pub async fn fetch_course_overview_attachment(
         return Err(AppError::Other("overview has no attachment".to_string()));
     }
 
-    let (bytes, mime, header_filename) = state.client.fetch_bytes(&url).await?;
+    let (bytes, mime, header_filename) = state.client.fetch_bytes_with_limit(
+        &url,
+        Some(crate::commands::assignment_detail::PREVIEW_MAX_BYTES),
+    ).await?;
     let filename = header_filename.unwrap_or(suggested_name);
     let bytes_base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(OverviewAttachment { bytes_base64, mime, filename })

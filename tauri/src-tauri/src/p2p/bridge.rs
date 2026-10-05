@@ -707,6 +707,7 @@ async fn write_course_to_sqlite(
            custom_color    = ?, \
            custom_name     = ?, \
            custom_code     = ?, \
+           custom_room     = CASE WHEN ? THEN ? ELSE custom_room END, \
            units           = COALESCE(?, units), \
            target_grade    = COALESCE(?, target_grade), \
            sort_order      = COALESCE(?, sort_order), \
@@ -719,6 +720,8 @@ async fn write_course_to_sqlite(
     .bind(o.custom_color.as_deref()) // None → SQL NULL: clearing the override
     .bind(o.custom_name.as_deref()) // None → SQL NULL: clearing the override
     .bind(o.custom_code.as_deref()) // None → SQL NULL: clearing the override
+    .bind(o.custom_room_set)
+    .bind(o.custom_room.as_deref())
     .bind(o.units)
     .bind(o.target_grade)
     .bind(o.sort_order)
@@ -1428,6 +1431,35 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn custom_room_persists_and_resets_without_old_overlays_clearing_it() {
+        let pool = mem_pool().await;
+        sqlx::query("INSERT INTO courses (org_unit_id, name, custom_room) VALUES ('room-test', 'Biology', '305')")
+            .execute(&pool).await.unwrap();
+        // Older peers and pending overlays omit this field entirely.
+        write_course_to_sqlite(&pool, "room-test", &CourseOverlay::default()).await.unwrap();
+        let room: Option<String> = sqlx::query_scalar("SELECT custom_room FROM courses WHERE org_unit_id = 'room-test'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(room.as_deref(), Some("305"));
+        let doc = SyncDoc::new();
+        doc.set_course_overlay("room-test", CourseField::CustomRoom(Some("Science Hall 214".into()))).unwrap();
+        write_course_to_sqlite(&pool, "room-test", &doc.get_course_overlay("room-test").unwrap()).await.unwrap();
+        let room: Option<String> = sqlx::query_scalar("SELECT custom_room FROM courses WHERE org_unit_id = 'room-test'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(room.as_deref(), Some("Science Hall 214"));
+        // Refreshing syllabus metadata preserves the user-owned column.
+        sqlx::query("UPDATE courses SET overview_raw = '{}' WHERE org_unit_id = 'room-test'")
+            .execute(&pool).await.unwrap();
+        let course = sqlx::query_as::<_, crate::models::Course>("SELECT * FROM courses WHERE org_unit_id = 'room-test'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(course.custom_room.as_deref(), Some("Science Hall 214"));
+        doc.set_course_overlay("room-test", CourseField::CustomRoom(None)).unwrap();
+        write_course_to_sqlite(&pool, "room-test", &doc.get_course_overlay("room-test").unwrap()).await.unwrap();
+        let room: Option<String> = sqlx::query_scalar("SELECT custom_room FROM courses WHERE org_unit_id = 'room-test'")
+            .fetch_one(&pool).await.unwrap();
+        assert!(room.is_none());
     }
 
     /// Wait up to 2s for `pred` (async closure) to return true. The
