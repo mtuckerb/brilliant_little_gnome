@@ -5,13 +5,13 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import CourseDetail from "./CourseDetail";
 import { api } from "../api";
-import { findCourseRoom } from "../lib/syllabusRoom";
+import { findCourseMeetingInfo } from "../lib/syllabusRoom";
 import type { Course } from "../types";
 
 vi.mock("../api", () => ({ api: {
-  getCourse: vi.fn(), getPrefs: vi.fn(), courseCacheStatus: vi.fn(), updateCourseRoom: vi.fn(),
+  getCourse: vi.fn(), getPrefs: vi.fn(), courseCacheStatus: vi.fn(), updateCourseRoom: vi.fn(), updateCourseSchedule: vi.fn(),
 } }));
-vi.mock("../lib/syllabusRoom", () => ({ findCourseRoom: vi.fn() }));
+vi.mock("../lib/syllabusRoom", () => ({ findCourseMeetingInfo: vi.fn() }));
 vi.mock("../components/ToastProvider", () => ({ useToast: () => ({ show: vi.fn() }) }));
 vi.mock("../components/SyllabusPanel", () => ({ default: () => null }));
 vi.mock("../components/ClassListPanel", () => ({ default: () => null }));
@@ -28,7 +28,8 @@ describe("room overrides on the course overview", () => {
     vi.mocked(api.getPrefs).mockResolvedValue({ cache_content: false } as Awaited<ReturnType<typeof api.getPrefs>>);
     vi.mocked(api.courseCacheStatus).mockResolvedValue({ count: 0, bytes: 0, last_cached_at: null });
     vi.mocked(api.updateCourseRoom).mockResolvedValue();
-    vi.mocked(findCourseRoom).mockResolvedValue({ room: "214", source: "Syllabus" });
+    vi.mocked(api.updateCourseSchedule).mockResolvedValue();
+    vi.mocked(findCourseMeetingInfo).mockResolvedValue({ room: "214", roomSource: "Syllabus" });
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -46,7 +47,16 @@ describe("room overrides on the course overview", () => {
         input.dispatchEvent(new Event("input", { bubbles: true }));
       });
       await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+      await act(async () => button("Set schedule").click());
+      const days = container.querySelector<HTMLInputElement>("#days-biology")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(days, "Friday");
+        days.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
       await act(async () => button("Edit title").click());
+      expect(api.updateCourseSchedule).toHaveBeenCalledWith("biology", "Friday", null);
+      expect(container.textContent).toContain("Friday");
       expect(api.updateCourseRoom).toHaveBeenCalledWith("biology", "305");
       expect(container.textContent).toContain("305");
       expect(container.textContent).toContain("Edited by you");

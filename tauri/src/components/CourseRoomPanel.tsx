@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { findCourseRoom, type SyllabusRoom } from "../lib/syllabusRoom";
+import CourseSchedulePanel from "./CourseSchedulePanel";
+import { findCourseMeetingInfo, type CourseMeetingInfo } from "../lib/syllabusRoom";
 
 interface Props {
   courseId: string;
   revision?: number;
+  customDays?: string | null;
+  customTime?: string | null;
+  onScheduleUpdated?: (days: string | null, time: string | null) => void;
   customRoom?: string | null;
   onRoomUpdated?: (room: string | null) => void;
 }
 
-export default function CourseRoomPanel({ courseId, revision = 0, customRoom = null, onRoomUpdated }: Props) {
-  const [result, setResult] = useState<{ courseId: string; room: SyllabusRoom | null; error?: string } | null>(null);
+export default function CourseRoomPanel({ courseId, revision = 0, customRoom = null, onRoomUpdated, customDays, customTime, onScheduleUpdated }: Props) {
+  const [result, setResult] = useState<{ courseId: string; info: CourseMeetingInfo; error?: string } | null>(null);
   const [override, setOverride] = useState({ courseId, room: customRoom });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -31,14 +35,14 @@ export default function CourseRoomPanel({ courseId, revision = 0, customRoom = n
   useEffect(() => {
     let cancelled = false;
     setResult(null);
-    findCourseRoom(courseId)
-      .then((room) => { if (!cancelled) setResult({ courseId, room }); })
-      .catch(() => { if (!cancelled) setResult({ courseId, room: null, error: "Could not read the syllabus. Sync this course to try again." }); });
+    findCourseMeetingInfo(courseId)
+      .then((info) => { if (!cancelled) setResult({ courseId, info }); })
+      .catch(() => { if (!cancelled) setResult({ courseId, info: {}, error: "Could not read the syllabus. Sync this course to try again." }); });
     return () => { cancelled = true; };
   }, [courseId, revision]);
   const current = result?.courseId === courseId ? result : null;
   const manualRoom = override.courseId === courseId ? override.room : customRoom;
-  const displayedRoom = manualRoom ?? current?.room?.room;
+  const displayedRoom = manualRoom ?? current?.info.room;
 
   function startEditing() {
     setDraft(displayedRoom ?? "");
@@ -66,6 +70,7 @@ export default function CourseRoomPanel({ courseId, revision = 0, customRoom = n
   }
 
   return (
+    <>
     <div className="box" aria-live="polite">
       <h2 className="title is-6 mb-2"><i className="fas fa-door-open mr-2 has-text-grey" aria-hidden="true"></i>Room number</h2>
       {editing ? (
@@ -82,9 +87,9 @@ export default function CourseRoomPanel({ courseId, revision = 0, customRoom = n
           </div>
         </form>
       ) : <>
-      {displayedRoom ? <><p className="has-text-weight-semibold">{displayedRoom}</p><p className="help">{manualRoom !== null ? "Edited by you" : `From ${current?.room?.source}`}</p></>
+      {displayedRoom ? <><p className="has-text-weight-semibold">{displayedRoom}</p><p className="help">{manualRoom !== null ? "Edited by you" : `From ${current?.info.roomSource}`}</p></>
         : !current ? <p className="has-text-grey is-size-7">Checking syllabus…</p>
-        : <p className="has-text-grey is-size-7">{current.error ?? "No room number found in the syllabus."}</p>}
+        : <p className="has-text-grey is-size-7">{current.error ?? current.info.error ?? "No room number found in the syllabus."}</p>}
       <div className="buttons mt-3 mb-0">
         <button type="button" className="button is-small" disabled={saving} onClick={startEditing}>{displayedRoom ? "Edit room" : "Set room"}</button>
         {manualRoom !== null && <button type="button" className="button is-small is-light" disabled={saving} onClick={() => saveRoom(null)}>{saving ? "Saving…" : "Use syllabus"}</button>}
@@ -92,5 +97,8 @@ export default function CourseRoomPanel({ courseId, revision = 0, customRoom = n
       </>}
       {saveError && <p className="help is-danger" role="alert">{saveError}</p>}
     </div>
+    <CourseSchedulePanel courseId={courseId} info={current ? { ...current.info, error: current.error ?? current.info.error } : null}
+      customDays={customDays} customTime={customTime} onScheduleUpdated={onScheduleUpdated} />
+    </>
   );
 }

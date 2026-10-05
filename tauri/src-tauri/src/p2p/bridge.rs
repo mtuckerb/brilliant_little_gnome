@@ -708,6 +708,8 @@ async fn write_course_to_sqlite(
            custom_name     = ?, \
            custom_code     = ?, \
            custom_room     = CASE WHEN ? THEN ? ELSE custom_room END, \
+           custom_meeting_days = CASE WHEN ? THEN ? ELSE custom_meeting_days END, \
+           custom_meeting_time = CASE WHEN ? THEN ? ELSE custom_meeting_time END, \
            units           = COALESCE(?, units), \
            target_grade    = COALESCE(?, target_grade), \
            sort_order      = COALESCE(?, sort_order), \
@@ -722,6 +724,10 @@ async fn write_course_to_sqlite(
     .bind(o.custom_code.as_deref()) // None → SQL NULL: clearing the override
     .bind(o.custom_room_set)
     .bind(o.custom_room.as_deref())
+    .bind(o.custom_meeting_days_set)
+    .bind(o.custom_meeting_days.as_deref())
+    .bind(o.custom_meeting_time_set)
+    .bind(o.custom_meeting_time.as_deref())
     .bind(o.units)
     .bind(o.target_grade)
     .bind(o.sort_order)
@@ -1431,6 +1437,36 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn meeting_schedule_survives_old_peers_and_resets_explicitly() {
+        let pool = mem_pool().await;
+        sqlx::query("INSERT INTO courses (org_unit_id, name, custom_meeting_days, custom_meeting_time) VALUES ('schedule-test', 'Biology', 'Monday', '9 AM')")
+            .execute(&pool).await.unwrap();
+        write_course_to_sqlite(&pool, "schedule-test", &CourseOverlay::default()).await.unwrap();
+        let course = sqlx::query_as::<_, crate::models::Course>("SELECT * FROM courses WHERE org_unit_id = 'schedule-test'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(course.custom_meeting_days.as_deref(), Some("Monday"));
+        assert_eq!(course.custom_meeting_time.as_deref(), Some("9 AM"));
+        let doc = SyncDoc::new();
+        doc.set_course_overlay("schedule-test", CourseField::CustomMeetingDays(Some("Tuesday, Thursday".into()))).unwrap();
+        doc.set_course_overlay("schedule-test", CourseField::CustomMeetingTime(Some("10:00–11:15 AM".into()))).unwrap();
+        let peer = SyncDoc::new();
+        peer.doc().import(&doc.doc().export(loro::ExportMode::Snapshot).unwrap()).unwrap();
+        write_course_to_sqlite(&pool, "schedule-test", &peer.get_course_overlay("schedule-test").unwrap()).await.unwrap();
+        let course = sqlx::query_as::<_, crate::models::Course>("SELECT * FROM courses WHERE org_unit_id = 'schedule-test'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(course.custom_meeting_days.as_deref(), Some("Tuesday, Thursday"));
+        assert_eq!(course.custom_meeting_time.as_deref(), Some("10:00–11:15 AM"));
+        doc.set_course_overlay("schedule-test", CourseField::CustomMeetingDays(None)).unwrap();
+        doc.set_course_overlay("schedule-test", CourseField::CustomMeetingTime(None)).unwrap();
+        peer.doc().import(&doc.doc().export(loro::ExportMode::Snapshot).unwrap()).unwrap();
+        write_course_to_sqlite(&pool, "schedule-test", &peer.get_course_overlay("schedule-test").unwrap()).await.unwrap();
+        let course = sqlx::query_as::<_, crate::models::Course>("SELECT * FROM courses WHERE org_unit_id = 'schedule-test'")
+            .fetch_one(&pool).await.unwrap();
+        assert!(course.custom_meeting_days.is_none());
+        assert!(course.custom_meeting_time.is_none());
     }
 
     #[tokio::test]

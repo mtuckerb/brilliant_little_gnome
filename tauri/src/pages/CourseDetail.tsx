@@ -170,7 +170,7 @@ export default function CourseDetail() {
     <div>
       <HeaderBand courseId={course.org_unit_id} onCourseUpdated={(updated) => setCourse((current) =>
         current?.org_unit_id === updated.org_unit_id
-          ? { ...updated, custom_room: current.custom_room }
+          ? { ...updated, custom_room: current.custom_room, custom_meeting_days: current.custom_meeting_days, custom_meeting_time: current.custom_meeting_time }
           : updated)} />
 
       <div className="is-flex is-align-items-center is-flex-wrap-wrap mb-4" style={{ gap: 12 }}>
@@ -231,9 +231,13 @@ export default function CourseDetail() {
       </div>
 
       <CourseRoomPanel
-        key={course.org_unit_id}
+        key={`meeting-${course.org_unit_id}`}
         courseId={course.org_unit_id}
         revision={syllabusRevision}
+        customDays={course.custom_meeting_days}
+        customTime={course.custom_meeting_time}
+        onScheduleUpdated={(days, time) => setCourse((current) => current?.org_unit_id === course.org_unit_id
+          ? { ...current, custom_meeting_days: days, custom_meeting_time: time } : current)}
         customRoom={course.custom_room}
         onRoomUpdated={(room) => setCourse((current) => current?.org_unit_id === course.org_unit_id
           ? { ...current, custom_room: room } : current)}

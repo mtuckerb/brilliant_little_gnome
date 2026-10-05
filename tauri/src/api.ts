@@ -71,6 +71,8 @@ export const api = {
     invoke<Course>("update_course_name", { id, name }),
   updateCourseCode: (id: string, code: string | null) =>
     invoke<void>("update_course_code", { id, code }),
+  updateCourseSchedule: (id: string, days: string | null, time: string | null) =>
+    invoke<void>("update_course_schedule", { id, days, time }),
   updateCourseRoom: (id: string, room: string | null) =>
     invoke<void>("update_course_room", { id, room }),
   updateCourseSemester: (id: string, semester: string | null) =>
