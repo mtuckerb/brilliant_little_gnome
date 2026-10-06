@@ -24,6 +24,21 @@ class ZoteroPushHost
       end
     end
   end
+
+  # Mirror of Brilliant::Sync::NotificationService#push_updated_content_to_zotero.
+  def push_updated_content_to_zotero(updated_items)
+    return if updated_items.nil? || updated_items.empty?
+    return unless defined?(Brilliant::Zotero) && Brilliant::Zotero.enabled?
+
+    updated_items.each do |n|
+      next unless n[:notification_type].to_s == 'Content'
+      begin
+        Brilliant::Zotero.update_content(n)
+      rescue => e
+        warn "[ZoteroPushHost] Zotero update failed for #{n[:external_id]}: #{e.message}"
+      end
+    end
+  end
 end
 
 class ZoteroPushDispatchTest < Minitest::Test
@@ -98,5 +113,79 @@ class ZoteroPushDispatchTest < Minitest::Test
       @host.push_new_content_to_zotero([CONTENT, CONTENT.merge(external_id: 'content_2')])
     end
     assert_equal 2, failing_first.calls.length
+  end
+end
+
+class ZoteroUpdateDispatchTest < Minitest::Test
+  include ZoteroTestEnv
+
+  CONTENT = {
+    external_id: 'content_1', course_id: '1',
+    notification_type: 'Content', title: 'Content Updated: A',
+    body: 'b2', url: '/u', course_name: 'C', date: '2026-01-02T00:00:00Z'
+  }.freeze
+
+  NEWS = {
+    external_id: 'news_1', course_id: '1',
+    notification_type: 'News', title: 'Hi',
+    body: 'b', url: '/u', course_name: 'C', date: '2026-01-01T00:00:00Z'
+  }.freeze
+
+  def setup
+    reset_zotero_client!
+    @host = ZoteroPushHost.new
+  end
+
+  def teardown
+    reset_zotero_client!
+  end
+
+  def test_disabled_no_update_attempted
+    fake = FakeZoteroClient.new(seed: { 'content_1' => { key: 'K', version: 1, data: {} } })
+    Brilliant::Zotero.client = fake
+    with_env('ZOTERO_ENABLED' => nil,
+             'ZOTERO_API_KEY' => 'k',
+             'ZOTERO_USER_ID' => '123') do
+      @host.push_updated_content_to_zotero([CONTENT, NEWS])
+    end
+    assert_empty fake.finds
+    assert_empty fake.updates
+  end
+
+  def test_only_content_rows_are_updated
+    fake = FakeZoteroClient.new(seed: { 'content_1' => { key: 'K', version: 3, data: {} } })
+    Brilliant::Zotero.client = fake
+    with_env('ZOTERO_ENABLED' => 'true',
+             'ZOTERO_API_KEY' => 'k',
+             'ZOTERO_USER_ID' => '123') do
+      @host.push_updated_content_to_zotero([CONTENT, NEWS])
+    end
+    assert_equal ['content_1'], fake.finds, 'News rows must not be resolved/updated'
+    assert_equal 1, fake.updates.length
+    assert_equal 'K', fake.updates.first[:key]
+  end
+
+  def test_missing_identifier_is_handled_gracefully
+    fake = FakeZoteroClient.new(seed: {})
+    Brilliant::Zotero.client = fake
+    with_env('ZOTERO_ENABLED' => 'true',
+             'ZOTERO_API_KEY' => 'k',
+             'ZOTERO_USER_ID' => '123') do
+      @host.push_updated_content_to_zotero([CONTENT.merge(external_id: '')])
+    end
+    assert_empty fake.finds, 'no identifier -> no resolve attempt'
+    assert_empty fake.updates
+    assert_empty fake.calls
+  end
+
+  def test_per_item_failure_does_not_abort_batch
+    failing = FakeZoteroClient.new(raise_on_call: Brilliant::Zotero::Error.new('nope'))
+    Brilliant::Zotero.client = failing
+    with_env('ZOTERO_ENABLED' => 'true',
+             'ZOTERO_API_KEY' => 'k',
+             'ZOTERO_USER_ID' => '123') do
+      @host.push_updated_content_to_zotero([CONTENT, CONTENT.merge(external_id: 'content_2')])
+    end
+    assert_equal 2, failing.finds.length, 'dispatcher keeps going after a failure'
   end
 end

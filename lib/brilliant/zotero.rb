@@ -68,6 +68,43 @@ module Brilliant
       false
     end
 
+    # Refresh an existing Brightspace content item in Zotero in response to a
+    # "Content Updated" notification. Resolves the existing Zotero item by the
+    # brilliant_external_id we stamped into `extra` at creation time, then
+    # PATCHes it in place so we never create a duplicate. If the content was
+    # never pushed before (no match in the library) we create it once \u2014 still
+    # duplicate-safe because we only create after an explicit lookup miss.
+    #
+    # When the notification carries no usable identifier we log and skip: no
+    # raise, no retry storm. Returns truthy when an update or first-time create
+    # happened (or when integration is disabled \u2014 a no-op is success from the
+    # caller's perspective). Never raises.
+    def self.update_content(notification_data)
+      return false unless enabled?
+      return false unless notification_data
+      return false unless notification_data[:notification_type].to_s == 'Content'
+
+      external_id = notification_data[:external_id].to_s
+      if external_id.strip.empty?
+        warn '[Brilliant::Zotero] update_content skipped: notification has no external_id'
+        return false
+      end
+
+      existing = client.find_item_by_external_id(external_id)
+      payload = build_item_payload(notification_data)
+
+      if existing.nil?
+        warn "[Brilliant::Zotero] update_content: no existing item for #{external_id}; creating"
+        client.post_item(payload)
+      else
+        client.update_item(existing[:key], existing[:version], payload)
+      end
+      true
+    rescue StandardError => e
+      warn "[Brilliant::Zotero] update_content failed: #{e.class}: #{e.message}"
+      false
+    end
+
     def self.build_item_payload(n)
       title = n[:title].to_s
       title = 'Brightspace Content' if title.empty?
@@ -111,6 +148,71 @@ module Brilliant
         req['Zotero-API-Key'] = api_key
         req['Content-Type'] = 'application/json'
         req.body = JSON.generate([item])
+
+        http = Net::HTTP.new(uri.host, uri.port)
+        http.use_ssl = uri.scheme == 'https'
+        http.open_timeout = 5
+        http.read_timeout = 10
+
+        res = http.request(req)
+        unless res.is_a?(Net::HTTPSuccess)
+          raise Error, "Zotero API #{res.code}: #{res.body.to_s[0, 200]}"
+        end
+
+        res
+      end
+
+      # Look up an existing Zotero item previously created for this Brightspace
+      # content, matched by the brilliant_external_id we stamp into `extra`.
+      # Returns { key:, version:, data: } for the first match, or nil when no
+      # corresponding Zotero item exists yet.
+      def find_item_by_external_id(external_id)
+        query = URI.encode_www_form(
+          'q' => external_id.to_s,
+          'qmode' => 'everything',
+          'itemType' => 'webpage'
+        )
+        uri = URI.parse("#{api_base}/users/#{user_id}/items?#{query}")
+        req = Net::HTTP::Get.new(uri)
+        req['Zotero-API-Key'] = api_key
+
+        http = Net::HTTP.new(uri.host, uri.port)
+        http.use_ssl = uri.scheme == 'https'
+        http.open_timeout = 5
+        http.read_timeout = 10
+
+        res = http.request(req)
+        unless res.is_a?(Net::HTTPSuccess)
+          raise Error, "Zotero API #{res.code}: #{res.body.to_s[0, 200]}"
+        end
+
+        items = JSON.parse(res.body.to_s)
+        return nil unless items.is_a?(Array)
+
+        needle = "brilliant_external_id: #{external_id}"
+        match = items.find do |it|
+          data = it.is_a?(Hash) ? (it['data'] || {}) : {}
+          data['extra'].to_s.include?(needle)
+        end
+        return nil unless match
+
+        {
+          key: match['key'] || match.dig('data', 'key'),
+          version: match['version'] || match.dig('data', 'version'),
+          data: match['data']
+        }
+      end
+
+      # PATCH an existing Zotero item in place. If-Unmodified-Since-Version
+      # guards against silently clobbering a concurrent edit (Zotero returns
+      # 412 if the version is stale, which surfaces as Error here).
+      def update_item(item_key, version, item)
+        uri = URI.parse("#{api_base}/users/#{user_id}/items/#{item_key}")
+        req = Net::HTTP::Patch.new(uri)
+        req['Zotero-API-Key'] = api_key
+        req['Content-Type'] = 'application/json'
+        req['If-Unmodified-Since-Version'] = version.to_s
+        req.body = JSON.generate(item)
 
         http = Net::HTTP.new(uri.host, uri.port)
         http.use_ssl = uri.scheme == 'https'
