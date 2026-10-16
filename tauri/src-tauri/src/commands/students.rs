@@ -104,7 +104,7 @@ pub async fn import_students(state: AppStateArg<'_>, force: bool) -> Result<Stud
         failed_courses: vec![],
     };
     for (id, name) in courses {
-        match crate::sync::roster::sync(state.inner().as_ref(), &id, force).await {
+        match crate::sync::roster::sync(state.inner().as_ref(), &id).await {
             Ok(count) if count > 0 => {
                 result.imported_courses += 1;
                 state.events.course_updated(&id);
@@ -230,7 +230,7 @@ mod tests {
                ('new', 'me', 'Me', 'Student'), ('old', 'teacher', 'Teacher', 'Instructor'),
                ('new', 'preview', 'Preview', 'Preview Learner');",
         ).execute(&pool).await.unwrap();
-        sqlx::raw_sql(include_str!("../../migrations/0022_students.sql"))
+        sqlx::raw_sql(include_str!("../../migrations/0024_students.sql"))
             .execute(&pool)
             .await
             .unwrap();

@@ -24,7 +24,14 @@ struct RosterSeed {
 /// the last-known roster the user asked Brilliant to keep.
 pub async fn sync(state: &AppState, course_id: &str) -> Result<usize> {
     let raw = state.client.get_classlist(course_id).await?;
-    save_roster(&state.pool, course_id, &raw).await
+    let count = save_roster(&state.pool, course_id, &raw).await?;
+    state.events.emit("students:updated", ());
+    // Photo permissions and transient photo errors must not turn a saved roster
+    // into a failed class-list refresh.
+    if let Err(error) = import_avatars(state, &parse_classlist(&raw)).await {
+        tracing::warn!("Could not import student photos: {}", error);
+    }
+    Ok(count)
 }
 
 async fn save_roster(pool: &SqlitePool, course_id: &str, raw: &[Value]) -> Result<usize> {
@@ -64,8 +71,6 @@ async fn save_roster(pool: &SqlitePool, course_id: &str, raw: &[Value]) -> Resul
     // Capture learners and course history before the replaceable roster commits.
     archive_students(&mut tx, course_id).await?;
     tx.commit().await?;
-    state.events.emit("students:updated", ());
-    import_avatars(state, &people).await?;
     Ok(people.len())
 }
 
@@ -120,7 +125,11 @@ async fn import_avatars(state: &AppState, people: &[RosterSeed]) -> Result<()> {
                 state.client.fetch_bytes_with_limit(&path, Some(MAX_AVATAR_BYTES))).await;
             let avatar = match fetched {
                 Ok(Ok((bytes, _, _))) => avatar_data_url(&bytes),
-                _ => None,
+                // A private or missing photo is final for this import. A
+                // timeout/server/network failure remains eligible for retry on
+                // the next roster refresh instead of becoming permanent.
+                Ok(Err(AppError::BrightspaceApi { status: 403 | 404, .. })) => None,
+                _ => return,
             };
             if let Err(e) = sqlx::query(
                 "UPDATE students SET imported_avatar = COALESCE(imported_avatar, ?), avatar_import_attempted = 1
@@ -222,10 +231,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::raw_sql(include_str!("../../migrations/0020_course_roster.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let person = json!({"Identifier": "1", "DisplayName": "Saved student"});
         save_roster(&pool, "a", &[person.clone()]).await.unwrap();
         save_roster(&pool, "b", &[person.clone()]).await.unwrap();
