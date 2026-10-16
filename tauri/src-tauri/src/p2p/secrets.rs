@@ -31,7 +31,11 @@ use crate::error::{AppError, Result};
 use sqlx::SqlitePool;
 use tracing::{info, warn};
 
+#[cfg(not(test))]
 const SERVICE: &str = "brilliant.sync";
+// Test runs must never read, overwrite, or delete the installed app's keys.
+#[cfg(test)]
+const SERVICE: &str = "brilliant.sync.tests";
 
 /// Secret kinds we persist. Each maps to a fixed keyring `account`
 /// and the matching `app_state` row key.
@@ -190,6 +194,10 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
 
+    // These integration tests share keychain slots; keep cleanup and writes
+    // inside a single test at a time.
+    static KEYCHAIN_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     async fn mem_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -205,6 +213,7 @@ mod tests {
     /// without secret-service hit, so it must work.
     #[tokio::test]
     async fn load_falls_back_to_app_state_when_keychain_empty() {
+        let _guard = KEYCHAIN_TEST_LOCK.lock().await;
         // Ensure a clean keychain slot for this test.
         keychain_delete(SecretKind::SyncDocSecret);
 
@@ -228,6 +237,7 @@ mod tests {
     /// covered by manual QA on systems without keyutils.
     #[tokio::test]
     async fn store_via_keychain_clears_app_state_copy() {
+        let _guard = KEYCHAIN_TEST_LOCK.lock().await;
         // Skip on platforms where keychain access fails in CI (a
         // raw setup test won't even be able to call set_password).
         // Linux kernel keyutils sandboxes test runners differently
@@ -269,6 +279,7 @@ mod tests {
     /// second call after the migration is a no-op.
     #[tokio::test]
     async fn migrate_to_keychain_moves_existing_secret() {
+        let _guard = KEYCHAIN_TEST_LOCK.lock().await;
         let probe = keyring::Entry::new(SERVICE, "_probe");
         if probe.is_err() || probe.unwrap().set_password("probe").is_err() {
             eprintln!("keychain unavailable in this test environment, skipping");
