@@ -25,6 +25,7 @@ export interface Course {
 }
 
 export interface CourseRosterPerson {
+  avatar: string | null;
   brightspace_user_id: string;
   display_name: string;
   first_name: string | null;
@@ -315,4 +316,20 @@ export interface StorageStats {
   snapshotBytes: number;
   walBytes: number;
   walEntries: number;
+}
+
+export interface Student {
+  brightspace_user_id: string;
+  display_name: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  pronouns: string | null;
+  avatar: string | null;
+  avatar_overridden: boolean;
+  courses: { course_id: string; name: string; semester: string | null; available: boolean }[];
+}
+export interface StudentImportResult {
+  imported_courses: number;
+  failed_courses: string[];
 }

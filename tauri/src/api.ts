@@ -19,6 +19,8 @@ export interface UpdateInfo {
 import type {
   Course,
   CourseRoster,
+  Student,
+  StudentImportResult,
   GradeRow,
   GradeStats,
   Assignment,
@@ -93,6 +95,12 @@ export const api = {
   deleteCourse: (id: string) =>
     invoke<void>("delete_course", { id }),
   refreshCourse: (id: string) => invoke<void>("refresh_course", { id }),
+
+  // Permanent student directory
+  listStudents: () => invoke<Student[]>("list_students"),
+  importStudents: (force = false) => invoke<StudentImportResult>("import_students", { force }),
+  updateStudentAvatar: (studentId: string, avatar: string | null) =>
+    invoke<void>("update_student_avatar", { studentId, avatar }),
 
   // Class list
   getCourseRoster: (courseId: string) =>

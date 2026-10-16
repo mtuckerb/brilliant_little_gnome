@@ -22,7 +22,7 @@ const roster: CourseRoster = {
   people: [{
     brightspace_user_id: "student-1", display_name: "Ada Example",
     first_name: "Ada", last_name: "Example", email: "ada@school.test",
-    role_name: "Student", pronouns: null, is_current_user: false,
+    role_name: "Student", pronouns: null, avatar: null, is_current_user: false,
   }],
 };
 

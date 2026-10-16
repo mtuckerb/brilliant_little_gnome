@@ -67,6 +67,7 @@ const TABS: Tab[] = [
   { to: "/dashboard", icon: "fa-book", label: "Courses", matchPrefix: "/dashboard" },
   { to: "/calendar", icon: "fa-calendar-days", label: "Calendar", matchPrefix: "/calendar" },
   { to: "/notifications", icon: "fa-bell", label: "Alerts", matchPrefix: "/notifications" },
+  { to: "/students", icon: "fa-user-group", label: "Students", matchPrefix: "/students" },
   { to: "/settings", icon: "fa-cog", label: "Settings", matchPrefix: "/settings" },
 ];
 

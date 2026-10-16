@@ -17,6 +17,7 @@ pub struct CourseRosterPerson {
     pub email: Option<String>,
     pub role_name: Option<String>,
     pub pronouns: Option<String>,
+    pub avatar: Option<String>,
     #[sqlx(skip)]
     pub is_current_user: bool,
 }
@@ -89,19 +90,7 @@ pub async fn download_course_roster(
 }
 
 async fn load_roster(state: &crate::state::AppState, course_id: &str) -> Result<CourseRoster> {
-    let mut people = sqlx::query_as::<_, CourseRosterPerson>(
-        "SELECT brightspace_user_id, display_name, first_name, last_name, email,
-                role_name, pronouns
-         FROM course_roster
-         WHERE course_id = ?
-         ORDER BY
-           CASE WHEN LOWER(COALESCE(role_name, '')) LIKE '%instructor%' THEN 0 ELSE 1 END,
-           LOWER(COALESCE(last_name, display_name)),
-           LOWER(COALESCE(first_name, display_name))",
-    )
-    .bind(course_id)
-    .fetch_all(&state.pool)
-    .await?;
+    let mut people = load_people(&state.pool, course_id).await?;
 
     let current_user_id = state.client.user_id_clone();
     for person in &mut people {
@@ -119,6 +108,25 @@ async fn load_roster(state: &crate::state::AppState, course_id: &str) -> Result<
     .await?;
 
     Ok(CourseRoster { people, synced_at })
+}
+
+async fn load_people(pool: &sqlx::SqlitePool, course_id: &str) -> Result<Vec<CourseRosterPerson>> {
+    let people = sqlx::query_as::<_, CourseRosterPerson>(
+        "SELECT r.brightspace_user_id, r.display_name, r.first_name, r.last_name, r.email,
+                r.role_name, r.pronouns,
+                CASE WHEN s.avatar_overridden THEN s.custom_avatar ELSE s.imported_avatar END AS avatar
+         FROM course_roster r LEFT JOIN students s ON s.brightspace_user_id = r.brightspace_user_id
+         WHERE r.course_id = ?
+         ORDER BY
+           CASE WHEN LOWER(COALESCE(role_name, '')) LIKE '%instructor%' THEN 0 ELSE 1 END,
+           LOWER(COALESCE(r.last_name, r.display_name)),
+           LOWER(COALESCE(r.first_name, r.display_name))",
+    )
+    .bind(course_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(people)
 }
 
 /// Quote every CSV field and neutralize formula-like prefixes so opening a
@@ -141,6 +149,31 @@ fn csv_cell(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::csv_cell;
+
+    #[tokio::test]
+    async fn class_lists_share_the_student_avatar_and_preserve_instructors() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::raw_sql("INSERT INTO course_roster (course_id, brightspace_user_id, display_name, role_name) VALUES
+          ('class', 'ada', 'Ada', 'Student'), ('class', 'teacher', 'Teacher', 'Instructor');
+          INSERT INTO students (brightspace_user_id, display_name, imported_avatar, custom_avatar, avatar_overridden)
+          VALUES ('ada', 'Ada', 'imported', 'custom', 1);").execute(&pool).await.unwrap();
+        let people = super::load_people(&pool, "class").await.unwrap();
+        assert_eq!(people.len(), 2);
+        assert_eq!(people[0].display_name, "Teacher");
+        assert!(people[0].avatar.is_none());
+        assert_eq!(people[1].avatar.as_deref(), Some("custom"));
+        sqlx::query("UPDATE students SET custom_avatar = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let people = super::load_people(&pool, "class").await.unwrap();
+        assert!(people[1].avatar.is_none());
+    }
 
     #[test]
     fn csv_cell_quotes_and_neutralizes_formula_prefixes() {

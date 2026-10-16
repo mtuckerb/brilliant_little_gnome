@@ -66,7 +66,11 @@ export default function ClassListPanel({ courseId }: Props) {
         if (active) setRoster(next);
       }).catch(() => {});
     });
+    const unlistenStudents = listen("students:updated", () => {
+      api.getCourseRoster(courseId).then((next) => { if (active) setRoster(next); }).catch(() => {});
+    });
     return () => {
+      unlistenStudents.then((stop) => stop()).catch(() => {});
       active = false;
       unlisten.then((stop) => stop()).catch(() => {});
     };
@@ -221,7 +225,7 @@ export default function ClassListPanel({ courseId }: Props) {
         <div className="class-list-grid">
           {visiblePeople.map((person) => (
             <article className="class-list-person" key={person.brightspace_user_id}>
-              <div className="class-list-avatar" aria-hidden="true">{initials(person)}</div>
+              <div className="class-list-avatar" aria-hidden="true">{person.avatar ? <img src={person.avatar} alt="" /> : initials(person)}</div>
               <div className="class-list-person-details">
                 <div className="is-flex is-align-items-center is-flex-wrap-wrap" style={{ gap: 5 }}>
                   <strong className="is-size-7">{person.display_name}</strong>
