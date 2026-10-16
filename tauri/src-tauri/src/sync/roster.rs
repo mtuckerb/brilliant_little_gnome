@@ -61,8 +61,76 @@ async fn save_roster(pool: &SqlitePool, course_id: &str, raw: &[Value]) -> Resul
         .await?;
     }
 
+    // Capture learners and course history before the replaceable roster commits.
+    archive_students(&mut tx, course_id).await?;
     tx.commit().await?;
+    state.events.emit("students:updated", ());
+    import_avatars(state, &people).await?;
     Ok(people.len())
+}
+
+/// Never deletes a student or a historical membership, and never touches avatars.
+pub(crate) async fn archive_students(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    course_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO students (brightspace_user_id, display_name, first_name, last_name, email, pronouns)
+         SELECT brightspace_user_id, display_name, first_name, last_name, email, pronouns
+         FROM course_roster WHERE course_id = ?
+           AND (LOWER(COALESCE(role_name, '')) LIKE '%student%' OR LOWER(COALESCE(role_name, '')) LIKE '%learner%')
+           AND LOWER(COALESCE(role_name, '')) NOT LIKE '%preview%'
+         ON CONFLICT(brightspace_user_id) DO UPDATE SET
+           display_name = excluded.display_name,
+           first_name = COALESCE(excluded.first_name, students.first_name),
+           last_name = COALESCE(excluded.last_name, students.last_name),
+           email = COALESCE(excluded.email, students.email),
+           pronouns = COALESCE(excluded.pronouns, students.pronouns), updated_at = CURRENT_TIMESTAMP",
+    ).bind(course_id).execute(&mut **tx).await?;
+    sqlx::query(
+        "INSERT INTO student_courses (brightspace_user_id, course_id, course_name, semester)
+         SELECT r.brightspace_user_id, r.course_id, COALESCE(c.name, r.course_id), c.semester
+         FROM course_roster r LEFT JOIN courses c ON c.org_unit_id = r.course_id
+         WHERE r.course_id = ? AND (LOWER(COALESCE(r.role_name, '')) LIKE '%student%'
+           OR LOWER(COALESCE(r.role_name, '')) LIKE '%learner%')
+           AND LOWER(COALESCE(r.role_name, '')) NOT LIKE '%preview%'
+         ON CONFLICT(brightspace_user_id, course_id) DO UPDATE SET
+           course_name = excluded.course_name, semester = COALESCE(excluded.semester, student_courses.semester)",
+    ).bind(course_id).execute(&mut **tx).await?;
+    sqlx::query("INSERT OR REPLACE INTO student_roster_imports (course_id) VALUES (?)")
+        .bind(course_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn import_avatars(state: &AppState, people: &[RosterSeed]) -> Result<()> {
+    use crate::commands::students::{avatar_data_url, MAX_AVATAR_BYTES};
+    use futures::{stream, StreamExt};
+    let pending: std::collections::HashSet<String> = sqlx::query_scalar(
+        "SELECT brightspace_user_id FROM students WHERE avatar_import_attempted = 0 AND avatar_overridden = 0",
+    ).fetch_all(&state.pool).await?.into_iter().collect();
+    stream::iter(people.iter().filter(|p| pending.contains(&p.brightspace_user_id)))
+        .for_each_concurrent(4, |person| async move {
+            // User-ID endpoint avoids treating Brightspace's opaque profile ID as a user ID.
+            // https://docs.valence.desire2learn.com/res/user.html
+            let id: String = url::form_urlencoded::byte_serialize(person.brightspace_user_id.as_bytes()).collect();
+            let path = format!("/d2l/api/lp/1.49/profile/user/{}/image?size=96", id);
+            let fetched = tokio::time::timeout(std::time::Duration::from_secs(8),
+                state.client.fetch_bytes_with_limit(&path, Some(MAX_AVATAR_BYTES))).await;
+            let avatar = match fetched {
+                Ok(Ok((bytes, _, _))) => avatar_data_url(&bytes),
+                _ => None,
+            };
+            if let Err(e) = sqlx::query(
+                "UPDATE students SET imported_avatar = COALESCE(imported_avatar, ?), avatar_import_attempted = 1
+                 WHERE brightspace_user_id = ?",
+            ).bind(avatar).bind(&person.brightspace_user_id).execute(&state.pool).await {
+                tracing::warn!("Could not save student avatar: {}", e);
+            }
+        }).await;
+    state.events.emit("students:updated", ());
+    Ok(())
 }
 
 fn parse_classlist(items: &[Value]) -> Vec<RosterSeed> {

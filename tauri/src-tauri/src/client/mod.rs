@@ -352,7 +352,8 @@ impl BrightspaceClient {
     fn is_resource_scoped_auth_failure(path: &str, status: StatusCode) -> bool {
         status == StatusCode::FORBIDDEN
             && (is_discussion_resource_path(path)
-                || (path.starts_with("/d2l/api/le/") && path.contains("/classlist/")))
+                || (path.starts_with("/d2l/api/le/") && path.contains("/classlist/"))
+                || (path.starts_with("/d2l/api/lp/") && path.contains("/profile/") && path.split('?').next().unwrap_or(path).ends_with("/image")))
     }
 
     /// GET a JSON path with cache-aware semantics. Returns `Value` so callers can
@@ -589,6 +590,7 @@ impl BrightspaceClient {
             if !status.is_success() {
                 if attempt == 0
                     && matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+                    && !Self::is_resource_scoped_auth_failure(url_or_path, status)
                     && self.maybe_mark_auth_failure(url_or_path, status).await
                 {
                     continue;
@@ -1050,6 +1052,13 @@ mod tests {
             assert!(is_discussion_resource_path(path), "{path}");
             assert!(BrightspaceClient::is_resource_scoped_auth_failure(path, StatusCode::FORBIDDEN), "{path}");
         }
+    }
+
+    #[test]
+    fn private_profile_images_do_not_invalidate_a_working_session() {
+        let path = "/d2l/api/lp/1.49/profile/user/123/image?size=96";
+        assert!(BrightspaceClient::is_resource_scoped_auth_failure(path, StatusCode::FORBIDDEN));
+        assert!(!BrightspaceClient::is_resource_scoped_auth_failure(path, StatusCode::UNAUTHORIZED));
     }
 
     #[test]

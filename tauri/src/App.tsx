@@ -25,6 +25,7 @@ import DiscussionTopic from "./pages/DiscussionTopic";
 import CourseAnnouncements from "./pages/CourseAnnouncements";
 import CourseSearch from "./pages/CourseSearch";
 import Archive from "./pages/Archive";
+import Students from "./pages/Students";
 import { ToastProvider, useToast } from "./components/ToastProvider";
 import DownloadsTray from "./components/DownloadsTray";
 import { useExternalLinkInterceptor } from "./hooks/useExternalLinkInterceptor";
@@ -167,6 +168,7 @@ function AppInner() {
         <Route path="/course/:id/search" element={<CourseSearch />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/calendar" element={<Calendar />} />
+        <Route path="/students" element={<Students />} />
         <Route path="/archive" element={<Archive />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/reauth" element={<Reauth onComplete={setAuth} host={auth.host} />} />

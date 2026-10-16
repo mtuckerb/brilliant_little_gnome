@@ -186,6 +186,9 @@ function SidebarFooter({ search, onSearchChange, isOnRoute }: FooterProps) {
         <Link to="/notifications" title="Notifications" aria-label="Notifications">
           <i className="fas fa-bell" style={iconStyle(isOnRoute("/notifications"))}></i>
         </Link>
+        <Link to="/students" title="Students" aria-label="Students">
+          <i className="fas fa-user-group" style={iconStyle(isOnRoute("/students"))}></i>
+        </Link>
         <Link to="/archive" title="Archive" aria-label="Archive">
           <i className="fas fa-box-archive" style={iconStyle(isOnRoute("/archive"))}></i>
         </Link>

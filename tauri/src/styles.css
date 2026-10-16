@@ -137,3 +137,22 @@ body { background: #fdfdfd; min-height: 100vh; margin: 0; }
     row-gap: 4px;
   }
 }
+
+/* Student history and the shared, durable roster avatars. */
+.students-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px; margin-bottom: 24px; }
+.students-header .title { margin-bottom: 1.5rem; }
+.students-table { min-width: 620px; }
+.students-table td, .students-table th { vertical-align: middle; }
+.students-table th[scope="row"] { min-width: 140px; font-weight: 400; }
+.students-table td { overflow-wrap: anywhere; }
+.students-courses { display: flex; flex-direction: column; gap: 6px; }
+.student-avatar-editor { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 112px; }
+.student-avatar { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; background: #edf3f8; color: #476c94; font-size: 18px; font-weight: 600; overflow: hidden; }
+.student-avatar img, .class-list-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.student-photo-upload { position: relative; overflow: hidden; }
+.student-photo-upload input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.student-photo-upload:focus-within { outline: 2px solid #476c94; outline-offset: 2px; }
+@media (max-width: 600px) {
+  .students-header { gap: 14px; }
+  .students-header .button { width: 100%; }
+}
