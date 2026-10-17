@@ -4,6 +4,7 @@ import { api, onAppEvent } from "../api";
 import type { Assignment, Course } from "../types";
 import { compareAssignmentsByDueDate } from "../lib/assignments";
 import { fmtAssignmentDueDate } from "../lib/format";
+import { dueSoonCourseIdentifier } from "../lib/dueSoon";
 
 // Pencil frame: "Due soon" (Desktop Vision > rightCol, frame id RLKQX).
 //
@@ -95,6 +96,7 @@ export default function DueSoon() {
       {items.map(({ assignment: a, course: c }) => {
         const due = new Date(a.due_date!);
         const soon = due.getTime() - now <= SOON_MS;
+        const courseId = dueSoonCourseIdentifier(c, a);
         return (
           <Link
             key={a.id}
@@ -105,7 +107,10 @@ export default function DueSoon() {
               <i className="far fa-circle"></i>
             </span>
             <div className="pencil-due-row-col">
-              <span className="pencil-due-row-title">{a.name}</span>
+              <span className="pencil-due-row-title">
+                <span className="pencil-due-row-course-id">{courseId}</span>
+                <span>{a.name}</span>
+              </span>
               <span className={`pencil-due-row-meta${soon ? " is-warn" : ""}`}>
                 {fmtAssignmentDueDate(a.due_date)}
               </span>
