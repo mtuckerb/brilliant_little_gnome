@@ -38,7 +38,7 @@ let
   # Single source of truth for the Rust toolchain. Bump as needed.
   rustToolchain = pkgs.rust-bin.stable."1.90.0".default.override {
     extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
-    targets = androidTargets ++ lib.optionals stdenv.isDarwin iosTargets;
+    targets = androidTargets ++ lib.optionals stdenv.isDarwin (iosTargets ++ [ "x86_64-apple-darwin" ]);
   };
 
   # Vite 8 / Rolldown require Node ^20.19.0 or >=22.12.0. The stable
