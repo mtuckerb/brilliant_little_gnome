@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api";
+import { listen } from "@tauri-apps/api/event";
+import { api, onAppEvent } from "../api";
 import type { GradeRow, GradeStats } from "../types";
 import { fmtAssignmentDueDate, fmtNum, fmtPct } from "../lib/format";
 import { canSpeculateGrade, isActuallyGraded } from "../lib/grades";
@@ -24,16 +25,30 @@ export default function Grades() {
   const [showHidden, setShowHidden] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!id) return;
-    api.gradesSummary(id, showHidden).then((d) => {
+    return api.gradesSummary(id, showHidden).then((d) => {
       setGrades(d.rows);
       setStats(d.stats);
+      setEditingId((current) => d.rows.some((g) => g.id === current && isActuallyGraded(g)) ? null : current);
     });
   }, [id, showHidden]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const refresh = () => { void load(); };
+    refresh();
+    const subscriptions = [
+      listen("grades:updated", refresh),
+      onAppEvent((event) => {
+        if ((event.kind === "grades_updated" && event.course_id === id) ||
+            (event.kind === "sync_status_changed" && event.status.status === "idle")) refresh();
+      }),
+    ];
+    return () => { subscriptions.forEach((subscription) => { void subscription.then((unlisten) => unlisten()); }); };
+  }, [id, load]);
 
   if (!grades || !stats) {
     return <div className="has-text-centered py-6"><span className="icon is-large has-text-primary"><i className="fas fa-circle-notch fa-spin fa-3x"></i></span></div>;
@@ -45,6 +60,7 @@ export default function Grades() {
   const confidencePct = stats.confidence * 100;
 
   function startEdit(g: GradeRow) {
+    setEditError(null);
     setEditingId(g.id);
     setEditingValue(g.expected_score === null ? "" : String(g.expected_score));
   }
@@ -52,47 +68,57 @@ export default function Grades() {
   function cancelEdit() {
     setEditingId(null);
     setEditingValue("");
+    setEditError(null);
   }
 
   async function commitEdit(g: GradeRow) {
+    if (saving) return;
     const trimmed = editingValue.trim();
-    const num = trimmed === "" ? null : parseFloat(trimmed);
-    // Empty clears; valid number sets; nonsense input cancels silently.
-    if (num !== null && (Number.isNaN(num) || num < 0)) {
-      cancelEdit();
+    const num = trimmed === "" ? null : Number(trimmed);
+    if (num !== null && (!Number.isFinite(num) || num < 0)) {
+      setEditError("Enter a percentage of 0 or more.");
       return;
     }
-    setEditingId(null);
-    setEditingValue("");
-    await api.setExpectedScore(g.id, num);
-    load();
+    setSaving(true);
+    setEditError(null);
+    try {
+      await api.setExpectedScore(g.id, num);
+    } catch {
+      setEditError("Provisional grade could not be saved. Please try again.");
+      setSaving(false);
+      return;
+    }
+    cancelEdit();
+    setSaving(false);
+    await load();
   }
 
   function renderExpectedInput(g: GradeRow) {
     return (
-      <input
-        autoFocus
-        type="number"
-        step={0.1}
-        min={0}
-        value={editingValue}
-        onChange={(e) => setEditingValue(e.target.value)}
-        onBlur={() => commitEdit(g)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commitEdit(g);
-          if (e.key === "Escape") cancelEdit();
-        }}
-        placeholder="%"
-        style={{
-          width: 70,
-          textAlign: "right",
-          padding: "2px 6px",
-          border: "1px solid #739AC3",
-          borderRadius: 4,
-          background: "#FFFFFF",
-          fontSize: "0.85rem",
-        }}
-      />
+      <form onSubmit={(e) => { e.preventDefault(); void commitEdit(g); }}>
+        <div className="is-flex is-justify-content-flex-end is-align-items-center" style={{ gap: 4 }}>
+          <input
+            autoFocus
+            aria-label={`Provisional grade for ${g.name} (%)`}
+            type="number"
+            step="any"
+            min={0}
+            value={editingValue}
+            disabled={saving}
+            onChange={(e) => setEditingValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && !saving) { e.preventDefault(); cancelEdit(); }
+            }}
+            placeholder="%"
+            className="input is-small"
+            style={{ width: 80, textAlign: "right" }}
+          />
+          <button type="submit" className="button is-small is-primary" disabled={saving}>Save</button>
+          <button type="button" className="button is-small" disabled={saving} onClick={cancelEdit}>Cancel</button>
+        </div>
+        <p className="help">Leave blank to remove.</p>
+        {editError && <p role="alert" className="help is-danger">{editError}</p>}
+      </form>
     );
   }
 
@@ -120,7 +146,7 @@ export default function Grades() {
               <>
                 <div className="level-item has-text-centered px-4">
                   <div>
-                    <p className="heading">Current Grade</p>
+                    <p className="heading">{grades.some((g) => g.is_expected) ? "Estimated Grade" : "Current Grade"}</p>
                     <p className={`title ${gradeColor(stats.score)}`}>{stats.score !== null ? fmtPct(stats.score) : "TBD"}</p>
                   </div>
                 </div>
@@ -141,9 +167,14 @@ export default function Grades() {
           </div>
         </div>
 
+        <p className="is-size-7 has-text-grey mb-4">
+          Add a provisional grade (%) for an ungraded item to include it in your estimate.
+          The official grade takes precedence when it arrives. Provisional grades are marked with ~.
+        </p>
+
         {confidencePct < 100 && stats.remaining_points > 0 && (
           <div className="notification is-light is-info py-2 px-4 is-size-7 mb-4">
-            <strong>Confidence Note:</strong> Only {fmtNum(stats.total_points_possible)} of the {fmtNum(stats.all_possible_points)} total points graded.
+            <strong>Confidence Note:</strong> Only {fmtNum(stats.total_points_possible)} of the {fmtNum(stats.all_possible_points)} total points included, counting provisional grades.
           </div>
         )}
 
@@ -168,31 +199,34 @@ export default function Grades() {
                 result = <span className={`tag ${gradeColor(g.perc)} is-light`} style={{ fontWeight: "bold" }}>{fmtPct(g.perc)}</span>;
               } else if (g.is_expected && g.expected_score !== null) {
                 result = (
-                  <a
+                  <button
+                    type="button"
+                    className="button is-small is-ghost"
                     onClick={() => startEdit(g)}
-                    title="Expected score (click to edit)"
+                    aria-label={`Edit provisional grade for ${g.name}`}
+                    title="Provisional grade (click to edit)"
                     style={{ fontStyle: "italic", color: "#888", textDecoration: "none", borderBottom: "1px dotted #bbb", cursor: "text" }}
                   >
                     ~{fmtPct(g.expected_score)}
-                  </a>
+                  </button>
                 );
               } else if (canSpeculateGrade(g)) {
                 result = (
-                  <a
+                  <button
+                    type="button"
                     onClick={() => startEdit(g)}
-                    title="Click to speculate a score"
-                    className="has-text-grey-light"
-                    style={{ cursor: "text", borderBottom: "1px dotted #ddd" }}
+                    aria-label={`Add provisional grade for ${g.name}`}
+                    className="button is-small is-ghost"
                   >
-                    —
-                  </a>
+                    Add provisional grade
+                  </button>
                 );
               } else {
                 result = <>—</>;
               }
 
               const points = actuallyGraded ? `${fmtNum(g.numerator)} / ${fmtNum(g.denominator, 2, "-")}` :
-                g.is_expected ? `${fmtNum(g.numerator ?? 0)} / ${fmtNum(g.denominator ?? g.rel_weight, 2, "-")}` :
+                g.is_expected ? `~${fmtNum((g.expected_score ?? 0) / 100 * (g.denominator ?? 0))} / ${fmtNum(g.denominator, 2, "-")}` :
                 `- / ${fmtNum(g.denominator, 2, "-")}`;
 
               return (
@@ -203,7 +237,8 @@ export default function Grades() {
                     {g.submitted === true && <span className="tag is-small is-success is-light ml-2"><i className="fas fa-check mr-1"></i>Submitted</span>}
                     {g.submitted === false && <span className="tag is-small is-danger is-light ml-2"><i className="fas fa-exclamation-circle mr-1"></i>Not Submitted</span>}
                     {g.manually_marked_ungraded && <span className="tag is-small is-warning is-light ml-2">Manually Ungraded</span>}
-                    {!g.is_graded && !g.manually_marked_ungraded && <span className="tag is-small is-light ml-2">Ungraded</span>}
+                    {g.is_expected && <span className="tag is-small is-info is-light ml-2">Provisional</span>}
+                    {!g.is_graded && !g.is_expected && !g.manually_marked_ungraded && <span className="tag is-small is-light ml-2">Ungraded</span>}
                     {g.is_extra_credit && <span className="tag is-small is-warning ml-2">Extra Credit</span>}
                     <div className="is-pulled-right">
                       <button className="button is-ghost is-small p-0 mr-2" onClick={() => api.toggleGradeHidden(g.id).then(load)} title="Hide/unhide">

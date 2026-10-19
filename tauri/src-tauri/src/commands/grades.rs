@@ -24,13 +24,17 @@ pub async fn grades_summary(state: AppStateArg<'_>, course_id: String) -> Result
     .fetch_all(&state.pool)
     .await?;
 
+    Ok(calculate_summary(&grades, target))
+}
+
+fn calculate_summary(grades: &[Grade], target: f64) -> GradesSummaryResponse {
     // Compute summary. Mirrors the Ruby logic: hidden rows excluded; ungraded skipped from
     // earned/possible; expected_score injects a synthetic numerator for ungraded items.
     let mut earned = 0.0;
     let mut possible = 0.0;
     let mut all_possible = 0.0;
     let mut rows: Vec<GradeRow> = Vec::with_capacity(grades.len());
-    for g in &grades {
+    for g in grades {
         if g.hidden { continue; }
         let denom = g.denominator.unwrap_or(0.0);
         all_possible += denom;
@@ -70,7 +74,7 @@ pub async fn grades_summary(state: AppStateArg<'_>, course_id: String) -> Result
     } else { None };
     let is_impossible = required_avg.map(|r| r > 100.0).unwrap_or(false);
 
-    Ok(GradesSummaryResponse {
+    GradesSummaryResponse {
         rows,
         stats: GradeStats {
             score,
@@ -83,7 +87,7 @@ pub async fn grades_summary(state: AppStateArg<'_>, course_id: String) -> Result
             required_avg,
             is_impossible,
         },
-    })
+    }
 }
 
 #[tauri::command]
@@ -133,6 +137,9 @@ pub async fn toggle_grade_extra_credit(state: AppStateArg<'_>, id: i64) -> Resul
 
 #[tauri::command]
 pub async fn set_expected_score(state: AppStateArg<'_>, id: i64, expected: Option<f64>) -> Result<()> {
+    if expected.is_some_and(|score| !score.is_finite() || score < 0.0) {
+        return Err(crate::error::AppError::BadRequest("Provisional grade must be a finite percentage of 0 or more".into()));
+    }
     sqlx::query("UPDATE grades SET expected_score = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         .bind(expected).bind(id).execute(&state.pool).await?;
     #[cfg(feature = "p2p")]
@@ -203,5 +210,80 @@ async fn push_grade_field(
         {
             tracing::warn!("apply_local grade {}: {}", key, e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grade(numerator: Option<f64>, expected_score: Option<f64>) -> Grade {
+        Grade {
+            id: 1,
+            course_id: "course-1".into(),
+            brightspace_id: Some("grade-1".into()),
+            name: "Quiz".into(),
+            displayed_grade: None,
+            numerator,
+            denominator: Some(20.0),
+            weight: None,
+            due_date: None,
+            is_extra_credit: false,
+            hidden: false,
+            manually_marked_ungraded: false,
+            expected_score,
+            comments: None,
+        }
+    }
+
+    #[test]
+    fn provisional_grade_updates_estimate_and_remaining_target() {
+        let summary = calculate_summary(&[grade(Some(16.0), None), grade(None, Some(90.0)), grade(None, None)], 93.0);
+        assert_eq!(summary.stats.total_points_earned, 34.0);
+        assert_eq!(summary.stats.total_points_possible, 40.0);
+        assert_eq!(summary.stats.score, Some(85.0));
+        assert_eq!(summary.stats.remaining_points, 20.0);
+        assert!((summary.stats.required_avg.unwrap() - 109.0).abs() < 0.0001);
+        assert!(summary.rows[1].is_expected);
+        assert!(!summary.rows[1].is_graded);
+    }
+
+    #[test]
+    fn official_grade_including_zero_takes_precedence_over_provisional() {
+        for numerator in [0.0, 17.0] {
+            let summary = calculate_summary(&[grade(Some(numerator), Some(95.0))], 93.0);
+            assert_eq!(summary.stats.total_points_earned, numerator);
+            assert_eq!(summary.stats.score, Some(numerator / 20.0 * 100.0));
+            assert!(summary.rows[0].is_graded);
+            assert!(!summary.rows[0].is_expected);
+        }
+    }
+
+    #[test]
+    fn clearing_provisional_grade_returns_item_to_ungraded() {
+        let summary = calculate_summary(&[grade(None, None)], 93.0);
+        assert_eq!(summary.stats.score, None);
+        assert_eq!(summary.stats.total_points_possible, 0.0);
+        assert_eq!(summary.stats.remaining_points, 20.0);
+        assert!(!summary.rows[0].is_expected);
+    }
+
+    #[test]
+    fn provisional_zero_and_extra_points_are_valid_estimates() {
+        for expected in [0.0, 105.0] {
+            let summary = calculate_summary(&[grade(None, Some(expected))], 93.0);
+            assert!(summary.rows[0].is_expected);
+            assert_eq!(summary.stats.score, Some(expected));
+        }
+    }
+
+    #[test]
+    fn hidden_provisional_grades_are_excluded_from_estimates() {
+        let mut hidden = grade(None, Some(95.0));
+        hidden.hidden = true;
+        let summary = calculate_summary(&[grade(Some(16.0), None), hidden], 93.0);
+        assert_eq!(summary.rows.len(), 1);
+        assert_eq!(summary.stats.score, Some(80.0));
+        assert_eq!(summary.stats.all_possible_points, 20.0);
     }
 }
