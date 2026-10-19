@@ -5,6 +5,7 @@ pub mod courses;
 pub mod roster;
 pub mod students;
 pub mod grades;
+pub mod dashboard;
 pub mod assignments;
 pub mod notifications;
 pub mod sync;

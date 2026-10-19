@@ -27,7 +27,7 @@ pub async fn grades_summary(state: AppStateArg<'_>, course_id: String) -> Result
     Ok(calculate_summary(&grades, target))
 }
 
-fn calculate_summary(grades: &[Grade], target: f64) -> GradesSummaryResponse {
+pub(super) fn calculate_summary(grades: &[Grade], target: f64) -> GradesSummaryResponse {
     // Compute summary. Mirrors the Ruby logic: hidden rows excluded; ungraded skipped from
     // earned/possible; expected_score injects a synthetic numerator for ungraded items.
     let mut earned = 0.0;
