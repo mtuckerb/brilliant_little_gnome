@@ -52,6 +52,7 @@ export default function GpaSummary() {
       {!summary && !error && <p className="has-text-grey" role="status">Loading GPA…</p>}
       {summary && (
         <>
+          <p className="is-size-7 has-text-grey mb-4">Through {summary.semester} · 4.00 scale</p>
           <div className="columns is-mobile is-multiline mb-1">
             <div className="column is-half-mobile is-one-third-tablet">
               <p className="heading">Locked-in GPA</p>

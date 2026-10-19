@@ -335,6 +335,7 @@ export interface StudentImportResult {
 }
 
 export interface DashboardGpa {
+  semester: string;
   locked_in_gpa: number | null;
   projected_gpa: number | null;
   confidence: number;

@@ -22,6 +22,7 @@ const course: Course = {
   status: "active", sort_order: 0, end_of_week_day: null, last_accessed_at: null,
 };
 const initial: DashboardGpa = {
+  semester: "2026 Fall",
   locked_in_gpa: 3.5, projected_gpa: 3.75, confidence: 0.625,
   locked_in_units: 60, projected_units: 72, provisional_course_count: 1,
   projected_course_count: 4, excluded_course_count: 0,

@@ -2,6 +2,7 @@ use super::grades::calculate_summary;
 use super::AppStateArg;
 use crate::error::Result;
 use crate::models::Grade;
+use chrono::Datelike;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -9,6 +10,7 @@ use std::sync::OnceLock;
 
 #[derive(Debug, Serialize)]
 pub struct DashboardGpa {
+    pub semester: String,
     pub locked_in_gpa: Option<f64>,
     pub projected_gpa: Option<f64>,
     /// Credit-weighted official grade coverage, from 0 to 1; estimates never increase it.
@@ -35,6 +37,11 @@ pub async fn dashboard_gpa(state: AppStateArg<'_>) -> Result<DashboardGpa> {
 }
 
 pub async fn dashboard_gpa_in(pool: &SqlitePool) -> Result<DashboardGpa> {
+    let now = chrono::Local::now();
+    dashboard_gpa_at(pool, calendar_semester(now.year(), now.month())).await
+}
+
+async fn dashboard_gpa_at(pool: &SqlitePool, calendar_term: (i32, i32)) -> Result<DashboardGpa> {
     // One SQLite snapshot and three batch reads, independent of the number of courses.
     let mut tx = pool.begin().await?;
     let prefs: Option<(Option<f64>, Option<f64>, Option<String>)> = sqlx::query_as(
@@ -60,6 +67,7 @@ pub async fn dashboard_gpa_in(pool: &SqlitePool) -> Result<DashboardGpa> {
         historic_gpa,
         historic_units,
         default_semester.as_deref(),
+        calendar_term,
     ))
 }
 
@@ -107,12 +115,26 @@ fn semester_key(semester: &str) -> Option<(i32, i32)> {
     Some((year, season))
 }
 
+// Conservative calendar bounds: Spring through May, Summer through August, Fall
+// through December. A configured Winter term can keep that short session current.
+fn calendar_semester(year: i32, month: u32) -> (i32, i32) {
+    (
+        year,
+        match month {
+            1..=5 => 1,
+            6..=8 => 2,
+            _ => 3,
+        },
+    )
+}
+
 fn calculate_gpa(
     courses: &[GpaCourse],
     grades: Vec<Grade>,
     historic_gpa: Option<f64>,
     historic_units: Option<f64>,
     default_semester: Option<&str>,
+    calendar_term: (i32, i32),
 ) -> DashboardGpa {
     let mut by_course: HashMap<String, Vec<Grade>> = HashMap::new();
     for grade in grades {
@@ -121,12 +143,13 @@ fn calculate_gpa(
             .or_default()
             .push(grade);
     }
-    let current_semester = default_semester.and_then(semester_key).or_else(|| {
-        courses
-            .iter()
-            .filter_map(|course| course.semester.as_deref().and_then(semester_key))
-            .max()
-    });
+    // Enrollment is not evidence of completion. In particular, an empty future
+    // shell must never turn current grades into a completed, 100%-certain result.
+    // Preserve an explicit earlier overview term, while bounding future settings.
+    let current_semester = default_semester
+        .and_then(semester_key)
+        .map(|term| term.min(calendar_term))
+        .unwrap_or(calendar_term);
     let mut locked_points = 0.0;
     let mut locked_units = 0.0;
     if let (Some(gpa), Some(units)) = (historic_gpa, historic_units) {
@@ -154,10 +177,7 @@ fn calculate_gpa(
             continue;
         }
         let term = course.semester.as_deref().and_then(semester_key);
-        if term
-            .zip(current_semester)
-            .is_some_and(|(term, current)| term > current)
-        {
+        if term.is_some_and(|term| term > current_semester) {
             continue;
         }
         if course.status.as_deref() == Some("dropped_fail") {
@@ -180,9 +200,7 @@ fn calculate_gpa(
             .filter(|row| row.is_graded)
             .map(|row| row.grade.denominator.unwrap_or(0.0))
             .sum();
-        let past_term = term
-            .zip(current_semester)
-            .is_some_and(|(term, current)| term < current);
+        let past_term = term.is_some_and(|term| term < current_semester);
         // A current gradebook can be fully marked before the instructor adds future work.
         // Only completed terms or explicitly completed courses enter the locked-in record.
         let completed =
@@ -224,7 +242,13 @@ fn calculate_gpa(
         provisional_course_count += usize::from(has_provisional);
         projected_course_count += 1;
     }
+    let (year, season) = current_semester;
     DashboardGpa {
+        semester: format!(
+            "{} {}",
+            year,
+            ["Winter", "Spring", "Summer", "Fall"][season as usize]
+        ),
         locked_in_gpa: (locked_units > 0.0).then(|| locked_points / locked_units),
         projected_gpa: (projected_units > 0.0).then(|| projected_points / projected_units),
         confidence: if projected_units > 0.0 {
@@ -278,7 +302,7 @@ mod tests {
         );
     }
     fn summary(courses: &[GpaCourse], grades: Vec<Grade>) -> DashboardGpa {
-        calculate_gpa(courses, grades, None, None, Some("2026 Fall"))
+        calculate_gpa(courses, grades, None, None, Some("2026 Fall"), (2026, 3))
     }
 
     #[test]
@@ -310,11 +334,12 @@ mod tests {
             Some(3.5),
             Some(60.0),
             Some("2026 Fall"),
+            (2026, 3),
         );
         near(result.locked_in_gpa.unwrap(), 3.5 * 60.0 / 63.0);
         near(result.projected_gpa.unwrap(), result.locked_in_gpa.unwrap());
         assert_eq!(result.confidence, 1.0);
-        let historic_only = calculate_gpa(&[], vec![], Some(0.0), Some(6.0), None);
+        let historic_only = calculate_gpa(&[], vec![], Some(0.0), Some(6.0), None, (2026, 3));
         assert_eq!(historic_only.locked_in_gpa, Some(0.0));
         assert_eq!(historic_only.confidence, 1.0);
     }
@@ -430,15 +455,16 @@ mod tests {
             None,
             Some(90.0),
             Some("2026 Fall"),
+            (2026, 3),
         );
         assert_eq!(result.locked_in_units, 3.0);
         assert_eq!(result.locked_in_gpa, Some(4.0));
-        let invalid = calculate_gpa(&[], vec![], Some(f64::NAN), Some(60.0), None);
+        let invalid = calculate_gpa(&[], vec![], Some(f64::NAN), Some(60.0), None, (2026, 3));
         assert!(invalid.projected_gpa.is_none());
     }
 
     #[test]
-    fn normalizes_semesters_and_uses_newest_when_default_is_absent() {
+    fn normalizes_semesters_and_uses_calendar_when_default_is_absent() {
         for term in ["Fall 2026", "2026 Fall", "2026FA", "Autumn 2026"] {
             assert_eq!(semester_key(term), Some((2026, 3)));
         }
@@ -453,6 +479,7 @@ mod tests {
             None,
             None,
             None,
+            (2026, 3),
         );
         assert_eq!(result.locked_in_units, 3.0);
         assert_eq!(result.projected_units, 6.0);
@@ -492,7 +519,7 @@ mod tests {
         sqlx::query("INSERT INTO user_preferences (historic_gpa, historic_units, default_semester) VALUES (3.5, 3, '2026 Fall')").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO courses (org_unit_id, name, semester, custom_semester, units) VALUES ('old', 'Old', '2027 Spring', 'Fall 2025', 3), ('current', 'Current', '2026 Fall', NULL, 6)").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO grades (course_id, brightspace_id, name, numerator, denominator, expected_score) VALUES ('old', 'old-grade', 'Quiz', 90, 100, NULL), ('current', 'new-grade', 'Quiz', NULL, 100, 100)").execute(&pool).await.unwrap();
-        let result = dashboard_gpa_in(&pool).await.unwrap();
+        let result = dashboard_gpa_at(&pool, (2026, 3)).await.unwrap();
         near(result.locked_in_gpa.unwrap(), (3.5 + 3.67) / 2.0);
         near(
             result.projected_gpa.unwrap(),
@@ -506,5 +533,74 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(saved, (None, Some(100.0)));
+    }
+    #[test]
+    fn future_shells_cannot_lock_partial_current_grades_or_enter_projection() {
+        for future_status in ["active", "withdrawn"] {
+            for future_units in [0.0, 3.0] {
+                let mut future = course("future", "2027 Spring", future_units);
+                future.status = Some(future_status.into());
+                let result = calculate_gpa(
+                    &[course("current", "2026 Fall", 3.0), future],
+                    vec![
+                        grade("current", Some(40.0), 50.0, None),
+                        grade("current", None, 50.0, None),
+                    ],
+                    None,
+                    None,
+                    None,
+                    (2026, 3),
+                );
+                assert_eq!(result.locked_in_gpa, None);
+                assert_eq!(result.projected_gpa, Some(3.0));
+                assert_eq!(result.confidence, 0.5);
+                assert_eq!(result.projected_units, 3.0);
+                assert_eq!(result.semester, "2026 Fall");
+            }
+        }
+    }
+
+    #[test]
+    fn history_only_latest_term_is_completed_and_future_override_is_bounded() {
+        let past = calculate_gpa(
+            &[course("past", "2026 Summer", 3.0)],
+            vec![grade("past", Some(95.0), 100.0, None)],
+            None,
+            None,
+            None,
+            (2026, 3),
+        );
+        assert_eq!(past.locked_in_gpa, Some(4.0));
+        assert_eq!(past.confidence, 1.0);
+        let bounded = calculate_gpa(
+            &[course("current", "2026 Fall", 3.0)],
+            vec![
+                grade("current", Some(40.0), 50.0, None),
+                grade("current", None, 50.0, None),
+            ],
+            None,
+            None,
+            Some("2027 Spring"),
+            (2026, 3),
+        );
+        assert_eq!(bounded.locked_in_gpa, None);
+        assert_eq!(bounded.confidence, 0.5);
+        assert_eq!(bounded.semester, "2026 Fall");
+        let earlier = calculate_gpa(&[], vec![], None, None, Some("2026 Spring"), (2026, 3));
+        assert_eq!(earlier.semester, "2026 Spring");
+    }
+
+    #[test]
+    fn calendar_bounds_are_deterministic_at_term_and_year_changes() {
+        for month in 1..=5 {
+            assert_eq!(calendar_semester(2026, month), (2026, 1));
+        }
+        for month in 6..=8 {
+            assert_eq!(calendar_semester(2026, month), (2026, 2));
+        }
+        for month in 9..=12 {
+            assert_eq!(calendar_semester(2026, month), (2026, 3));
+        }
+        assert_eq!(calendar_semester(2027, 1), (2027, 1));
     }
 }
