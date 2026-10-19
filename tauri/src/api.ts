@@ -131,13 +131,13 @@ export const api = {
       showHidden,
     }),
   toggleGradeHidden: (gradeId: number) =>
-    invoke<void>("toggle_grade_hidden", { gradeId }),
+    invoke<void>("toggle_grade_hidden", { id: gradeId }),
   toggleGradeUngraded: (gradeId: number) =>
-    invoke<void>("toggle_grade_ungraded", { gradeId }),
+    invoke<void>("toggle_grade_ungraded", { id: gradeId }),
   toggleGradeExtraCredit: (gradeId: number) =>
-    invoke<void>("toggle_grade_extra_credit", { gradeId }),
+    invoke<void>("toggle_grade_extra_credit", { id: gradeId }),
   setExpectedScore: (gradeId: number, expected: number | null) =>
-    invoke<void>("set_expected_score", { gradeId, expected }),
+    invoke<void>("set_expected_score", { id: gradeId, expected }),
 
   // Assignments
   listAssignments: (courseId: string, completed?: boolean) =>
