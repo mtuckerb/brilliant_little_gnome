@@ -233,6 +233,8 @@ pub fn run() {
             commands::roster::refresh_course_roster,
             commands::roster::download_course_roster,
             commands::import_old::import_from_old_brilliant,
+            // Dashboard
+            commands::dashboard::dashboard_gpa,
             // Grades
             commands::grades::grades_summary,
             commands::grades::toggle_grade_hidden,

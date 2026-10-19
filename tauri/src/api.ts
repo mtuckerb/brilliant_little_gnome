@@ -18,6 +18,7 @@ export interface UpdateInfo {
 }
 import type {
   Course,
+  DashboardGpa,
   CourseRoster,
   Student,
   StudentImportResult,
@@ -123,6 +124,9 @@ export const api = {
       "fetch_course_overview_attachment",
       { courseId: id },
     ),
+
+  // Dashboard
+  dashboardGpa: () => invoke<DashboardGpa>("dashboard_gpa"),
 
   // Grades
   gradesSummary: (courseId: string, showHidden = false) =>

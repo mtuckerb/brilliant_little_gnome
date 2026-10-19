@@ -6,6 +6,7 @@ import { getLastCoursePath } from "../lib/courseLastTab";
 import { compareSemestersDesc, parseSemester } from "../lib/semester";
 import { useIsMobile } from "../hooks/useIsMobile";
 import DueSoon from "../components/DueSoon";
+import GpaSummary from "../components/GpaSummary";
 
 export default function Dashboard() {
   const [courses, setCourses] = useState<Course[] | null>(null);
@@ -56,6 +57,7 @@ export default function Dashboard() {
     return (
       <div className="has-text-centered py-6">
         <h1 className="title is-3">Dashboard</h1>
+        <GpaSummary />
         <div className="box mx-auto" style={{ maxWidth: 480 }}>
           {syncing ? (
             <>
@@ -181,6 +183,7 @@ export default function Dashboard() {
   return (
     <div>
       <h1 className="title is-3">Dashboard</h1>
+      <GpaSummary />
       <div className="level mb-4">
         <div className="level-left">
           <p className="has-text-grey">{courses.length} active course{courses.length === 1 ? "" : "s"}</p>
@@ -312,6 +315,8 @@ function MobileDashboard({ courses, onTogglePin }: { courses: Course[]; onToggle
         <h1 className="pencil-appTitle title is-4 mb-1">Student Courses</h1>
         <p className="pencil-appSub">Course updates and due dates</p>
       </div>
+
+      <GpaSummary />
 
       {/* Pencil frame: statsRow (HDUr0). */}
       <div className="pencil-statsRow mb-4">

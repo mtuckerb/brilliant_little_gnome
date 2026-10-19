@@ -333,3 +333,14 @@ export interface StudentImportResult {
   imported_courses: number;
   failed_courses: string[];
 }
+
+export interface DashboardGpa {
+  locked_in_gpa: number | null;
+  projected_gpa: number | null;
+  confidence: number;
+  locked_in_units: number;
+  projected_units: number;
+  provisional_course_count: number;
+  projected_course_count: number;
+  excluded_course_count: number;
+}
