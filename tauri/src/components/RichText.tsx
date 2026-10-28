@@ -1,5 +1,7 @@
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { api } from "../api";
+import { isZoteroDocumentUrl } from "../lib/zotero";
 
 // Renders any content body — Brightspace's HTML (`<p>…</p>`), a user's
 // hand-typed markdown, or plain text — with one component. Detection is
@@ -45,12 +47,22 @@ export default function RichText({
   const isHtml = format === "html" || (format === "auto" && looksLikeHtml(content));
   const cls = `${bulmaContent ? "content " : ""}${className ?? ""}`.trim();
 
+  function openZotero(event: React.MouseEvent<HTMLDivElement>) {
+    const link = (event.target as Element).closest("a[href]");
+    const url = link?.getAttribute("href");
+    if (!url || !isZoteroDocumentUrl(url)) return;
+    event.preventDefault();
+    void api.openUrl(url).catch((error) => alert(`Could not open Zotero: ${String(error)}`));
+  }
+
   if (isHtml) {
-    return <div className={cls || undefined} dangerouslySetInnerHTML={{ __html: content }} />;
+    return <div className={cls || undefined} onClick={openZotero} dangerouslySetInnerHTML={{ __html: content }} />;
   }
   return (
-    <div className={cls || undefined}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    <div className={cls || undefined} onClick={openZotero}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) =>
+        isZoteroDocumentUrl(url) ? url : defaultUrlTransform(url)
+      }>{content}</ReactMarkdown>
     </div>
   );
 }

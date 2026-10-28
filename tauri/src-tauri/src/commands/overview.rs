@@ -15,6 +15,7 @@ pub struct CourseOverview {
     pub has_attachment: bool,
     pub attachment_name: Option<String>,
     pub attachment_url: Option<String>,
+    pub zotero_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -29,8 +30,11 @@ pub struct OverviewAttachment {
 /// that's `fetch_course_overview_attachment`.
 #[tauri::command]
 pub async fn get_course_overview(state: AppStateArg<'_>, course_id: String) -> Result<CourseOverview> {
+    super::zotero::schedule_document_backfill(&state).await;
     let raw = load_or_fetch(&state, &course_id, false).await?;
-    Ok(parse_overview(&raw))
+    let mut overview = parse_overview(&raw);
+    overview.zotero_url = super::zotero::document_links(&state.pool, &course_id).await?.remove("syllabus");
+    Ok(overview)
 }
 
 /// Fetch the overview attachment (e.g. a syllabus PDF) and return it as
@@ -121,5 +125,6 @@ fn parse_overview(raw: &Value) -> CourseOverview {
         has_attachment,
         attachment_name,
         attachment_url,
+        zotero_url: None,
     }
 }

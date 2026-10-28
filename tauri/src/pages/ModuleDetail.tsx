@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { ContentItem, ContentModule } from "../types";
 import { triggerDownload } from "../lib/download";
 import HeaderBand from "../components/HeaderBand";
-import { runZotero } from "../lib/zotero";
+import { runZotero, watchZoteroLinks } from "../lib/zotero";
 import { useToast } from "../components/ToastProvider";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { moduleUrl, topicViewUrl } from "../lib/brightspace";
@@ -39,8 +39,14 @@ export default function ModuleDetail() {
   useEffect(() => {
     if (!courseId || !moduleId) return;
     api.listModules(courseId).then(setModules);
-    api.listItems(moduleId).then(setItems);
+    let active = true;
+    const stopWatching = watchZoteroLinks(() => {
+      api.listItems(moduleId, courseId)
+        .then((rows) => { if (active) setItems(rows); })
+        .catch((e) => { if (active) setError(String(e)); });
+    });
     api.getCourse(courseId).then(setCourse);
+    return () => { active = false; stopWatching(); };
   }, [courseId, moduleId]);
 
   const current = useMemo(
@@ -119,6 +125,7 @@ export default function ModuleDetail() {
   // you have to do ("Levenson, 2017TIP" → read it), so it seeds the name and
   // the notes carry the trail back to where it came from.
   function itemBrightspaceUrl(it: ContentItem): string | null {
+    if (it.zotero_url) return it.zotero_url;
     if (it.url) return it.url.startsWith("/") && bsHost ? `https://${bsHost}${it.url}` : it.url;
     if (bsHost && courseId) return topicViewUrl(bsHost, courseId, it.brightspace_id);
     return null;
@@ -172,6 +179,13 @@ export default function ModuleDetail() {
     await runZotero(toast, it.title, () =>
       api.zoteroSendTopic(courseId, it.brightspace_id),
     );
+    if (moduleId) {
+      try {
+        setItems(await api.listItems(moduleId, courseId));
+      } catch (e) {
+        setError(`Could not refresh Zotero links: ${String(e)}`);
+      }
+    }
     setZoteroBusy((s) => ({ ...s, [key]: false }));
   }
 
@@ -181,6 +195,11 @@ export default function ModuleDetail() {
     await runZotero(toast, current?.title ?? "Module", () =>
       api.zoteroSendModule(courseId, moduleId),
     );
+    try {
+      setItems(await api.listItems(moduleId, courseId));
+    } catch (e) {
+      setError(`Could not refresh Zotero links: ${String(e)}`);
+    }
     setModuleSendingZotero(false);
   }
 
@@ -299,12 +318,20 @@ export default function ModuleDetail() {
               return (
                 <li key={it.id} className="py-2 is-flex is-align-items-center" style={{ gap: 8, borderTop: "1px solid #f0f0f0" }}>
                   <span className="icon is-small has-text-grey"><i className="far fa-file"></i></span>
-                  {it.url ? (
+                  {it.zotero_url ? (
+                    <a href={it.zotero_url} title="Open in Zotero" onClick={(event) => {
+                      event.preventDefault();
+                      void api.openUrl(it.zotero_url!).catch((e) =>
+                        setError(`${it.title}: could not open Zotero: ${String(e)}`),
+                      );
+                    }}>{it.title}</a>
+                  ) : it.url ? (
                     <a href={it.url} target="_blank" rel="noopener noreferrer">{it.title}</a>
                   ) : (
                     <span>{it.title}</span>
                   )}
                   {it.item_type && <span className="tag is-light is-small">{it.item_type}</span>}
+                  {it.zotero_url && <span className="tag is-light is-small">Zotero</span>}
                   {it.is_hidden && <span className="tag is-light is-small">hidden</span>}
                   <button
                     className="button is-small is-white ml-auto"

@@ -198,6 +198,9 @@ pub struct ContentItem {
     pub title: String,
     pub item_type: Option<String>,
     pub url: Option<String>,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub zotero_url: Option<String>,
     #[serde(deserialize_with = "de_bool", serialize_with = "ser_bool")]
     pub is_hidden: bool,
     pub sort_order: Option<i64>,

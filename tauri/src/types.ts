@@ -207,6 +207,8 @@ export interface ContentItem {
   title: string;
   item_type: string | null;
   url: string | null;
+  /** Available only after the document has successfully synced to Zotero. */
+  zotero_url?: string | null;
   is_hidden: boolean;
   sort_order: number | null;
 }

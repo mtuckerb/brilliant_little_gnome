@@ -24,6 +24,9 @@ use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+pub mod links;
+pub mod discovery;
+
 const CLOUD_BASE: &str = "https://api.zotero.org";
 const LOCAL_BASE: &str = "http://127.0.0.1:23119/api";
 const LOCAL_USER_ID: &str = "0";
@@ -59,6 +62,7 @@ pub enum ZoteroMode {
 }
 
 pub struct ZoteroClient {
+    mode: ZoteroMode,
     http: Client,
     base: String,
     user_id: String,
@@ -140,6 +144,7 @@ impl ItemType {
 
 impl ZoteroClient {
     pub async fn new(mode: ZoteroMode) -> Result<Self> {
+        let link_mode = mode.clone();
         let http = Client::builder()
             .build()
             .map_err(|e| AppError::Other(format!("zotero client: {}", e)))?;
@@ -190,6 +195,7 @@ impl ZoteroClient {
             if basic_auth.is_some() { "yes" } else { "no" },
         );
         let mut client = Self {
+            mode: link_mode,
             http,
             base,
             user_id,
