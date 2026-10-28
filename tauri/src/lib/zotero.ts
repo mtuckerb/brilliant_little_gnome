@@ -6,6 +6,7 @@
 // surface the result here.
 
 import { onAppEvent, type ZoteroResult } from "../api";
+import type { ContentItem } from "../types";
 
 interface ToastApi {
   show: (message: string, kind?: "is-info" | "is-success" | "is-warning" | "is-danger", duration?: number) => void;
@@ -13,6 +14,22 @@ interface ToastApi {
 
 export function isZoteroDocumentUrl(url: string): boolean {
   return /^zotero:\/\/(?:open-pdf|select)\/library\/items\/[A-Z0-9]{8}$/.test(url);
+}
+
+export function canSendContentToZotero(item: ContentItem): boolean {
+  const kind = item.item_type?.toLowerCase();
+  if (kind === "file" || kind === "1" || (!kind && !item.url)) return true;
+  if (!(kind?.includes("link") || kind === "3") || !item.url?.trim()) return false;
+  try {
+    const url = new URL(item.url, "https://brightspace.invalid/");
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return false;
+    const path = url.pathname.toLowerCase();
+    return !(path.includes("/d2l/") && path.includes("quicklink") &&
+      Array.from(url.searchParams).some(([key, value]) => key.toLowerCase() === "type" &&
+        ["quiz", "discuss", "discussion", "dropbox", "survey", "scorm", "checklist"].includes(value.toLowerCase())));
+  } catch {
+    return false;
+  }
 }
 
 /** Subscribe before the first read so a fast background backfill cannot be missed. */

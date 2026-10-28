@@ -222,7 +222,7 @@ export default function CourseDetail() {
           className="button is-small is-light"
           onClick={onSendCourseToZotero}
           disabled={sendingZotero}
-          title="Send every content file in this course to your Zotero library (creates a per-course collection)"
+          title="Send every content file and link in this course to your Zotero library (creates a per-course collection)"
         >
           <span className="icon"><i className={`fas ${sendingZotero ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i></span>
           <span>{sendingZotero ? "Sending…" : "Send to Zotero"}</span>

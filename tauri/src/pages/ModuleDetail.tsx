@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { ContentItem, ContentModule } from "../types";
 import { triggerDownload } from "../lib/download";
 import HeaderBand from "../components/HeaderBand";
-import { runZotero, watchZoteroLinks } from "../lib/zotero";
+import { canSendContentToZotero, runZotero, watchZoteroLinks } from "../lib/zotero";
 import { useToast } from "../components/ToastProvider";
 import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLink";
 import { moduleUrl, topicViewUrl } from "../lib/brightspace";
@@ -64,7 +64,7 @@ export default function ModuleDetail() {
 
   function isDownloadableFile(it: ContentItem) {
     const type = it.item_type?.toLowerCase();
-    if (type) return type === "file";
+    if (type) return type === "file" || type === "1";
     return !it.url;
   }
 
@@ -173,7 +173,7 @@ export default function ModuleDetail() {
   }
 
   async function sendItemToZotero(it: ContentItem) {
-    if (!courseId || !isDownloadableFile(it)) return;
+    if (!courseId || !canSendContentToZotero(it)) return;
     const key = `item:${it.id}`;
     setZoteroBusy((s) => ({ ...s, [key]: true }));
     await runZotero(toast, it.title, () =>
@@ -261,7 +261,7 @@ export default function ModuleDetail() {
             className="button is-small is-light ml-2"
             disabled={moduleSendingZotero || items.length === 0}
             onClick={sendModuleToZotero}
-            title="Send all files in this module (and sub-modules) to your Zotero library"
+            title="Send all files and links in this module (and sub-modules) to your Zotero library"
           >
             <span className="icon is-small">
               <i className={`fas ${moduleSendingZotero ? "fa-circle-notch fa-spin" : "fa-book-bookmark"}`}></i>
@@ -314,6 +314,7 @@ export default function ModuleDetail() {
           <ul>
             {items.map((it) => {
               const downloadable = isDownloadableFile(it);
+              const zoteroEligible = canSendContentToZotero(it);
               const itemKey = `item:${it.id}`;
               return (
                 <li key={it.id} className="py-2 is-flex is-align-items-center" style={{ gap: 8, borderTop: "1px solid #f0f0f0" }}>
@@ -345,8 +346,8 @@ export default function ModuleDetail() {
                   </button>
                   <button
                     className="button is-small is-white"
-                    title={downloadable ? "Send this file to Zotero" : "Only downloadable files can be sent to Zotero"}
-                    disabled={!downloadable || zoteroBusy[itemKey]}
+                    title={zoteroEligible ? downloadable ? "Send this file to Zotero" : "Send this link to Zotero" : "This course activity cannot be sent to Zotero"}
+                    disabled={!zoteroEligible || zoteroBusy[itemKey]}
                     onClick={() => sendItemToZotero(it)}
                   >
                     <span className="icon is-small">

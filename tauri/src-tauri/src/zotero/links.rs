@@ -53,6 +53,13 @@ impl ZoteroMode {
 }
 
 impl ZoteroClient {
+    /// A webpage is itself the destination; it has no file attachment key.
+    pub async fn remember_web_link(
+        &self, pool: &SqlitePool, course_id: &str, topic_id: &str, item_key: &str,
+    ) -> Result<()> {
+        self.remember_document(pool, course_id, topic_id, item_key, None).await
+    }
+
     /// Call only after upload/replacement succeeds, or an existing attachment
     /// is confirmed current. A failed upload must never create a redirect.
     pub async fn remember_document(

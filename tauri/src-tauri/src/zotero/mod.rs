@@ -26,6 +26,7 @@ use serde_json::{json, Value};
 
 pub mod links;
 pub mod discovery;
+mod web_links;
 
 const CLOUD_BASE: &str = "https://api.zotero.org";
 const LOCAL_BASE: &str = "http://127.0.0.1:23119/api";
@@ -687,38 +688,9 @@ impl ZoteroClient {
     /// — when present — its first file attachment's key and MD5 so the
     /// caller can decide replace vs. skip. None when no item is tagged.
     pub async fn find_by_brilliant_tag(&self, tag: &str) -> Result<Option<ExistingItem>> {
-        let url = self.user_path("/items");
-        let resp = self
-            .get(&url)
-            .query(&[("tag", tag), ("limit", "5")])
-            .send()
-            .await
-            .map_err(|e| AppError::Other(format!("zotero tag search: {}", e)))?;
-        let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| AppError::Other(format!("zotero tag search read: {}", e)))?;
-        if !status.is_success() {
-            return Err(AppError::Other(format!(
-                "zotero tag search {}: {}",
-                status,
-                truncate_for_error(&body)
-            )));
-        }
-        let arr: Vec<Value> = match serde_json::from_str(&body) {
-            Ok(v) => v,
-            Err(_) => return Ok(None), // unparseable → treat as "not found"
-        };
-        // Prefer a parent item (one without a parentItem field). Only fall
-        // back to a child attachment match if there's nothing else.
-        let parent = arr.iter().find(|it| {
-            it.pointer("/data/parentItem").is_none() && it.pointer("/data/key").is_some()
-        });
-        let parent_key = match parent.and_then(|it| it.pointer("/data/key").and_then(|v| v.as_str())) {
-            Some(k) => k.to_string(),
-            None => return Ok(None),
-        };
+        let Some(parent) = self.find_parent_by_brilliant_tag(tag).await? else { return Ok(None) };
+        let parent_key = parent.pointer("/data/key").and_then(Value::as_str)
+            .ok_or_else(|| AppError::Other("Zotero parent is missing its key".into()))?.to_string();
 
         // Walk the parent's children to find the file attachment.
         let children_url = self.user_path(&format!("/items/{}/children", parent_key));
@@ -753,6 +725,35 @@ impl ZoteroClient {
             .and_then(|it| it.pointer("/data/md5").and_then(|v| v.as_str()))
             .map(String::from);
         Ok(Some(ExistingItem { key: parent_key, attachment_key, attachment_md5 }))
+    }
+
+    async fn find_parent_by_brilliant_tag(&self, tag: &str) -> Result<Option<Value>> {
+        let url = self.user_path("/items");
+        let resp = self
+            .get(&url)
+            .query(&[("tag", tag), ("limit", "5")])
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero tag search: {}", e)))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Other(format!("zotero tag search read: {}", e)))?;
+        if !status.is_success() {
+            return Err(AppError::Other(format!(
+                "zotero tag search {}: {}",
+                status,
+                truncate_for_error(&body)
+            )));
+        }
+        let arr: Vec<Value> = serde_json::from_str(&body)?;
+        // Prefer a parent item (one without a parentItem field). Only fall
+        // back to a child attachment match if there's nothing else.
+        let parent = arr.iter().find(|it| {
+            it.pointer("/data/parentItem").is_none() && it.pointer("/data/key").is_some()
+        });
+        Ok(parent.cloned())
     }
 
     /// Replace the file behind an existing attachment item. Same upload
