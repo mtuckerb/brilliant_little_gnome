@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { runZotero } from "../lib/zotero";
+import { runZotero, watchZoteroLinks } from "../lib/zotero";
 import { useToast } from "./ToastProvider";
 
 interface Props {
@@ -12,6 +12,7 @@ interface OverviewMeta {
   has_attachment: boolean;
   attachment_name: string | null;
   attachment_url: string | null;
+  zotero_url?: string | null;
 }
 
 // Decode a base64 string from the backend into a same-origin Blob URL the
@@ -39,17 +40,24 @@ export default function SyllabusPanel({ courseId }: Props) {
     if (!meta?.has_attachment) return;
     setBusy("zotero");
     await runZotero(toast, "Syllabus", () => api.zoteroSendSyllabus(courseId));
+    try {
+      setMeta(await api.getCourseOverview(courseId));
+    } catch (e) {
+      setErr(String((e as { message?: string })?.message ?? e));
+    }
     setBusy(null);
   }
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .getCourseOverview(courseId)
-      .then((m) => { if (!cancelled) setMeta(m); })
-      .catch((e) => { if (!cancelled) setErr(String(e?.message ?? e)); });
+    const stopWatching = watchZoteroLinks(() => {
+      api.getCourseOverview(courseId)
+        .then((m) => { if (!cancelled) setMeta(m); })
+        .catch((e) => { if (!cancelled) setErr(String(e?.message ?? e)); });
+    });
     return () => {
       cancelled = true;
+      stopWatching();
     };
   }, [courseId]);
 
@@ -61,6 +69,10 @@ export default function SyllabusPanel({ courseId }: Props) {
     setBusy("view");
     setErr(null);
     try {
+      if (meta.zotero_url) {
+        await api.openUrl(meta.zotero_url);
+        return;
+      }
       // Brightspace's overview JSON only flags HasAttachment without exposing
       // a URL — the bytes live at /overview/attachment, which the Rust command
       // knows how to hit. So prefer the attachment whenever HasAttachment is
@@ -132,7 +144,7 @@ export default function SyllabusPanel({ courseId }: Props) {
         <div className="level-right">
           <button className="button is-small is-primary mr-2" disabled={nothing || busy !== null} onClick={handleView}>
             <span className="icon"><i className="fas fa-eye"></i></span>
-            <span>{busy === "view" ? "Loading…" : "View"}</span>
+            <span>{busy === "view" ? "Loading…" : meta.zotero_url ? "Open in Zotero" : "View"}</span>
           </button>
           <button className="button is-small" disabled={!meta.has_attachment || busy !== null} onClick={handleDownload}>
             <span className="icon"><i className="fas fa-download"></i></span>

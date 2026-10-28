@@ -5,10 +5,29 @@
 // success / failure messaging. The Zotero work happens in Rust; we just
 // surface the result here.
 
-import type { ZoteroResult } from "../api";
+import { onAppEvent, type ZoteroResult } from "../api";
 
 interface ToastApi {
   show: (message: string, kind?: "is-info" | "is-success" | "is-warning" | "is-danger", duration?: number) => void;
+}
+
+export function isZoteroDocumentUrl(url: string): boolean {
+  return /^zotero:\/\/(?:open-pdf|select)\/library\/items\/[A-Z0-9]{8}$/.test(url);
+}
+
+/** Subscribe before the first read so a fast background backfill cannot be missed. */
+export function watchZoteroLinks(refresh: () => void): () => void {
+  let active = true;
+  let unlisten: (() => void) | undefined;
+  const update = () => { if (active) refresh(); };
+  onAppEvent((event) => {
+    if (event.kind === "zotero_links_updated") update();
+  }).then((stop) => {
+    if (!active) { stop(); return; }
+    unlisten = stop;
+    update();
+  }).catch(update);
+  return () => { active = false; unlisten?.(); };
 }
 
 export async function runZotero(

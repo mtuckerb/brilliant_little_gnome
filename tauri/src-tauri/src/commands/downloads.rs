@@ -491,13 +491,13 @@ pub async fn download_course_syllabus(
 /// Open a URL in the user's default browser. Used by the "open in
 /// Brightspace" buttons. Not part of tauri-plugin-shell so the React code
 /// doesn't need an allowlist capability — the Rust side calls the OS
-/// directly. Only http(s) URLs are accepted to avoid being a generic
-/// `Command::new` proxy.
+/// directly. Accepts HTTP(S) and validated Zotero document links.
 #[tauri::command]
 pub fn open_url(url: String) -> Result<()> {
     use std::process::Command;
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(AppError::Other(format!("refusing to open non-http URL: {}", url)));
+    if !(url.starts_with("https://") || url.starts_with("http://")
+        || crate::zotero::links::is_document_url(&url)) {
+        return Err(AppError::Other(format!("refusing to open unsupported URL: {}", url)));
     }
 
     #[cfg(target_os = "macos")]

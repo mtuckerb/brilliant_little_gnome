@@ -6,6 +6,7 @@ use std::time::Duration;
 use tauri::AppHandle;
 
 pub async fn run_periodic_loop(state: Arc<AppState>, _app: AppHandle) {
+    crate::commands::zotero::schedule_document_backfill(&state).await;
     #[cfg(feature = "p2p")]
     recover_missing_session(&state).await;
     // Initial sync on launch when authenticated.
@@ -24,6 +25,7 @@ pub async fn run_periodic_loop(state: Arc<AppState>, _app: AppHandle) {
         tokio::select! {
             _ = ticker.tick() => {},
             _ = auth_retry.tick() => {
+                crate::commands::zotero::schedule_document_backfill(&state).await;
                 #[cfg(feature = "p2p")]
                 if recover_missing_session(&state).await {
                     if let Err(e) = super::sync_all(state.clone(), false).await {

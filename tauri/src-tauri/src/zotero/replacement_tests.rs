@@ -107,6 +107,12 @@ async fn run_replacement(
     });
     // Bypass constructor discovery so this fixture exercises only replacement.
     let client = ZoteroClient {
+        mode: ZoteroMode::Local {
+            base_url: Some(base.clone()),
+            user_id_override: Some("1".into()),
+            api_key: None,
+            basic_auth: None,
+        },
         http: Client::new(),
         base,
         user_id: "1".into(),

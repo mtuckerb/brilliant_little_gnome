@@ -10,6 +10,7 @@ import SyntheticTaskModal from "../components/SyntheticTaskModal";
 import { useToast } from "../components/ToastProvider";
 import { mdEscape, mdLink } from "../lib/markdown";
 import { moduleTaskDue } from "../lib/moduleTasks";
+import { watchZoteroLinks } from "../lib/zotero";
 import type { Course } from "../types";
 
 // Course content as one tree: sub-modules are branches, items are leaves, and
@@ -91,7 +92,12 @@ export default function Modules() {
     setItems(null);
     setCourse(null);
     api.listModules(courseId).then(setModules);
-    api.listCourseItems(courseId).then(setItems);
+    let active = true;
+    const stopWatching = watchZoteroLinks(() => {
+      api.listCourseItems(courseId)
+        .then((rows) => { if (active) setItems(rows); })
+        .catch((e) => { if (active) setError(String(e)); });
+    });
     api.getCourse(courseId).then(setCourse);
     try {
       const saved = localStorage.getItem(`modules.collapsed:${courseId}`);
@@ -99,6 +105,7 @@ export default function Modules() {
     } catch {
       setCollapsed(new Set());
     }
+    return () => { active = false; stopWatching(); };
   }, [courseId]);
 
   const remember = useCallback(
@@ -185,6 +192,14 @@ export default function Modules() {
 
   async function openItem(it: ContentItem) {
     if (!courseId) return;
+    if (it.zotero_url) {
+      try {
+        await api.openUrl(it.zotero_url);
+      } catch (e) {
+        setError(`${it.title}: could not open Zotero: ${String(e)}`);
+      }
+      return;
+    }
     const leaf = describeItem(it);
     if (leaf.mode === "viewer") {
       navigate("/viewer", {
@@ -222,7 +237,7 @@ export default function Modules() {
   }
 
   function itemUrl(it: ContentItem): string | null {
-    const raw = it.url ?? (bsHost && courseId ? topicViewUrl(bsHost, courseId, it.brightspace_id) : null);
+    const raw = it.zotero_url ?? it.url ?? (bsHost && courseId ? topicViewUrl(bsHost, courseId, it.brightspace_id) : null);
     if (!raw) return null;
     return raw.startsWith("/") && bsHost ? `https://${bsHost}${raw}` : raw;
   }
@@ -336,7 +351,7 @@ export default function Modules() {
                     className="button is-white is-small px-0 has-text-link"
                     style={{ height: "auto", minHeight: 24, textAlign: "left", whiteSpace: "normal" }}
                     onClick={() => openItem(it)}
-                    title={leaf.mode === "viewer" ? "Open in Brilliant" : "Open in Brightspace"}
+                    title={it.zotero_url ? "Open in Zotero" : leaf.mode === "viewer" ? "Open in Brilliant" : "Open in Brightspace"}
                   >
                     {it.title}
                   </button>
@@ -349,8 +364,9 @@ export default function Modules() {
                     <span className="icon is-small has-text-grey-light"><i className="fas fa-list-check"></i></span>
                   </button>
                   {leaf.label && <span className="tag is-light is-size-7">{leaf.label}</span>}
+                  {it.zotero_url && <span className="tag is-light is-size-7">Zotero</span>}
                   {it.is_hidden && <span className="tag is-light is-size-7">hidden</span>}
-                  {leaf.mode === "external" && (
+                  {(it.zotero_url || leaf.mode === "external") && (
                     <span className="icon is-small has-text-grey-lighter">
                       <i className="fas fa-arrow-up-right-from-square"></i>
                     </span>

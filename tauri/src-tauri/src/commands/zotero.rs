@@ -34,7 +34,7 @@ fn emit_result(app: &AppHandle, result: &ZoteroResult) {
     }
 }
 
-async fn load_mode(state: &AppStateArg<'_>) -> Result<ZoteroMode> {
+async fn load_mode(pool: &sqlx::SqlitePool) -> Result<ZoteroMode> {
     // In local mode, all four credential fields are optional and serve
     // different purposes:
     //   - zotero_basic_auth_user / pass → HTTP Basic Auth for the
@@ -55,7 +55,7 @@ async fn load_mode(state: &AppStateArg<'_>) -> Result<ZoteroMode> {
     )> = sqlx::query_as(
         "SELECT zotero_use_local, zotero_user_id, zotero_api_key, zotero_local_base_url, zotero_local_user_id, zotero_basic_auth_user, zotero_basic_auth_pass FROM user_preferences LIMIT 1",
     )
-    .fetch_optional(&state.pool)
+    .fetch_optional(pool)
     .await?;
     let (use_local_int, uid, key, local_base, local_user_id, ba_user, ba_pass) =
         row.unwrap_or((Some(1), None, None, None, None, None, None));
@@ -81,6 +81,44 @@ async fn load_mode(state: &AppStateArg<'_>) -> Result<ZoteroMode> {
         _ => Err(AppError::Other(
             "Cloud Zotero is selected but user ID + API key are missing (Settings → Zotero).".into(),
         )),
+    }
+}
+
+pub(super) async fn document_links(
+    pool: &sqlx::SqlitePool,
+    course_id: &str,
+) -> Result<std::collections::HashMap<String, String>> {
+    // Incomplete cloud setup means the source links keep their normal behavior.
+    let mode = match load_mode(pool).await {
+        Ok(mode) => mode,
+        Err(AppError::Other(_)) => return Ok(Default::default()),
+        Err(e) => return Err(e),
+    };
+    crate::zotero::links::load(pool, &mode, course_id).await
+}
+
+pub(crate) async fn schedule_document_backfill(state: &crate::state::AppState) {
+    let mode = match load_mode(&state.pool).await {
+        Ok(mode) => mode,
+        Err(_) => return,
+    };
+    let events = state.events.clone();
+    state.zotero_link_backfill.request(state.pool.clone(), mode, move || {
+        events.emit("app-event", serde_json::json!({ "kind": "zotero_links_updated" }));
+    });
+}
+
+async fn remember_topic(
+    zc: &ZoteroClient,
+    state: &AppStateArg<'_>,
+    course_id: &str,
+    topic_id: &str,
+    attachment_key: &str,
+    mime: Option<&str>,
+    result: &mut ZoteroResult,
+) {
+    if let Err(e) = zc.remember_document(&state.pool, course_id, topic_id, attachment_key, mime).await {
+        result.failures.push(format!("Document uploaded, but its Zotero link could not be saved: {}", e));
     }
 }
 
@@ -593,6 +631,9 @@ async fn send_topic_to_zotero(
                     topic_title
                 );
                 result.up_to_date += 1;
+                if let Some(key) = existing.attachment_key.as_deref() {
+                    remember_topic(zc, state, course_id, &topic_id, key, mime.as_deref(), result).await;
+                }
                 return Some(existing.key);
             }
             if let Some(attachment_key) = existing.attachment_key.as_deref() {
@@ -608,6 +649,7 @@ async fn send_topic_to_zotero(
                 {
                     Ok(()) => {
                         result.created.push(attachment_key.to_string());
+                        remember_topic(zc, state, course_id, &topic_id, attachment_key, mime.as_deref(), result).await;
                         return Some(existing.key);
                     }
                     Err(e) => {
@@ -624,7 +666,10 @@ async fn send_topic_to_zotero(
                 .upload_attachment(&existing.key, &filename, mime.as_deref(), &bytes)
                 .await
             {
-                Ok(k) => result.created.push(k),
+                Ok(k) => {
+                    remember_topic(zc, state, course_id, &topic_id, &k, mime.as_deref(), result).await;
+                    result.created.push(k);
+                }
                 Err(e) => result.failures.push(format!("'{}': upload to existing parent: {}", topic_title, e)),
             }
             return Some(existing.key);
@@ -667,6 +712,7 @@ async fn send_topic_to_zotero(
         .await
     {
         Ok(k) => {
+            remember_topic(zc, state, course_id, &topic_id, &k, mime.as_deref(), result).await;
             result.created.push(k);
             return Some(parent_key);
         }
@@ -772,7 +818,7 @@ pub async fn zotero_send_topic(
     course_id: String,
     topic_id: String,
 ) -> Result<ZoteroResult> {
-    let mode = load_mode(&state).await?;
+    let mode = load_mode(&state.pool).await?;
     let zc = ZoteroClient::new(mode).await?;
     let (title, code, year) = course_display(&state, &course_id).await?;
     let mut target =
@@ -839,7 +885,7 @@ pub async fn zotero_send_module(
     course_id: String,
     module_id: String,
 ) -> Result<ZoteroResult> {
-    let mode = load_mode(&state).await?;
+    let mode = load_mode(&state.pool).await?;
     let zc = ZoteroClient::new(mode).await?;
     let (title, code, year) = course_display(&state, &course_id).await?;
     let mut target =
@@ -886,7 +932,7 @@ pub async fn zotero_send_course(
     state: AppStateArg<'_>,
     course_id: String,
 ) -> Result<ZoteroResult> {
-    let mode = load_mode(&state).await?;
+    let mode = load_mode(&state.pool).await?;
     let zc = ZoteroClient::new(mode).await?;
     let (title, code, year) = course_display(&state, &course_id).await?;
     let mut target =
@@ -939,7 +985,7 @@ pub async fn zotero_send_syllabus(
     state: AppStateArg<'_>,
     course_id: String,
 ) -> Result<ZoteroResult> {
-    let mode = load_mode(&state).await?;
+    let mode = load_mode(&state.pool).await?;
     let zc = ZoteroClient::new(mode).await?;
     let (title, code, year) = course_display(&state, &course_id).await?;
     let mut target =
@@ -987,6 +1033,9 @@ pub async fn zotero_send_syllabus(
         refile_existing(&zc, &existing.key, existing_collection.as_deref(), &suggested).await;
 
         if existing.attachment_md5.as_deref() == Some(our_md5.as_str()) {
+            if let Some(key) = existing.attachment_key.as_deref() {
+                zc.remember_document(&state.pool, &course_id, "syllabus", key, mime.as_deref()).await?;
+            }
             let result = ZoteroResult {
                 created: Vec::new(),
                 failures: Vec::new(),
@@ -1005,6 +1054,7 @@ pub async fn zotero_send_syllabus(
                 &bytes,
             )
             .await?;
+            zc.remember_document(&state.pool, &course_id, "syllabus", attachment_key, mime.as_deref()).await?;
             let result = ZoteroResult {
                 created: vec![attachment_key.to_string()],
                 failures: Vec::new(),
@@ -1048,6 +1098,7 @@ pub async fn zotero_send_syllabus(
             return Err(e);
         }
     };
+    zc.remember_document(&state.pool, &course_id, "syllabus", &attachment_key, mime.as_deref()).await?;
     let result = ZoteroResult {
         created: vec![attachment_key],
         failures: Vec::new(),

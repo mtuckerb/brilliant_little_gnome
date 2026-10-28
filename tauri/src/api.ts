@@ -118,6 +118,7 @@ export const api = {
       has_attachment: boolean;
       attachment_name: string | null;
       attachment_url: string | null;
+      zotero_url?: string | null;
     }>("get_course_overview", { courseId: id }),
   fetchCourseOverviewAttachment: (id: string) =>
     invoke<{ bytes_base64: string; mime: string | null; filename: string }>(
@@ -250,8 +251,8 @@ export const api = {
   // Content
   listModules: (courseId: string) =>
     invoke<ContentModule[]>("list_modules", { courseId }),
-  listItems: (moduleId: string) =>
-    invoke<ContentItem[]>("list_items", { moduleId }),
+  listItems: (moduleId: string, courseId?: string) =>
+    invoke<ContentItem[]>("list_items", { moduleId, courseId }),
   listCourseItems: (courseId: string) =>
     invoke<ContentItem[]>("list_course_items", { courseId }),
 
@@ -324,6 +325,7 @@ export interface StartupError {
 
 // Tauri-event subscriptions (replacing the Ruby SSE stream).
 export type AppEvent =
+  | { kind: "zotero_links_updated" }
   | { kind: "course_overview_updated"; course_id: string }
   | { kind: "assignments_updated"; course_id: string }
   | { kind: "grades_updated"; course_id: string }

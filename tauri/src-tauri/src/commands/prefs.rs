@@ -184,5 +184,6 @@ pub async fn update_prefs(state: AppStateArg<'_>, patch: PrefsPatch) -> Result<U
         }
     }
 
+    super::zotero::schedule_document_backfill(&state).await;
     get_prefs(state).await
 }
