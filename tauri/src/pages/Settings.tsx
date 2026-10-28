@@ -123,7 +123,7 @@ export default function Settings() {
       <div className="box">
         <h2 className="title is-5">Zotero</h2>
         <p className="is-size-7 has-text-grey mb-3">
-          Send course content, modules, or individual files to your Zotero library.
+          Send course content, modules, individual files, or linked resources to your Zotero library.
           Defaults to your <strong>local Zotero desktop app</strong> — keep Zotero running and enable
           {" "}<em>Preferences → Advanced → "Allow other applications on this computer to communicate with Zotero"</em>.
         </p>

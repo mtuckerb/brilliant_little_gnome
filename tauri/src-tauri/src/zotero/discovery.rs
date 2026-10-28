@@ -60,7 +60,7 @@ impl BackfillCoordinator {
 }
 
 fn checkpoint_key(mode: &ZoteroMode) -> String {
-    format!("zotero.document-links-backfilled.v1:{}", mode.library_id())
+    format!("zotero.document-links-backfilled.v2:{}", mode.library_id())
 }
 
 async fn backfill(pool: &SqlitePool, mode: ZoteroMode) -> Result<u64> {
@@ -226,24 +226,7 @@ fn documents(items: &[Value]) -> Vec<Document> {
         else {
             continue;
         };
-        let Some(tags) = parent.get("tags").and_then(Value::as_array) else {
-            continue;
-        };
-        for tag in tags {
-            let Some(tag) = tag.get("tag").and_then(Value::as_str) else {
-                continue;
-            };
-            let source = tag
-                .strip_prefix("brilliant:bsid=")
-                .and_then(|s| s.split_once(':'))
-                .or_else(|| {
-                    tag.strip_prefix("brilliant:syllabus=")
-                        .map(|course| (course, "syllabus"))
-                });
-            let Some((course, source)) = source.filter(|(c, s)| !c.is_empty() && !s.is_empty())
-            else {
-                continue;
-            };
+        for (course, source) in sources(parent) {
             let mime = data
                 .get("contentType")
                 .and_then(Value::as_str)
@@ -267,7 +250,49 @@ fn documents(items: &[Value]) -> Vec<Document> {
             }
         }
     }
+    // A saved webpage needs no child attachment. Prefer a confirmed file above
+    // if the user subsequently attached one to the same reference.
+    for (key, parent) in parents {
+        if parent.get("itemType").and_then(Value::as_str) != Some("webpage")
+            || !parent
+                .get("url")
+                .and_then(Value::as_str)
+                .and_then(|raw| url::Url::parse(raw).ok())
+                .is_some_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
+        {
+            continue;
+        }
+        for (course, source) in sources(parent) {
+            found
+                .entry((course.to_string(), source.to_string()))
+                .or_insert_with(|| Document {
+                    course_id: course.to_string(),
+                    source_id: source.to_string(),
+                    attachment_key: key.to_string(),
+                    mime: None,
+                });
+        }
+    }
     found.into_values().collect()
+}
+
+fn sources(parent: &Value) -> Vec<(&str, &str)> {
+    parent
+        .get("tags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|tag| tag.get("tag").and_then(Value::as_str))
+        .filter_map(|tag| {
+            tag.strip_prefix("brilliant:bsid=")
+                .and_then(|s| s.split_once(':'))
+                .or_else(|| {
+                    tag.strip_prefix("brilliant:syllabus=")
+                        .map(|course| (course, "syllabus"))
+                })
+        })
+        .filter(|(course, source)| !course.is_empty() && !source.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -412,6 +437,15 @@ mod tests {
     async fn recovers_previous_courses_and_syllabus_without_uploading_or_overwriting_links() {
         let (mode, fixture, server) = server().await;
         let pool = database().await;
+        // Upgrading from file-only recovery must also discover webpage entries.
+        sqlx::query("INSERT INTO app_state (key, value) VALUES (?, '1')")
+            .bind(format!(
+                "zotero.document-links-backfilled.v1:{}",
+                mode.library_id()
+            ))
+            .execute(&pool)
+            .await
+            .unwrap();
         let client = ZoteroClient::new(mode.clone()).await.unwrap();
         client
             .remember_document(&pool, "1", "11", "NEWFILE1", Some("application/pdf"))
@@ -542,5 +576,22 @@ mod tests {
         let found = documents(&items);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].attachment_key, "ATTACH06");
+    }
+
+    #[test]
+    fn recovers_tagged_webpages_without_attachments_and_prefers_a_file_if_attached_later() {
+        let mut webpage = parent("PARENT01", "brilliant:bsid=1:11");
+        webpage["data"]["itemType"] = json!("webpage");
+        webpage["data"]["url"] = json!("https://example.test/reading");
+        let mut items = vec![webpage];
+        let recovered = documents(&items);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].attachment_key, "PARENT01");
+        assert!(recovered[0].mime.is_none());
+        items.push(attachment("ATTACH01", "PARENT01"));
+        assert_eq!(documents(&items)[0].attachment_key, "ATTACH01");
+        items[0]["data"]["url"] = json!("javascript:alert(1)");
+        items.pop();
+        assert!(documents(&items).is_empty());
     }
 }

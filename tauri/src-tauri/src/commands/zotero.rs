@@ -1,7 +1,7 @@
 //! Tauri commands wrapping the Zotero client. Four entry points
-//! (topic, module, course, syllabus) — all push files into a per-course
-//! Zotero collection (auto-created), and shape each upload as a parent
-//! item plus a child attachment.
+//! (topic, module, course, syllabus) — file uploads and linked resources share
+//! per-course Zotero collections. Files have child attachments; links are
+//! webpage entries carrying their resource URL.
 
 use super::AppStateArg;
 use crate::error::{AppError, Result};
@@ -12,9 +12,13 @@ use tauri::{AppHandle, Emitter};
 
 const ZOTERO_EVENT: &str = "zotero://result";
 
+#[cfg(test)]
+#[path = "zotero_link_tests.rs"]
+mod link_tests;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ZoteroResult {
-    /// Items successfully created in Zotero (attachment keys).
+    /// Items created or updated in Zotero (file attachment or webpage keys).
     pub created: Vec<String>,
     /// Per-item failures (human-readable). One archive can have several
     /// without aborting the whole batch.
@@ -402,31 +406,96 @@ impl<'a> CollectionTarget<'a> {
 
 /// Topics in a Brightspace TOC come in many flavors — File (PDF/Word/etc),
 /// Link (external URL), Quiz, Discussion, Dropbox (assignment), Survey,
-/// SCORM, etc. Only ones with a document behind them belong in Zotero.
+/// SCORM, etc. Files and linked resources belong in Zotero; course activities
+/// are skipped. Unknown types still get the existing document-byte check.
 ///
-/// This used to be a *positive* filter: accept only `TypeIdentifier` of
-/// "File"/1, or a URL ending in a known extension. That silently dropped
-/// real course documents — anything Brightspace reports under a type string
-/// we didn't enumerate, which includes files stored through the newer
-/// content service, whose URLs carry no extension either. So the check is
-/// now negative: reject the flavors that definitionally have no file, and
-/// attempt the rest. The authoritative "is this a document" test is the
-/// content type of what actually comes back, which is a fact rather than a
-/// guess — see `fetch_topic_document`.
+/// Linked resources are saved as webpages. Other eligible types still use
+/// `fetch_topic_document`, so unknown content-service file types continue to
+/// work without treating Brightspace activity HTML as a downloadable file.
 fn is_zotero_eligible_topic(topic: &Value) -> bool {
-    let type_hint = topic
-        .get("TypeIdentifier")
-        .or_else(|| topic.get("Type"))
-        .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    !(type_hint.contains("link")
+    let type_hint = topic_type(topic);
+    let activity_link = topic.get("Url").and_then(Value::as_str)
+        .and_then(|raw| url::Url::parse("https://brightspace.invalid/").ok()?.join(raw).ok())
+        .is_some_and(|url| {
+            let path = url.path().to_ascii_lowercase();
+            path.contains("/d2l/") && path.contains("quicklink") && url.query_pairs().any(|(key, value)|
+                key.eq_ignore_ascii_case("type") && matches!(value.to_ascii_lowercase().as_str(),
+                    "quiz" | "discuss" | "discussion" | "dropbox" | "survey" | "scorm" | "checklist"))
+        });
+    !(activity_link
         || type_hint.contains("quiz")
         || type_hint.contains("discussion")
         || type_hint.contains("dropbox")
         || type_hint.contains("survey")
         || type_hint.contains("scorm")
         || type_hint.contains("checklist"))
+}
+
+fn topic_type(topic: &Value) -> String {
+    topic
+        .get("TypeIdentifier")
+        .or_else(|| topic.get("Type"))
+        .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn is_link_topic(topic: &Value) -> bool {
+    let kind = topic_type(topic);
+    kind.contains("link") || kind == "3"
+}
+
+fn topic_link_url(topic: &Value, host: Option<&str>) -> Result<String> {
+    let raw = topic.get("Url").and_then(Value::as_str).map(str::trim)
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| AppError::BadRequest("Linked resource has no URL".into()))?;
+    let url = if raw.starts_with("//") {
+        url::Url::parse(&format!("https:{}", raw))?
+    } else if let Ok(url) = url::Url::parse(raw) {
+        url
+    } else {
+        let host = host.ok_or_else(|| AppError::BadRequest("Brightspace host is needed to resolve this resource link".into()))?;
+        url::Url::parse(&format!("https://{}/", host))?.join(raw)?
+    };
+    if !matches!(url.scheme(), "http" | "https") || !url.has_host()
+        || !url.username().is_empty() || url.password().is_some() {
+        return Err(AppError::BadRequest("Linked resource must have an HTTP(S) URL without embedded credentials".into()));
+    }
+    Ok(url.into())
+}
+
+async fn send_link_to_zotero(
+    zc: &ZoteroClient,
+    pool: &sqlx::SqlitePool,
+    course_id: &str,
+    course_title: &str,
+    course_code: Option<&str>,
+    target: &mut CollectionTarget<'_>,
+    topic_id: &str,
+    topic_title: &str,
+    url: String,
+    result: &mut ZoteroResult,
+) -> Option<String> {
+    let tag = format!("brilliant:bsid={}:{}", course_id, topic_id);
+    let mut tags = vec![format!("Brilliant: {}", course_title), tag.clone()];
+    if let Some(code) = course_code { tags.push(code.to_string()); }
+    let parent = ParentItem {
+        item_type: ItemType::Webpage, title: topic_title.to_string(), url: Some(url), tags,
+        collection_keys: target.resolve().await.into_iter().collect(),
+    };
+    match zc.save_web_link(&parent, &tag).await {
+        Ok((key, changed)) => {
+            if changed { result.created.push(key.clone()); } else { result.up_to_date += 1; }
+            if let Err(error) = zc.remember_web_link(pool, course_id, topic_id, &key).await {
+                result.failures.push(format!("'{}': link saved, but its Zotero destination could not be recorded: {}", topic_title, error));
+            }
+            Some(key)
+        }
+        Err(error) => {
+            result.failures.push(format!("'{}': import link: {}", topic_title, error));
+            None
+        }
+    }
 }
 
 /// Outcome of trying to get a topic's actual document bytes.
@@ -578,7 +647,7 @@ async fn send_topic_to_zotero(
     result: &mut ZoteroResult,
 ) -> Option<String> {
     if !is_zotero_eligible_topic(topic) {
-        return None; // quiz/link/discussion/etc — silently skip
+        return None; // quiz/discussion/etc — silently skip
     }
     let topic_id = topic_id_str(topic)?;
     let topic_title = topic
@@ -586,6 +655,18 @@ async fn send_topic_to_zotero(
         .and_then(|v| v.as_str())
         .map(String::from)
         .unwrap_or_else(|| format!("topic_{}", topic_id));
+
+    if is_link_topic(topic) {
+        let url = match topic_link_url(topic, brightspace_host(state).as_deref()) {
+            Ok(url) => url,
+            Err(error) => {
+                result.failures.push(format!("'{}': {}", topic_title, error));
+                return None;
+            }
+        };
+        return send_link_to_zotero(zc, &state.pool, course_id, course_title, course_code,
+            target, &topic_id, &topic_title, url, result).await;
+    }
 
     let (bytes, mime, response_name) =
         match fetch_topic_document(state, course_id, &topic_id, topic).await {
@@ -1242,12 +1323,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_topics_with_no_file_behind_them() {
-        for t in ["Link", "Quiz", "Discussion", "Dropbox", "Survey", "SCORM", "Checklist"] {
+    fn rejects_course_activities() {
+        for t in ["Quiz", "Discussion", "Dropbox", "Survey", "SCORM", "Checklist"] {
             assert!(
                 !is_zotero_eligible_topic(&json!({ "TypeIdentifier": t })),
                 "{t} should be skipped",
             );
+        }
+    }
+
+    #[test]
+    fn accepts_links_and_resolves_the_actual_resource_url() {
+        for topic in [json!({ "TypeIdentifier": "Link", "Url": "https://example.test/article" }),
+            json!({ "Type": 3, "Url": "https://example.test/article" }),
+            json!({ "TypeIdentifier": "3", "Url": "https://example.test/article" })] {
+            assert!(is_zotero_eligible_topic(&topic));
+            assert!(is_link_topic(&topic));
+            assert_eq!(topic_link_url(&topic, None).unwrap(), "https://example.test/article");
+        }
+        assert_eq!(topic_link_url(&json!({ "Url": "/content/reading" }), Some("school.test")).unwrap(),
+            "https://school.test/content/reading");
+        assert_eq!(topic_link_url(&json!({ "Url": "//example.test/reading" }), None).unwrap(),
+            "https://example.test/reading");
+        assert!(!is_link_topic(&json!({ "TypeIdentifier": "File", "Url": "https://example.test/document.pdf" })));
+    }
+
+    #[test]
+    fn rejects_missing_unsafe_and_activity_links() {
+        for raw in ["", "javascript:alert(1)", "file:///tmp/doc.pdf", "data:text/html,hi", "https://user:password@example.test/reading"] {
+            assert!(topic_link_url(&json!({ "Url": raw }), Some("school.test")).is_err(), "{}", raw);
+        }
+        assert!(topic_link_url(&json!({ "Url": "/relative" }), None).is_err());
+        for activity in ["quiz", "discuss", "dropbox", "survey"] {
+            assert!(!is_zotero_eligible_topic(&json!({ "TypeIdentifier": "Link",
+                "Url": format!("/d2l/common/dialogs/quickLink?type={}", activity) })));
         }
     }
 
