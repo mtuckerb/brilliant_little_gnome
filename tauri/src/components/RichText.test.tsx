@@ -38,4 +38,18 @@ describe("Zotero source links in task notes", () => {
     act(() => root.render(<RichText content="[Bad](zotero://delete/library/items/ABCD1234) [Unsafe](javascript:alert)" />));
     for (const link of container.querySelectorAll("a")) expect(link.getAttribute("href")).toBe("");
   });
+
+  it.each(["markdown", "html"] as const)("resolves existing %s source anchors without rewriting images", async (format) => {
+    const source = "https://school.test/reading";
+    const destination = "zotero://open-pdf/library/items/ABCD1234";
+    const content = format === "html"
+      ? `<p><a href="${source}">Reading</a><img src="${source}" /></p>`
+      : `[Reading](${source}) ![Cover](${source})`;
+    act(() => root.render(<RichText content={content} format={format} resolveLink={(url) => url === source ? destination : url} />));
+    const link = container.querySelector("a")!;
+    expect(link.getAttribute("href")).toBe(destination);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(source);
+    await act(async () => link.click());
+    expect(api.openUrl).toHaveBeenCalledWith(destination);
+  });
 });

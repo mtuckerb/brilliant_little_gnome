@@ -25,6 +25,8 @@ interface Props {
   className?: string;
   /// Override the auto-detection — useful if you know what you have.
   format?: "auto" | "html" | "markdown";
+  /// Course-scoped destinations for sources synced after these notes were written.
+  resolveLink?: (url: string) => string;
 }
 
 // Require the tag name to end where HTML permits it to end. In particular,
@@ -41,6 +43,7 @@ export default function RichText({
   bulmaContent = true,
   className,
   format = "auto",
+  resolveLink,
 }: Props) {
   if (!content) return null;
 
@@ -56,13 +59,25 @@ export default function RichText({
   }
 
   if (isHtml) {
-    return <div className={cls || undefined} onClick={openZotero} dangerouslySetInnerHTML={{ __html: content }} />;
+    let html = content;
+    if (resolveLink) {
+      const fragment = document.createElement("template");
+      fragment.innerHTML = content;
+      for (const link of fragment.content.querySelectorAll("a[href]")) {
+        const href = link.getAttribute("href")!;
+        const destination = resolveLink(href);
+        if (destination !== href) link.setAttribute("href", destination);
+      }
+      html = fragment.innerHTML;
+    }
+    return <div className={cls || undefined} onClick={openZotero} dangerouslySetInnerHTML={{ __html: html }} />;
   }
   return (
     <div className={cls || undefined} onClick={openZotero}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) =>
-        isZoteroDocumentUrl(url) ? url : defaultUrlTransform(url)
-      }>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url, key, node) => {
+        const destination = node.tagName === "a" && resolveLink ? resolveLink(url) : url;
+        return isZoteroDocumentUrl(destination) ? destination : defaultUrlTransform(destination);
+      }}>{content}</ReactMarkdown>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import BrightspaceLink, { useBrightspaceHost } from "../components/BrightspaceLi
 import { assignmentSubmitUrl, quizSummaryUrl } from "../lib/brightspace";
 import RichText from "../components/RichText";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { useZoteroSourceLinks } from "../hooks/useZoteroSourceLinks";
 
 function isQuizAssignment(a: Assignment | null) {
   return a?.assignment_type?.toLowerCase() === "quiz";
@@ -107,6 +108,7 @@ export default function AssignmentDetail() {
   // calling hooks only on the loaded render would violate React's hook-order
   // invariant.
   const bsHost = useBrightspaceHost();
+  const resolveSourceLink = useZoteroSourceLinks(id, bsHost);
   const isMobile = useIsMobile();
 
   if (err) {
@@ -406,7 +408,7 @@ export default function AssignmentDetail() {
         {description && (
           <div className="box" style={{ padding: 14, marginBottom: 12 }}>
             <h2 className="title is-6 mb-2"><i className="fas fa-list mr-2"></i>Instructions</h2>
-            <RichText content={description} />
+            <RichText content={description} resolveLink={resolveSourceLink} />
             {detail && <AttachmentList items={detail.instruction_attachments} />}
           </div>
         )}
@@ -580,7 +582,7 @@ export default function AssignmentDetail() {
       {description && (
         <div className="box">
           <h2 className="title is-5"><i className="fas fa-list mr-2"></i>Instructions</h2>
-          <RichText content={description} />
+          <RichText content={description} resolveLink={resolveSourceLink} />
           {detail && <AttachmentList items={detail.instruction_attachments} />}
         </div>
       )}
